@@ -50,7 +50,7 @@ private:
 	float StaminaRegenDelay = 1.75f;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Stamina|Attributes", meta = (AllowPrivateAccess = "true"))
-	float CurrentStamina;
+	float CurrentStamina = 100.f;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Stamina|Attributes", meta = (AllowPrivateAccess = "true"))
 	float TimeSinceLastStaminaDrain = 0.f;

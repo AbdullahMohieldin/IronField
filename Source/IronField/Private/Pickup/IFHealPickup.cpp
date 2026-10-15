@@ -18,6 +18,7 @@ namespace
 AIFHealPickup::AIFHealPickup()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickInterval = 0.033f;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 
 	CollisionComponent = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionComponent"));
@@ -46,8 +47,14 @@ void AIFHealPickup::BeginPlay()
 
 void AIFHealPickup::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	GetWorldTimerManager().ClearTimer(LifeTimerHandle);
-	CollisionComponent->OnComponentBeginOverlap.RemoveAll(this);
+	if (UWorld* const World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(LifeTimerHandle);
+	}
+	if (CollisionComponent)
+	{
+		CollisionComponent->OnComponentBeginOverlap.RemoveAll(this);
+	}
 	Super::EndPlay(EndPlayReason);
 }
 

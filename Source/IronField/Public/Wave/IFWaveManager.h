@@ -9,6 +9,7 @@ class AIFPlayerCharacter;
 class AIFBaseCharacter;
 class AIFHealPickup;
 class USoundBase;
+struct FStreamableHandle;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPlayerDowned);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnWaveStarted, int32, WaveNumber);
@@ -215,6 +216,7 @@ private:
 	FTimerHandle SpawnTimerHandle;
 	FTimerHandle ValidateTimerHandle;
 	FTimerHandle WarmupTimerHandle;
+	TSharedPtr<FStreamableHandle> WarmupStreamableHandle;
 
 	// Generation counter for async identity: bumped on every BeginWaveFromDefinition
 	// and EndPlay; timer delegates capture the scheduling generation and drop stale firings.

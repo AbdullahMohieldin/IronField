@@ -149,6 +149,7 @@ private:
 
 	// Runtime cache for the fighter's single weapon box, resolved in BeginPlay.
 	// Not editor-visible: one box per fighter by convention, so no picker.
+	UPROPERTY(Transient)
 	TObjectPtr<UBoxComponent> WeaponCollisionBox;
 
 	UFUNCTION()

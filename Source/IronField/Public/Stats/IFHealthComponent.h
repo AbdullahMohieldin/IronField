@@ -60,7 +60,7 @@ private:
 	float ReviveHealth = 30.f;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Health|Attributes", meta = (AllowPrivateAccess = "true"))
-	float CurrentHealth;
+	float CurrentHealth = 100.f;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Health|Attributes", meta = (AllowPrivateAccess = "true"))
 	bool bIsInvincible = false;

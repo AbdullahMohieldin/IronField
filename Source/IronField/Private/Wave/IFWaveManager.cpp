@@ -554,6 +554,12 @@ void AIFWaveManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// Invalidate timer callbacks already in flight during teardown.
 	WaveGeneration++;
 
+	if (WarmupStreamableHandle.IsValid())
+	{
+		WarmupStreamableHandle->CancelHandle();
+		WarmupStreamableHandle.Reset();
+	}
+
 	CleanupWarmupActors();
 
 	if (bWaveCompletedBound)
@@ -774,11 +780,13 @@ void AIFWaveManager::PreloadWaveAssets()
 	}
 
 	FStreamableManager& Streamable = UAssetManager::GetStreamableManager();
-	Streamable.RequestAsyncLoad(Paths, FStreamableDelegate::CreateUObject(this, &AIFWaveManager::HandleWarmupAssetsLoaded));
+	WarmupStreamableHandle = Streamable.RequestAsyncLoad(Paths, FStreamableDelegate::CreateUObject(this, &AIFWaveManager::HandleWarmupAssetsLoaded));
 }
 
 void AIFWaveManager::HandleWarmupAssetsLoaded()
 {
+	WarmupStreamableHandle.Reset();
+
 	if (bWarmedUp || !GetWorld())
 	{
 		return;
