@@ -15,10 +15,10 @@ namespace
 
 AIFMageEnemyCharacter::AIFMageEnemyCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer
-		.SetDefaultSubobjectClass<UIFMageCombatComponent>(TEXT("Combat"))
-		.DoNotCreateDefaultSubobject(TEXT("Stamina")))
+		.SetDefaultSubobjectClass<UIFMageCombatComponent>(TEXT("Combat")))
 {
 	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.TickInterval = 0.1f;
 
 	CombatRange = MageDefaultCombatRange;
 

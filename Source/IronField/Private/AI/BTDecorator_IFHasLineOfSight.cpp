@@ -5,6 +5,14 @@
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "Engine/World.h"
 
+namespace
+{
+	struct FIFLineOfSightMemory : public FIFBTConditionMemory
+	{
+		float TimeUntilNextTrace = 0.f;
+	};
+}
+
 UBTDecorator_IFHasLineOfSight::UBTDecorator_IFHasLineOfSight()
 {
 	NodeName = TEXT("Has Line Of Sight");
@@ -18,12 +26,24 @@ UBTDecorator_IFHasLineOfSight::UBTDecorator_IFHasLineOfSight()
 
 uint16 UBTDecorator_IFHasLineOfSight::GetInstanceMemorySize() const
 {
-	return sizeof(FIFBTConditionMemory);
+	return sizeof(FIFLineOfSightMemory);
 }
 
 void UBTDecorator_IFHasLineOfSight::TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
 {
 	Super::TickNode(OwnerComp, NodeMemory, DeltaSeconds);
+
+	FIFLineOfSightMemory* const Memory = reinterpret_cast<FIFLineOfSightMemory*>(NodeMemory);
+	if (Memory)
+	{
+		Memory->TimeUntilNextTrace -= DeltaSeconds;
+		if (Memory->TimeUntilNextTrace > 0.f && Memory->bInitialized)
+		{
+			return;
+		}
+		Memory->TimeUntilNextTrace = 0.2f;
+	}
+
 	UpdateConditionDecoratorAbort(OwnerComp, this, NodeMemory, CalculateRawConditionValue(OwnerComp, NodeMemory));
 }
 
