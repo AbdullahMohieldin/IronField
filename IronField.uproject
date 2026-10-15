@@ -24,12 +24,16 @@
 			]
 		},
 		{
-			"Name": "StateTree",
-			"Enabled": true
+			"Name": "NNE",
+			"Enabled": false
 		},
 		{
-			"Name": "GameplayStateTree",
-			"Enabled": true
+			"Name": "NNERuntimeORT",
+			"Enabled": false
+		},
+		{
+			"Name": "NNERuntimeORTGpu",
+			"Enabled": false
 		},
 		{
 			"Name": "GraphPrinter",
