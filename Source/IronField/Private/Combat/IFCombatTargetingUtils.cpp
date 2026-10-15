@@ -46,7 +46,7 @@ namespace IFCombatTargetingUtils
 
 	void ApplyDamageTo(AActor* TargetActor, AActor* Instigator, float Damage, TSubclassOf<UDamageType> DamageTypeClass)
 	{
-		if (!TargetActor || !Instigator)
+		if (!TargetActor || !Instigator || FMath::IsNaN(Damage) || Damage <= 0.0f)
 		{
 			return;
 		}
@@ -60,6 +60,11 @@ namespace IFCombatTargetingUtils
 
 	void DeliverDamage(AActor* TargetActor, AActor* Instigator, float Damage, TSubclassOf<UDamageType> DamageTypeClass)
 	{
+		if (FMath::IsNaN(Damage) || Damage <= 0.0f)
+		{
+			return;
+		}
+
 		if (UIFCombatComponent* const TargetCombat = FindCombatComponent(TargetActor))
 		{
 			TargetCombat->ReceiveAttack(Instigator, Damage, DamageTypeClass);

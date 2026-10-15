@@ -62,15 +62,19 @@ void AIFEnemyController::InitializeControlledPawn()
 
 	if (const UWorld* const World = GetWorld())
 	{
-		if (const UIFWaveManagerSubsystem* const Subsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
+		if (UIFWaveManagerSubsystem* const Subsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
 		{
 			CachedWaveManager = Subsystem->GetWaveManager();
+			if (!CachedWaveManager)
+			{
+				Subsystem->OnWaveManagerRegistered.AddDynamic(this, &AIFEnemyController::HandleWaveManagerRegistered);
+			}
 		}
 	}
 
 	if (!CachedWaveManager)
 	{
-		UE_LOG(LogIronField, Warning, TEXT("[IF-AI] %s possessed before WaveManager registered; siege bias is 0 and player-downed will not clear its target."), *GetName());
+		UE_LOG(LogIronField, Log, TEXT("[IF-AI] %s possessed before WaveManager registered; subscribed to OnWaveManagerRegistered."), *GetName());
 	}
 
 	if (CachedWaveManager)
@@ -136,6 +140,33 @@ void AIFEnemyController::UnbindOwnDelegates()
 	if (CachedWaveManager)
 	{
 		CachedWaveManager->OnPlayerDowned.RemoveAll(this);
+	}
+
+	if (const UWorld* const World = GetWorld())
+	{
+		if (UIFWaveManagerSubsystem* const Subsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
+		{
+			Subsystem->OnWaveManagerRegistered.RemoveAll(this);
+		}
+	}
+}
+
+void AIFEnemyController::HandleWaveManagerRegistered(AIFWaveManager* InWaveManager)
+{
+	if (!InWaveManager || CachedWaveManager == InWaveManager)
+	{
+		return;
+	}
+
+	CachedWaveManager = InWaveManager;
+	CachedWaveManager->OnPlayerDowned.AddDynamic(this, &AIFEnemyController::HandlePlayerDowned);
+
+	if (AIFEnemyCharacter* const EnemyChar = Cast<AIFEnemyCharacter>(GetPawn()))
+	{
+		const UIFEnemyAIData* const Data = GetAIData();
+		const float Spread = Data ? Data->AggressionSpread : FallbackAggressionSpread;
+		const float Bias = CachedWaveManager->GetSiegeBiasForWave();
+		EnemyChar->RollAggression(Bias, Spread);
 	}
 }
 

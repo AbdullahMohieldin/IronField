@@ -333,7 +333,7 @@ void UIFPlayerCombatComponent::HandleBlockReactionMontageEnded(UAnimMontage* Mon
 
 	if (IsBlocking())
 	{
-		StopBlock();
+		TryPlayBlockMontage();
 	}
 }
 

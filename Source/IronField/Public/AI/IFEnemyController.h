@@ -67,6 +67,9 @@ private:
 	UFUNCTION()
 	void HandlePlayerDowned();
 
+	UFUNCTION()
+	void HandleWaveManagerRegistered(AIFWaveManager* InWaveManager);
+
 	void InitializeControlledPawn();
 	void BindOwnDelegates();
 	void UnbindOwnDelegates();
