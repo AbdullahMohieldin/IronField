@@ -2,18 +2,13 @@
 
 FText UIFBestRunSave::BuildBestText() const
 {
-	// Em dash keeps the empty-slot line visually quiet.
-	if (BestNormalWave <= 0 && BestUnlimitedWave <= 0)
-	{
-		return FText::FromString(TEXT("NORMAL BEST: \u2014  \u2022  UNLIMITED BEST: \u2014"));
-	}
+	const FString NormalStr = BestNormalWave > 0
+		? FString::Printf(TEXT("W%d K%d"), BestNormalWave, BestNormalKills)
+		: TEXT("\u2014");
 
-	FString ClearedSuffix;
-	if (bNormalCleared)
-	{
-		ClearedSuffix = TEXT("  \u2022  NORMAL CLEARED");
-	}
+	const FString UnlimitedStr = BestUnlimitedWave > 0
+		? FString::Printf(TEXT("W%d K%d"), BestUnlimitedWave, BestUnlimitedKills)
+		: TEXT("\u2014");
 
-	return FText::FromString(FString::Printf(TEXT("NORMAL BEST: W%d K%d  \u2022  UNLIMITED BEST: W%d K%d%s"),
-		BestNormalWave, BestNormalKills, BestUnlimitedWave, BestUnlimitedKills, *ClearedSuffix));
+	return FText::FromString(FString::Printf(TEXT("NORMAL BEST: %s  \u2022  UNLIMITED BEST: %s"), *NormalStr, *UnlimitedStr));
 }

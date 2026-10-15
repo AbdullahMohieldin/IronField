@@ -23,7 +23,7 @@ The mode is selected in the main menu and stored on the game instance across tra
 
 - Unreal Engine 5.8
 - C++ toolchain for the target platform (Visual Studio 2022 with the UE workload on Windows)
-- No additional setup: all content under `Content/`, including third-party marketplace packs, is versioned in this repository
+- First-party gameplay assets are versioned under `Content/IronField/`. Third-party marketplace packs (`Content/ThirdParty/`) are kept local-only per `.gitignore` and marketplace licensing terms.
 
 ## Getting Started
 
