@@ -26,6 +26,8 @@ public:
 
 	FName GetTargetActorKeyName() const { return TargetActorKeyName; }
 
+	void UpdateFocusOnTarget(AActor* NewTarget);
+
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnUnPossess() override;
 

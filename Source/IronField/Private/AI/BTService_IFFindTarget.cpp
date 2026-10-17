@@ -3,6 +3,7 @@
 #include "AI/IFBTUtils.h"
 #include "AI/IFEnemyAIData.h"
 #include "AI/IFEnemyController.h"
+#include "AI/IFTargetScoring.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Character/IFEnemyCharacter.h"
@@ -12,11 +13,6 @@
 
 namespace
 {
-	// Targeting curve: distance falloff plus the aggression-shaped candidate weights.
-	constexpr float DistanceFalloffRange = 800.f;
-	constexpr float PlayerWeightBase = 0.5f;
-	constexpr float StrongholdWeightBase = 1.5f;
-
 	bool IsUsableTarget(AActor* Actor)
 	{
 		if (!IsValid(Actor))
@@ -30,12 +26,6 @@ namespace
 		}
 
 		return true;
-	}
-
-	/** Soft distance desire: 1.0 in your face, fading with range. Same curve for both targets. */
-	float DistanceDesire(float Dist)
-	{
-		return 1.f / (1.f + Dist / DistanceFalloffRange);
 	}
 }
 
@@ -67,83 +57,72 @@ void UBTService_IFFindTarget::ChooseTarget(UBehaviorTreeComponent& OwnerComp) co
 		return;
 	}
 
-	const AIFEnemyController* const Controller = Cast<AIFEnemyController>(OwnerComp.GetAIOwner());
+	AIFEnemyController* const Controller = Cast<AIFEnemyController>(OwnerComp.GetAIOwner());
 	const UIFEnemyAIData* const AIData = Controller ? Controller->GetAIData() : GetDefault<UIFEnemyAIData>();
 	if (!AIData)
 	{
 		return;
 	}
-	const float DetectionRange = AIData->PlayerDetectionRange;
 
 	AActor* const Player = Registry->GetActor(IFRegistryRoles::Player);
 	AActor* const Stronghold = Registry->GetActor(IFRegistryRoles::Stronghold);
 	AActor* const Current = GetBlackboardTargetActor(OwnerComp, TargetActorKey);
 
+	const float DetectionRange = AIData->PlayerDetectionRange;
 	const bool bPlayerOk = IsUsableTarget(Player)
 		&& FVector::DistSquared(Pawn->GetActorLocation(), Player->GetActorLocation()) <= FMath::Square(DetectionRange);
 	const bool bStrongholdOk = IsUsableTarget(Stronghold);
 
-	AIFEnemyCharacter* const Enemy = OwnerComp.GetAIOwner() ? Cast<AIFEnemyCharacter>(OwnerComp.GetAIOwner()->GetPawn()) : nullptr;
+	AIFEnemyCharacter* const Enemy = Controller ? Cast<AIFEnemyCharacter>(Controller->GetPawn()) : nullptr;
 	const float Aggression = Enemy ? Enemy->GetAggression() : 0.5f;
 	const float Now = World ? World->GetTimeSeconds() : 0.f;
 
-	// One scorer for both candidates: distance desire shaped by personality.
-	float PlayerScore = 0.f;
-	const bool bGrudge = Enemy && (Now - Enemy->GetLastPlayerHitTime() < AIData->RetaliationSeconds);
-	if (bPlayerOk)
-	{
-		PlayerScore = DistanceDesire(FVector::Dist(Pawn->GetActorLocation(), Player->GetActorLocation())) * (PlayerWeightBase + Aggression);
+	FIFTargetScoreInput Input;
+	Input.bPlayerValid = bPlayerOk;
+	Input.bStrongholdValid = bStrongholdOk;
+	Input.bCurrentValid = IsUsableTarget(Current);
+	Input.PlayerDistance = (bPlayerOk && Player) ? FVector::Dist(Pawn->GetActorLocation(), Player->GetActorLocation()) : 0.f;
+	Input.StrongholdDistance = (bStrongholdOk && Stronghold) ? FVector::Dist(Pawn->GetActorLocation(), Stronghold->GetActorLocation()) : 0.f;
+	Input.Aggression = Aggression;
+	Input.bHasGrudge = Enemy && (Now - Enemy->GetLastPlayerHitTime() < AIData->RetaliationSeconds);
+	Input.TimeSinceLastSwitch = Enemy ? (Now - Enemy->GetLastTargetSwitchTime()) : 0.f;
 
-		// Grudge: a recent player hit multiplies player desire and breaks commitment.
-		if (bGrudge)
-		{
-			PlayerScore *= AIData->RetaliationBonus;
-		}
+	if (Current == Player)
+	{
+		Input.CurrentTarget = EIFTargetCandidate::Player;
+	}
+	else if (Current == Stronghold)
+	{
+		Input.CurrentTarget = EIFTargetCandidate::Stronghold;
+	}
+	else
+	{
+		Input.CurrentTarget = EIFTargetCandidate::None;
 	}
 
-	float StrongholdScore = 0.f;
-	if (bStrongholdOk)
-	{
-		StrongholdScore = DistanceDesire(FVector::Dist(Pawn->GetActorLocation(), Stronghold->GetActorLocation())) * (StrongholdWeightBase - Aggression);
-	}
+	Input.DistanceFalloffRange = AIData->DistanceFalloffRange;
+	Input.PlayerWeightBase = AIData->PlayerWeightBase;
+	Input.StrongholdWeightBase = AIData->StrongholdWeightBase;
+	Input.RetaliationBonus = AIData->RetaliationBonus;
+	Input.CommitScoreBonus = AIData->CommitScoreBonus;
+	Input.SwitchThreshold = AIData->SwitchThreshold;
+	Input.CommitLockSeconds = AIData->CommitLockSeconds;
 
-	// Champion = highest raw score; nothing valid → null (clears dead targets).
-	AActor* Champion = nullptr;
-	float ChampionScore = 0.f;
-	if (PlayerScore > ChampionScore)
-	{
-		Champion = Player;
-		ChampionScore = PlayerScore;
-	}
-	if (StrongholdScore > ChampionScore)
-	{
-		Champion = Stronghold;
-		ChampionScore = StrongholdScore;
-	}
+	const FIFTargetScoreResult Result = FIFTargetScoring::ScoreTarget(Input);
 
-	// Commitment: the locked target scores a bonus, fresh switches are time-gated,
-	// and a challenger must win by a clear margin. Invalid targets never lock.
 	AActor* Desired = Current;
-	if (Champion != Current)
+	switch (Result.DesiredTarget)
 	{
-		const bool bCurrentValid = IsUsableTarget(Current);
-		float CurrentScore = 0.f;
-		if (bCurrentValid)
-		{
-			CurrentScore = (Current == Player ? PlayerScore : StrongholdScore) * AIData->CommitScoreBonus;
-		}
-
-		const bool bLocked = Enemy && bCurrentValid && !bGrudge && (Now - Enemy->GetLastTargetSwitchTime() < AIData->CommitLockSeconds);
-		if (!bLocked && ChampionScore > CurrentScore * AIData->SwitchThreshold)
-		{
-			Desired = Champion;
-		}
-	}
-
-	// Both candidates invalid: clear a dead locked target instead of keeping it.
-	if (!Champion && !IsUsableTarget(Current))
-	{
+	case EIFTargetCandidate::Player:
+		Desired = Player;
+		break;
+	case EIFTargetCandidate::Stronghold:
+		Desired = Stronghold;
+		break;
+	case EIFTargetCandidate::None:
+	default:
 		Desired = nullptr;
+		break;
 	}
 
 	if (Desired != Current)
@@ -155,5 +134,10 @@ void UBTService_IFFindTarget::ChooseTarget(UBehaviorTreeComponent& OwnerComp) co
 		}
 		UE_LOG(LogIronField, Log, TEXT("[IF-AI] %s retarget %s -> %s"), *GetNameSafe(Pawn),
 			*GetNameSafe(Current), *GetNameSafe(Desired));
+	}
+
+	if (Controller)
+	{
+		Controller->UpdateFocusOnTarget(Desired);
 	}
 }

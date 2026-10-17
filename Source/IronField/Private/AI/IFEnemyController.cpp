@@ -9,6 +9,8 @@
 #include "Core/IFActorRegistrySubsystem.h"
 #include "Core/IFLog.h"
 #include "Engine/World.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Stats/IFHealthComponent.h"
 #include "Wave/IFWaveSpawnable.h"
 
@@ -245,3 +247,26 @@ void AIFEnemyController::ApplyMovementSpeedForState(ECombatState State)
 		EnemyChar->ApplyMovementSpeedForState(State);
 	}
 }
+
+void AIFEnemyController::UpdateFocusOnTarget(AActor* NewTarget)
+{
+	const APawn* const ControlledPawn = GetPawn();
+	const ACharacter* const ControlledChar = Cast<ACharacter>(ControlledPawn);
+	const UCharacterMovementComponent* const Movement = ControlledChar ? ControlledChar->GetCharacterMovement() : nullptr;
+	const bool bNeedsFocus = Movement && Movement->bUseControllerDesiredRotation;
+
+	if (!bNeedsFocus)
+	{
+		return;
+	}
+
+	if (NewTarget)
+	{
+		SetFocus(NewTarget);
+	}
+	else
+	{
+		ClearFocus(EAIFocusPriority::Gameplay);
+	}
+}
+

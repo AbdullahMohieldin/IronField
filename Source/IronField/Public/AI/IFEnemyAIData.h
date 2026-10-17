@@ -44,4 +44,16 @@ public:
 	/** Random spread applied around base aggression at spawn. */
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|AI|Targeting", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AggressionSpread = 0.35f;
+
+	/** Distance falloff range used by target scoring curve. */
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|AI|Targeting", meta = (ClampMin = "1.0"))
+	float DistanceFalloffRange = 800.f;
+
+	/** Base weight applied to player candidate in target scoring. */
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|AI|Targeting", meta = (ClampMin = "0.0"))
+	float PlayerWeightBase = 0.5f;
+
+	/** Base weight applied to stronghold candidate in target scoring. */
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|AI|Targeting", meta = (ClampMin = "0.0"))
+	float StrongholdWeightBase = 1.5f;
 };

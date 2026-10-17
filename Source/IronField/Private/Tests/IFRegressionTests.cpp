@@ -17,6 +17,7 @@
 #include "Stats/IFHealthComponent.h"
 #include "Stats/IFStaminaComponent.h"
 #include "Stats/IFStatUtils.h"
+#include "AI/IFTargetScoring.h"
 #include "Wave/IFSpawnQueue.h"
 #include "Wave/IFWaveManager.h"
 #include "Wave/IFWaveScalingUtils.h"
@@ -403,6 +404,65 @@ bool FIFScalingMathTest::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+// S5, S6: Pure target scorer unit tests
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFTargetScorerTest, "IronField.AI.TargetScorer", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+bool FIFTargetScorerTest::RunTest(const FString& Parameters)
+{
+	// 1. Distance falloff monotonicity
+	const float DesireNear = FIFTargetScoring::DistanceDesire(100.f, 800.f);
+	const float DesireMid = FIFTargetScoring::DistanceDesire(400.f, 800.f);
+	const float DesireFar = FIFTargetScoring::DistanceDesire(1600.f, 800.f);
+
+	TestEqual(TEXT("Zero distance desire is 1.0"), FIFTargetScoring::DistanceDesire(0.f, 800.f), 1.0f);
+	TestTrue(TEXT("Nearer distance has strictly greater desire than mid"), DesireNear > DesireMid);
+	TestTrue(TEXT("Mid distance has strictly greater desire than far"), DesireMid > DesireFar);
+	TestTrue(TEXT("Falloff stays strictly positive"), DesireFar > 0.f);
+
+	// 2. Commitment lock hysteresis
+	FIFTargetScoreInput Input;
+	Input.bPlayerValid = true;
+	Input.bStrongholdValid = true;
+	Input.bCurrentValid = true;
+	Input.CurrentTarget = EIFTargetCandidate::Player;
+	Input.PlayerDistance = 2400.f;
+	Input.StrongholdDistance = 200.f; // Stronghold much closer -> raw score 0.8 beats hysteresis threshold (0.25 * 2.16 = 0.54)
+	Input.Aggression = 0.5f;
+	Input.bHasGrudge = false;
+	Input.TimeSinceLastSwitch = 1.0f; // Within 3s lock
+	Input.CommitLockSeconds = 3.0f;
+	Input.CommitScoreBonus = 1.6f;
+	Input.SwitchThreshold = 1.35f;
+
+	// While time < CommitLockSeconds and no grudge, commitment lock prevents switch
+	FIFTargetScoreResult LockedResult = FIFTargetScoring::ScoreTarget(Input);
+	TestEqual(TEXT("Commitment lock keeps current player target"), LockedResult.DesiredTarget, EIFTargetCandidate::Player);
+	TestFalse(TEXT("Locked target did not switch"), LockedResult.bTargetSwitched);
+
+	// When time >= CommitLockSeconds, challenger with sufficient score steals target
+	Input.TimeSinceLastSwitch = 4.0f; // Past 3s lock
+	FIFTargetScoreResult UnlockedResult = FIFTargetScoring::ScoreTarget(Input);
+	TestEqual(TEXT("Unlocked challenger steals target"), UnlockedResult.DesiredTarget, EIFTargetCandidate::Stronghold);
+	TestTrue(TEXT("Unlocked target switched"), UnlockedResult.bTargetSwitched);
+
+	// 3. Grudge bypasses lock and multiplies desire
+	Input.TimeSinceLastSwitch = 1.0f; // Reset to locked
+	Input.bHasGrudge = true;          // Player hit enemy
+	Input.RetaliationBonus = 3.0f;
+	FIFTargetScoreResult GrudgeResult = FIFTargetScoring::ScoreTarget(Input);
+	TestEqual(TEXT("Grudge bypasses lock to target player"), GrudgeResult.DesiredTarget, EIFTargetCandidate::Player);
+	TestTrue(TEXT("Grudge boosted player raw score"), GrudgeResult.PlayerRawScore > 0.f);
+
+	// 4. Invalid candidates handling
+	Input.bPlayerValid = false;
+	Input.bStrongholdValid = false;
+	Input.bCurrentValid = false;
+	FIFTargetScoreResult EmptyResult = FIFTargetScoring::ScoreTarget(Input);
+	TestEqual(TEXT("All invalid returns None"), EmptyResult.DesiredTarget, EIFTargetCandidate::None);
+
+	return true;
+}
+
 
 
 
