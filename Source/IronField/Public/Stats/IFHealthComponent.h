@@ -8,6 +8,7 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnHealthDepleted);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHealthChanged, float, Percent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamaged, AActor*, InstigatorActor, float, Damage);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDeath, AActor*, DeadActor);
 
 UCLASS()
 class IRONFIELD_API UIFHealthComponent : public UActorComponent
@@ -17,6 +18,9 @@ class IRONFIELD_API UIFHealthComponent : public UActorComponent
 public:
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Health|Events")
 	FOnHealthDepleted OnHealthDepleted;
+
+	UPROPERTY(BlueprintAssignable, Category = "IronField|Health|Events")
+	FOnDeath OnDeath;
 
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Health|Events")
 	FOnHealthChanged OnHealthChanged;

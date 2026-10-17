@@ -22,6 +22,7 @@ void UIFHealthComponent::ApplyDamage(float Amount)
 	{
 		bIsDead = true;
 		OnHealthDepleted.Broadcast();
+		OnDeath.Broadcast(GetOwner());
 	}
 }
 

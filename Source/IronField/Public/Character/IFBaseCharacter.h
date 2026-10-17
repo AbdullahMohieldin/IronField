@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "GenericTeamAgentInterface.h"
+#include "Wave/IFWaveSpawnable.h"
 #include "IFBaseCharacter.generated.h"
 
 class UAnimInstance;
@@ -14,11 +15,15 @@ class UNiagaraSystem;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCharacterDied, AIFBaseCharacter*, Character);
 
 UCLASS()
-class IRONFIELD_API AIFBaseCharacter : public ACharacter, public IGenericTeamAgentInterface
+class IRONFIELD_API AIFBaseCharacter : public ACharacter, public IGenericTeamAgentInterface, public IIFWaveSpawnable
 {
 	GENERATED_BODY()
 
 public:
+	// IIFWaveSpawnable
+	virtual void SetSpawnContext(const FIFSpawnContext& InContext) override;
+	virtual const FIFSpawnContext& GetSpawnContext() const override { return SpawnContext; }
+
 	// IGenericTeamAgentInterface
 	virtual void SetGenericTeamId(const FGenericTeamId& InTeamID) override { TeamID = InTeamID; }
 	virtual FGenericTeamId GetGenericTeamId() const override { return TeamID; }
@@ -46,6 +51,9 @@ public:
 	virtual void Landed(const FHitResult& Hit) override;
 
 protected:
+	UPROPERTY(Transient)
+	FIFSpawnContext SpawnContext;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Team")
 	FGenericTeamId TeamID = FGenericTeamId(0);
 

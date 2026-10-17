@@ -19,6 +19,21 @@ AIFBaseCharacter::AIFBaseCharacter(const FObjectInitializer& ObjectInitializer)
 	CombatComponent = CreateDefaultSubobject<UIFCombatComponent>(TEXT("Combat"));
 }
 
+void AIFBaseCharacter::SetSpawnContext(const FIFSpawnContext& InContext)
+{
+	SpawnContext = InContext;
+
+	if (HealthComponent && InContext.HealthScale > 0.f && !FMath::IsNearlyEqual(InContext.HealthScale, 1.f))
+	{
+		HealthComponent->SetMaxHealth(HealthComponent->GetMaxHealth() * InContext.HealthScale);
+	}
+
+	if (CombatComponent && InContext.DamageScale > 0.f && !FMath::IsNearlyEqual(InContext.DamageScale, 1.f))
+	{
+		CombatComponent->SetDamageScale(InContext.DamageScale);
+	}
+}
+
 bool AIFBaseCharacter::IsDead() const
 {
 	return HealthComponent && HealthComponent->IsDead();

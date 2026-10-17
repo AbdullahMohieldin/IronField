@@ -1,34 +1,34 @@
 #include "Wave/IFWaveManager.h"
 
 #include "Building/IFStronghold.h"
-#include "Character/IFBaseCharacter.h"
 #include "Character/IFPlayerCharacter.h"
-#include "Combat/IFMageCombatComponent.h"
-#include "Combat/IFProjectile.h"
-#include "Core/IFGameInstance.h"
-#include "Core/IFLog.h"
 #include "Core/IFActorRegistrySubsystem.h"
 #include "Core/IFFeedbackUtils.h"
-#include "Engine/AssetManager.h"
+#include "Core/IFGameInstance.h"
+#include "Core/IFLog.h"
 #include "Engine/World.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "Pickup/IFHealPickup.h"
 #include "Stats/IFHealthComponent.h"
 #include "TimerManager.h"
 #include "Wave/IFEnemySpawnPoint.h"
+#include "Wave/IFWaveRewardComponent.h"
+#include "Wave/IFWaveSpawnable.h"
+#include "Wave/IFWaveWarmupComponent.h"
 
 namespace
 {
 	constexpr float NextFrameTimerDelay = 0.01f;
-	constexpr float PickupGroundTraceDistance = 500.f;
-	constexpr float TraceMissGroundOffset = 10.f;
-	constexpr float MinWarmupLifetime = 0.1f;
 }
 
 AIFWaveManager::AIFWaveManager()
 {
 	PrimaryActorTick.bCanEverTick = false;
+
+	RewardComponent = CreateDefaultSubobject<UIFWaveRewardComponent>(TEXT("WaveRewards"));
+	WarmupComponent = CreateDefaultSubobject<UIFWaveWarmupComponent>(TEXT("WaveWarmup"));
 }
 
 AActor* AIFWaveManager::GetPlayerActor() const
@@ -63,7 +63,6 @@ void AIFWaveManager::StartNextWave()
 
 	CurrentWaveIndex++;
 
-	// Unlimited never touches Waves — every wave is UnlimitedBaseWave scaled by index.
 	if (IsUnlimitedRunMode())
 	{
 		BeginWaveFromDefinition(BuildUnlimitedWave(CurrentWaveIndex));
@@ -96,7 +95,6 @@ void AIFWaveManager::BeginWaveFromDefinition(const FWaveDefinition& Wave)
 		World->GetTimerManager().ClearTimer(ValidateTimerHandle);
 	}
 
-	// Invalidate any timer callbacks scheduled under the previous wave.
 	WaveGeneration++;
 
 	// Flush any pending corpse cleanup from the previous wave before clearing spawned lists.
@@ -106,7 +104,7 @@ void AIFWaveManager::BeginWaveFromDefinition(const FWaveDefinition& Wave)
 	EnemiesAlive = 0;
 	TotalEnemiesInWave = 0;
 	SpawnedEnemies.Empty();
-	PendingSpawns.Reset();
+	SpawnQueue.Reset();
 	bIsWaveActive = true;
 
 	const int32 WaveNumber = GetCurrentWave();
@@ -114,46 +112,16 @@ void AIFWaveManager::BeginWaveFromDefinition(const FWaveDefinition& Wave)
 	OnWaveStarted.Broadcast(WaveNumber);
 	PlayWaveStartFeedback();
 
-	// Failsafe: reconcile the alive-count against live enemies while the wave runs,
-	// so removals that bypass OnCharacterDied cannot stall the wave forever.
 	if (UWorld* const World = GetWorld())
 	{
 		if (WaveValidationIntervalSeconds > 0.f)
 		{
 			FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &AIFWaveManager::HandleValidateTimer, WaveGeneration);
-			World->GetTimerManager().SetTimer(ValidateTimerHandle, Delegate, WaveValidationIntervalSeconds, true, WaveValidationIntervalSeconds);
+			World->GetTimerManager().SetTimer(ValidateTimerHandle, Delegate, WaveValidationIntervalSeconds, true);
 		}
 	}
 
 	SpawnAllEnemiesInWave(Wave);
-	CompleteWaveIfFinished();
-}
-
-void AIFWaveManager::PlayWaveStartFeedback() const
-{
-	IFFeedbackUtils::PlayAtLocation(GetWorld(), WaveStartSound, nullptr, GetActorLocation());
-}
-
-void AIFWaveManager::ScheduleNextWave()
-{
-	UWorld* const World = GetWorld();
-	if (!World)
-	{
-		StartNextWave();
-		return;
-	}
-
-	if (InterWaveDelaySeconds <= 0.f)
-	{
-		// Never recurse same-frame: a chain of empty waves would deepen the stack
-		// once per wave. A single-tick defer keeps the rhythm tight without recursion.
-		FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &AIFWaveManager::HandleInterWaveTimer, WaveGeneration);
-		World->GetTimerManager().SetTimer(InterWaveTimerHandle, Delegate, NextFrameTimerDelay, false);
-		return;
-	}
-
-	FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &AIFWaveManager::HandleInterWaveTimer, WaveGeneration);
-	World->GetTimerManager().SetTimer(InterWaveTimerHandle, Delegate, InterWaveDelaySeconds, false);
 }
 
 void AIFWaveManager::HandleInterWaveTimer(uint32 ScheduledGeneration)
@@ -162,6 +130,7 @@ void AIFWaveManager::HandleInterWaveTimer(uint32 ScheduledGeneration)
 	{
 		return;
 	}
+
 	StartNextWave();
 }
 
@@ -169,12 +138,9 @@ void AIFWaveManager::HandleSpawnTimerTick(uint32 ScheduledGeneration)
 {
 	if (ScheduledGeneration != WaveGeneration)
 	{
-		if (UWorld* const World = GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(SpawnTimerHandle);
-		}
 		return;
 	}
+
 	TrySpawnPending();
 }
 
@@ -182,19 +148,42 @@ void AIFWaveManager::HandleValidateTimer(uint32 ScheduledGeneration)
 {
 	if (ScheduledGeneration != WaveGeneration)
 	{
-		if (UWorld* const World = GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(ValidateTimerHandle);
-		}
-		return;
-	}
-
-	if (!bIsWaveActive)
-	{
 		return;
 	}
 
 	ValidateWaveState();
+}
+
+void AIFWaveManager::ScheduleNextWave()
+{
+	UWorld* const World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (!IsUnlimitedRunMode() && (CurrentWaveIndex + 1) >= Waves.Num())
+	{
+		UE_LOG(LogIronField, Log, TEXT("[IF-Wave] Last wave finished; no next wave to schedule."));
+		OnAllWavesCompleted.Broadcast();
+		return;
+	}
+
+	const float Delay = FMath::Max(NextFrameTimerDelay, InterWaveDelaySeconds);
+	UE_LOG(LogIronField, Log, TEXT("[IF-Wave] Scheduling next wave in %.1fs."), Delay);
+
+	FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &AIFWaveManager::HandleInterWaveTimer, WaveGeneration);
+	World->GetTimerManager().SetTimer(InterWaveTimerHandle, Delegate, Delay, false);
+}
+
+void AIFWaveManager::PlayWaveStartFeedback() const
+{
+	if (!WaveStartSound)
+	{
+		return;
+	}
+
+	IFFeedbackUtils::PlayAtLocation(GetWorld(), WaveStartSound, nullptr, GetActorLocation());
 }
 
 void AIFWaveManager::ValidateWaveState()
@@ -202,14 +191,15 @@ void AIFWaveManager::ValidateWaveState()
 	int32 ActualAlive = 0;
 	for (int32 Index = SpawnedEnemies.Num() - 1; Index >= 0; --Index)
 	{
-		AIFBaseCharacter* const Enemy = SpawnedEnemies[Index];
+		AActor* const Enemy = SpawnedEnemies[Index].Get();
 		if (!IsValid(Enemy))
 		{
 			SpawnedEnemies.RemoveAt(Index);
 			continue;
 		}
 
-		if (!Enemy->IsDead())
+		const UIFHealthComponent* const Health = Enemy->FindComponentByClass<UIFHealthComponent>();
+		if (!Health || !Health->IsDead())
 		{
 			ActualAlive++;
 		}
@@ -223,14 +213,8 @@ void AIFWaveManager::ValidateWaveState()
 		OnEnemiesAliveCountChanged.Broadcast(EnemiesAlive);
 	}
 
-	// Refill the trickle queue and unstall completion if the mismatch held either back.
 	TrySpawnPending();
 	CompleteWaveIfFinished();
-}
-
-void AIFWaveManager::ApplyWaveScaling(AIFBaseCharacter* Enemy) const
-{
-	// No stat scaling in Unlimited mode — only enemy count increases via BuildUnlimitedWave
 }
 
 FVector AIFWaveManager::PickSpawnLocation(FRotator& OutRotation) const
@@ -264,15 +248,11 @@ bool AIFWaveManager::IsUnlimitedRunMode() const
 
 FWaveDefinition AIFWaveManager::BuildUnlimitedWave(int32 WaveIndex) const
 {
-	// WaveIndex is 0-based: wave 1 keeps authored counts, each later wave multiplies again.
 	FWaveDefinition Result = UnlimitedBaseWave;
-	const float Scale = FMath::Pow(UnlimitedEnemyCountScaleFactor, static_cast<float>(WaveIndex));
-
 	for (FEnemyGroupDefinition& Group : Result.EnemyGroups)
 	{
-		Group.EnemyCount = FMath::Max(1, FMath::RoundToInt(static_cast<float>(Group.EnemyCount) * Scale));
+		Group.EnemyCount = IFWaveScalingUtils::ScaleEnemyCount(Group.EnemyCount, WaveIndex, UnlimitedEnemyCountScaleFactor);
 	}
-
 	return Result;
 }
 
@@ -304,23 +284,20 @@ void AIFWaveManager::SpawnAllEnemiesInWave(const FWaveDefinition& Wave)
 	BuildSpawnQueue(Wave);
 
 	UWorld* const World = GetWorld();
-	if (World && PendingSpawns.Num() > 0 && SpawnIntervalSeconds > 0.f)
+	if (World && SpawnQueue.HasPending() && SpawnIntervalSeconds > 0.f)
 	{
-		// First spawn waits out the wave banner so a wave never instant-contacts.
 		FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &AIFWaveManager::HandleSpawnTimerTick, WaveGeneration);
 		World->GetTimerManager().SetTimer(SpawnTimerHandle, Delegate, SpawnIntervalSeconds, true, SpawnStartDelaySeconds);
 	}
 	else
 	{
-		// No timer possible (or nothing queued): spawn synchronously so the wave cannot stall.
 		TrySpawnPending();
 	}
 }
 
 void AIFWaveManager::BuildSpawnQueue(const FWaveDefinition& Wave)
 {
-	PendingSpawns.Reset();
-	TotalEnemiesInWave = 0;
+	SpawnQueue.Reset();
 
 	for (const FEnemyGroupDefinition& Group : Wave.EnemyGroups)
 	{
@@ -332,11 +309,11 @@ void AIFWaveManager::BuildSpawnQueue(const FWaveDefinition& Wave)
 
 		for (int32 i = 0; i < Group.EnemyCount; ++i)
 		{
-			PendingSpawns.Add(Group.EnemyClass);
+			SpawnQueue.Enqueue(Group.EnemyClass);
 		}
 	}
 
-	TotalEnemiesInWave = PendingSpawns.Num();
+	TotalEnemiesInWave = SpawnQueue.TotalQueued();
 }
 
 void AIFWaveManager::TrySpawnPending()
@@ -348,11 +325,9 @@ void AIFWaveManager::TrySpawnPending()
 	}
 
 	const int32 CappedMax = FMath::Max(1, MaxConcurrentAlive);
-	while (PendingSpawns.Num() > 0 && EnemiesAlive < CappedMax)
+	while (SpawnQueue.HasPending() && EnemiesAlive < CappedMax)
 	{
-		const TSubclassOf<AIFBaseCharacter> EnemyClass = PendingSpawns[0];
-		PendingSpawns.RemoveAt(0);
-
+		const TSubclassOf<APawn> EnemyClass = SpawnQueue.Dequeue();
 		if (!EnemyClass)
 		{
 			TotalEnemiesInWave = FMath::Max(0, TotalEnemiesInWave - 1);
@@ -361,13 +336,23 @@ void AIFWaveManager::TrySpawnPending()
 
 		FRotator SpawnRotation;
 		const FVector SpawnLocation = PickSpawnLocation(SpawnRotation);
+		const FTransform SpawnTransform(SpawnRotation, SpawnLocation);
 
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-
-		AIFBaseCharacter* const SpawnedEnemy = World->SpawnActor<AIFBaseCharacter>(EnemyClass, SpawnLocation, SpawnRotation, SpawnParams);
+		APawn* const SpawnedEnemy = World->SpawnActorDeferred<APawn>(
+			EnemyClass, SpawnTransform, this, nullptr, ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
 		if (SpawnedEnemy)
 		{
+			if (IIFWaveSpawnable* const Spawnable = Cast<IIFWaveSpawnable>(SpawnedEnemy))
+			{
+				FIFSpawnContext Context;
+				Context.WaveNumber = GetCurrentWave();
+				Context.SiegeBias = GetSiegeBiasForWave();
+				Context.HealthScale = IFWaveScalingUtils::ComputeHealthScale(CurrentWaveIndex, WaveHealthMultiplier);
+				Context.DamageScale = IFWaveScalingUtils::ComputeDamageScale(CurrentWaveIndex, WaveDamageMultiplier);
+				Spawnable->SetSpawnContext(Context);
+			}
+
+			SpawnedEnemy->FinishSpawning(SpawnTransform);
 			EnemiesSpawnedSoFar++;
 			NotifyEnemySpawned(SpawnedEnemy);
 		}
@@ -379,7 +364,7 @@ void AIFWaveManager::TrySpawnPending()
 		}
 	}
 
-	if (PendingSpawns.Num() <= 0)
+	if (!SpawnQueue.HasPending())
 	{
 		World->GetTimerManager().ClearTimer(SpawnTimerHandle);
 	}
@@ -387,33 +372,32 @@ void AIFWaveManager::TrySpawnPending()
 	CompleteWaveIfFinished();
 }
 
-void AIFWaveManager::NotifyEnemySpawned(AIFBaseCharacter* Enemy)
+void AIFWaveManager::NotifyEnemySpawned(APawn* Enemy)
 {
 	if (!Enemy)
 	{
 		return;
 	}
 
-	ApplyWaveScaling(Enemy);
-
 	SpawnedEnemies.Add(Enemy);
 	EnemiesAlive++;
 	OnEnemiesAliveCountChanged.Broadcast(EnemiesAlive);
 
-	Enemy->OnCharacterDied.AddDynamic(this, &AIFWaveManager::HandleEnemyDied);
+	if (UIFHealthComponent* const Health = Enemy->FindComponentByClass<UIFHealthComponent>())
+	{
+		Health->OnDeath.AddDynamic(this, &AIFWaveManager::HandleEnemyDied);
+	}
 }
 
 void AIFWaveManager::CompleteWaveIfFinished()
 {
-	if (!bIsWaveActive || EnemiesAlive > 0 || PendingSpawns.Num() > 0 || EnemiesSpawnedSoFar < TotalEnemiesInWave)
+	if (!bIsWaveActive || EnemiesAlive > 0 || SpawnQueue.HasPending() || EnemiesSpawnedSoFar < TotalEnemiesInWave)
 	{
 		return;
 	}
 
 	if (TotalEnemiesInWave <= 0)
 	{
-		// Empty or all-invalid waves never spawn, so HandleEnemyDied cannot complete them.
-		// The breather timer below keeps this from recursing into the next wave same-frame.
 		UE_LOG(LogIronField, Warning, TEXT("[IF-Wave] Wave %d has no spawnable enemies; completing immediately."), GetCurrentWave());
 	}
 
@@ -421,6 +405,11 @@ void AIFWaveManager::CompleteWaveIfFinished()
 	const int32 WaveNumber = GetCurrentWave();
 	UE_LOG(LogIronField, Log, TEXT("[IF-Wave] Wave %d complete."), WaveNumber);
 	OnWaveCompleted.Broadcast(WaveNumber);
+
+	if (RewardComponent)
+	{
+		RewardComponent->ApplyWaveClearHeal(WaveNumber);
+	}
 
 	if (UWorld* const World = GetWorld())
 	{
@@ -430,14 +419,17 @@ void AIFWaveManager::CompleteWaveIfFinished()
 	ScheduleNextWave();
 }
 
-void AIFWaveManager::HandleEnemyDied(AIFBaseCharacter* DeadEnemy)
+void AIFWaveManager::HandleEnemyDied(AActor* DeadActor)
 {
-	if (!DeadEnemy)
+	if (!DeadActor)
 	{
 		return;
 	}
 
-	DeadEnemy->OnCharacterDied.RemoveDynamic(this, &AIFWaveManager::HandleEnemyDied);
+	if (UIFHealthComponent* const Health = DeadActor->FindComponentByClass<UIFHealthComponent>())
+	{
+		Health->OnDeath.RemoveDynamic(this, &AIFWaveManager::HandleEnemyDied);
+	}
 
 	EnemiesAlive = FMath::Max(0, EnemiesAlive - 1);
 	OnEnemiesAliveCountChanged.Broadcast(EnemiesAlive);
@@ -445,26 +437,29 @@ void AIFWaveManager::HandleEnemyDied(AIFBaseCharacter* DeadEnemy)
 	KillCount++;
 	OnKillCountChanged.Broadcast(KillCount);
 
-	// Track corpses independently from active spawned enemies
-	PendingCorpses.Add(DeadEnemy);
-	SpawnedEnemies.Remove(DeadEnemy);
+	PendingCorpses.Add(DeadActor);
+	SpawnedEnemies.Remove(DeadActor);
 
-	// Refill concurrency from the queue as the player scores kills.
-	TrySpawnPending();
+	if (RewardComponent)
+	{
+		RewardComponent->TrySpawnHealPickup(DeadActor);
+	}
 
-	// Spawn heal pickup before wave completion check so DeadEnemy is still valid
-	TrySpawnHealPickup(DeadEnemy);
-
-	CompleteWaveIfFinished();
-
-	// Defer corpse cleanup so death animations complete
 	if (UWorld* const World = GetWorld())
 	{
-		if (!World->GetTimerManager().IsTimerActive(CorpseCleanupTimerHandle))
+		if (CorpseDespawnDelaySeconds > 0.f)
 		{
-			World->GetTimerManager().SetTimer(CorpseCleanupTimerHandle, this, &AIFWaveManager::CleanupWaveCorpses, CorpseDespawnDelaySeconds, false);
+			FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &AIFWaveManager::CleanupWaveCorpses);
+			World->GetTimerManager().SetTimer(CorpseCleanupTimerHandle, Delegate, CorpseDespawnDelaySeconds, false);
+		}
+		else
+		{
+			CleanupWaveCorpses();
 		}
 	}
+
+	TrySpawnPending();
+	CompleteWaveIfFinished();
 }
 
 void AIFWaveManager::CleanupWaveCorpses()
@@ -474,9 +469,9 @@ void AIFWaveManager::CleanupWaveCorpses()
 		World->GetTimerManager().ClearTimer(CorpseCleanupTimerHandle);
 	}
 
-	for (int32 Index = PendingCorpses.Num() - 1; Index >= 0; --Index)
+	for (TWeakObjectPtr<AActor>& CorpsePtr : PendingCorpses)
 	{
-		if (AIFBaseCharacter* const Corpse = PendingCorpses[Index].Get())
+		if (AActor* const Corpse = CorpsePtr.Get())
 		{
 			Corpse->Destroy();
 		}
@@ -486,57 +481,74 @@ void AIFWaveManager::CleanupWaveCorpses()
 
 void AIFWaveManager::UnbindAllSpawnedEnemyDelegates()
 {
-	for (AIFBaseCharacter* Enemy : SpawnedEnemies)
+	for (const TWeakObjectPtr<AActor>& EnemyPtr : SpawnedEnemies)
 	{
-		if (Enemy)
+		if (AActor* const Enemy = EnemyPtr.Get())
 		{
-			Enemy->OnCharacterDied.RemoveDynamic(this, &AIFWaveManager::HandleEnemyDied);
+			if (UIFHealthComponent* const Health = Enemy->FindComponentByClass<UIFHealthComponent>())
+			{
+				Health->OnDeath.RemoveDynamic(this, &AIFWaveManager::HandleEnemyDied);
+			}
 		}
 	}
-	SpawnedEnemies.Empty();
 }
 
 void AIFWaveManager::BeginPlay()
 {
 	Super::BeginPlay();
 
-	UWorld* const World = GetWorld();
-	if (!World)
+	if (UWorld* const World = GetWorld())
 	{
-		return;
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
+		{
+			Registry->RegisterActor(IFRegistryRoles::WaveManager, this);
+		}
 	}
 
-	if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
+	if (RewardComponent)
 	{
-		Registry->RegisterActor(IFRegistryRoles::WaveManager, this);
+		RewardComponent->PlayerHealPercent = PlayerHealPercent;
+		RewardComponent->StrongholdRepairPercent = StrongholdRepairPercent;
+		RewardComponent->DropChance = DropChance;
+		RewardComponent->PickupHealAmount = PickupHealAmount;
+		RewardComponent->HealPickupClass = HealPickupClass;
+		RewardComponent->HealSound = HealSound;
+		RewardComponent->OnWaveClearHeal.AddDynamic(this, &AIFWaveManager::HandleRewardWaveClearHeal);
+	}
 
-		if (AIFPlayerCharacter* const Player = Registry->GetActor<AIFPlayerCharacter>(IFRegistryRoles::Player))
-		{
-			HandlePlayerRegistered(Player);
-		}
-		else
-		{
-			Registry->OnActorRegistered.AddDynamic(this, &AIFWaveManager::HandleActorRegistered);
-		}
+	if (WarmupComponent)
+	{
+		WarmupComponent->bWarmupSpawns = bWarmupSpawns;
+		WarmupComponent->WarmupLifetimeSeconds = WarmupLifetimeSeconds;
 	}
 
 	CacheSpawnPoints();
 
-	// First-spawn hitch warmup entry: preload + render one of each spawnable class
-	// during the opening grace so shader/AnimBP/disk costs land before first contact.
-	if (bWarmupSpawns)
+	if (const UWorld* const World = GetWorld())
 	{
-		PreloadWaveAssets();
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
+		{
+			if (AIFPlayerCharacter* const Player = Registry->GetActor<AIFPlayerCharacter>(IFRegistryRoles::Player))
+			{
+				BindPlayer(Player);
+			}
+			else
+			{
+				Registry->OnActorRegistered.AddDynamic(this, &AIFWaveManager::HandleActorRegistered);
+			}
+		}
 	}
 
-	OnWaveCompleted.AddDynamic(this, &AIFWaveManager::HandleWaveClearHeal);
-	bWaveCompletedBound = true;
+	PreloadWaveAssets();
 
 	if (bAutoStartOnBeginPlay)
 	{
-		// Opening grace: the run breathes before wave 1 instead of spawning on frame one.
-		FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &AIFWaveManager::HandleInterWaveTimer, WaveGeneration);
-		World->GetTimerManager().SetTimer(InterWaveTimerHandle, Delegate, InitialWaveStartDelaySeconds, false);
+		if (UWorld* const World = GetWorld())
+		{
+			const float Delay = FMath::Max(NextFrameTimerDelay, InitialWaveStartDelaySeconds);
+			FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &AIFWaveManager::HandleInterWaveTimer, WaveGeneration);
+			World->GetTimerManager().SetTimer(InterWaveTimerHandle, Delegate, Delay, false);
+		}
 	}
 }
 
@@ -553,26 +565,16 @@ void AIFWaveManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		World->GetTimerManager().ClearTimer(InterWaveTimerHandle);
 		World->GetTimerManager().ClearTimer(SpawnTimerHandle);
 		World->GetTimerManager().ClearTimer(ValidateTimerHandle);
-		World->GetTimerManager().ClearTimer(WarmupTimerHandle);
 		World->GetTimerManager().ClearTimer(CorpseCleanupTimerHandle);
 	}
 
-	// Invalidate timer callbacks already in flight during teardown.
 	WaveGeneration++;
 
-	if (WarmupStreamableHandle.IsValid())
-	{
-		WarmupStreamableHandle->CancelHandle();
-		WarmupStreamableHandle.Reset();
-	}
-
-	CleanupWarmupActors();
 	CleanupWaveCorpses();
 
-	if (bWaveCompletedBound)
+	if (RewardComponent)
 	{
-		OnWaveCompleted.RemoveDynamic(this, &AIFWaveManager::HandleWaveClearHeal);
-		bWaveCompletedBound = false;
+		RewardComponent->OnWaveClearHeal.RemoveDynamic(this, &AIFWaveManager::HandleRewardWaveClearHeal);
 	}
 
 	UnbindPlayer();
@@ -591,14 +593,8 @@ void AIFWaveManager::HandleActorRegistered(FName ActorRole, AActor* Actor)
 
 void AIFWaveManager::HandlePlayerRegistered(AIFPlayerCharacter* Player)
 {
-	if (CachedPlayer)
+	if (CachedPlayer || !Player)
 	{
-		return;
-	}
-
-	if (!Player)
-	{
-		UE_LOG(LogIronField, Warning, TEXT("[IF-Wave] Player registration arrived with no player instance."));
 		return;
 	}
 
@@ -640,108 +636,12 @@ void AIFWaveManager::HandlePlayerHealthDepleted()
 	OnPlayerDowned.Broadcast();
 }
 
-void AIFWaveManager::HandleWaveClearHeal(int32 WaveNumber)
+void AIFWaveManager::HandleRewardWaveClearHeal(int32 WaveNumber, float InPlayerHealed, float InGateRepaired)
 {
-	UE_LOG(LogIronField, Log, TEXT("[IF-Heal] Wave %d clear - applying heal/repair."), WaveNumber);
-
-	float PlayerHealed = 0.f;
-	float GateRepaired = 0.f;
-
-	if (UWorld* const World = GetWorld())
-	{
-		// Player heal and stronghold repair are the same step; only the fetched Health, the
-		// percent, the recorded out-value, the log text, and the FX actor differ, so they are passed in.
-		auto ApplyClearHeal = [this, World](UIFHealthComponent* Health, float Percent, float& OutAmount,
-			const TCHAR* HealLabel, const TCHAR* SkipMessage, const AActor* FxActor)
-		{
-			if (!Health)
-			{
-				return;
-			}
-
-			if (Health->IsDead())
-			{
-				UE_LOG(LogIronField, Log, TEXT("%s"), SkipMessage);
-				return;
-			}
-
-			const float Amount = Health->GetMaxHealth() * Percent;
-			Health->ApplyHealing(Amount);
-			OutAmount = Amount;
-			UE_LOG(LogIronField, Log, TEXT("[IF-Heal] %s %.0f (%.0f%% of %.0f max)."), HealLabel, Amount, Percent * 100.f, Health->GetMaxHealth());
-
-			if (HealSound)
-			{
-				IFFeedbackUtils::PlayAtLocation(World, HealSound, nullptr, FxActor->GetActorLocation());
-			}
-		};
-
-		// Heal player
-		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
-		{
-			if (AIFPlayerCharacter* const Player = Registry->GetActor<AIFPlayerCharacter>(IFRegistryRoles::Player))
-			{
-				ApplyClearHeal(Player->GetHealthComponent(), PlayerHealPercent, PlayerHealed,
-					TEXT("Player healed"), TEXT("[IF-Heal] Player dead - skipping heal."), Player);
-			}
-		}
-
-		// Repair stronghold
-		if (AActor* const StrongholdActor = GetStrongholdActor())
-		{
-			ApplyClearHeal(StrongholdActor->FindComponentByClass<UIFHealthComponent>(), StrongholdRepairPercent, GateRepaired,
-				TEXT("Stronghold repaired"), TEXT("[IF-Heal] Stronghold destroyed - skipping repair."), StrongholdActor);
-		}
-	}
-
-	OnWaveClearHeal.Broadcast(WaveNumber, PlayerHealed, GateRepaired);
+	OnWaveClearHeal.Broadcast(WaveNumber, InPlayerHealed, InGateRepaired);
 }
 
-void AIFWaveManager::TrySpawnHealPickup(AIFBaseCharacter* DeadEnemy)
-{
-	if (!DeadEnemy || !HealPickupClass || DropChance <= 0.f)
-	{
-		return;
-	}
-
-	if (FMath::FRand() > DropChance)
-	{
-		return;
-	}
-
-	UWorld* const World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	FVector SpawnLocation = DeadEnemy->GetActorLocation();
-	// Trace down to find ground so pickup sits on floor, not floating at capsule base + 50
-	FHitResult HitResult;
-	FCollisionQueryParams TraceParams(SCENE_QUERY_STAT(PickupSpawnTrace), false, DeadEnemy);
-	TraceParams.bReturnPhysicalMaterial = false;
-	TraceParams.bTraceComplex = true;
-	if (World->LineTraceSingleByChannel(HitResult, SpawnLocation, SpawnLocation - FVector(0.f, 0.f, PickupGroundTraceDistance), ECC_WorldStatic, TraceParams))
-	{
-		SpawnLocation = HitResult.Location;
-	}
-	else
-	{
-		SpawnLocation.Z += TraceMissGroundOffset; // slight offset above ground if no trace hit
-	}
-
-	const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
-	AIFHealPickup* const Pickup = World->SpawnActorDeferred<AIFHealPickup>(
-		HealPickupClass, SpawnTransform, this, nullptr, ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
-	if (Pickup)
-	{
-		Pickup->HealAmount = PickupHealAmount;
-		Pickup->FinishSpawning(SpawnTransform);
-		UE_LOG(LogIronField, Log, TEXT("[IF-Heal] Spawned heal pickup at %s (amount=%.0f)."), *SpawnLocation.ToString(), PickupHealAmount);
-	}
-}
-
-void AIFWaveManager::CollectWarmupEnemyClasses(TArray<TSubclassOf<AIFBaseCharacter>>& OutClasses) const
+void AIFWaveManager::CollectWarmupEnemyClasses(TArray<TSubclassOf<APawn>>& OutClasses) const
 {
 	OutClasses.Reset();
 
@@ -765,145 +665,12 @@ void AIFWaveManager::CollectWarmupEnemyClasses(TArray<TSubclassOf<AIFBaseCharact
 
 void AIFWaveManager::PreloadWaveAssets()
 {
-	TArray<TSubclassOf<AIFBaseCharacter>> Enemies;
+	if (!WarmupComponent || !bWarmupSpawns)
+	{
+		return;
+	}
+
+	TArray<TSubclassOf<APawn>> Enemies;
 	CollectWarmupEnemyClasses(Enemies);
-
-	TArray<FSoftObjectPath> Paths;
-	for (const TSubclassOf<AIFBaseCharacter>& EnemyClass : Enemies)
-	{
-		if (EnemyClass)
-		{
-			Paths.AddUnique(FSoftObjectPath(EnemyClass));
-		}
-	}
-	if (HealPickupClass)
-	{
-		Paths.AddUnique(FSoftObjectPath(HealPickupClass));
-	}
-	if (WaveStartSound)
-	{
-		Paths.AddUnique(FSoftObjectPath(WaveStartSound));
-	}
-	if (HealSound)
-	{
-		Paths.AddUnique(FSoftObjectPath(HealSound));
-	}
-
-	if (Paths.Num() <= 0)
-	{
-		return;
-	}
-
-	FStreamableManager& Streamable = UAssetManager::GetStreamableManager();
-	WarmupStreamableHandle = Streamable.RequestAsyncLoad(Paths, FStreamableDelegate::CreateUObject(this, &AIFWaveManager::HandleWarmupAssetsLoaded));
-}
-
-void AIFWaveManager::HandleWarmupAssetsLoaded()
-{
-	WarmupStreamableHandle.Reset();
-
-	if (bWarmedUp || !GetWorld())
-	{
-		return;
-	}
-	bWarmedUp = true;
-	WarmupSpawnActors();
-}
-
-void AIFWaveManager::WarmupSpawnActors()
-{
-	UWorld* const World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	const FVector Center = GetActorLocation() + FVector(0.f, 0.f, 100.f);
-
-	TArray<TSubclassOf<AIFBaseCharacter>> Enemies;
-	CollectWarmupEnemyClasses(Enemies);
-
-	TSubclassOf<AIFProjectile> WarmupProjectileClass = nullptr;
-	for (const TSubclassOf<AIFBaseCharacter>& EnemyClass : Enemies)
-	{
-		if (!EnemyClass)
-		{
-			continue;
-		}
-
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-
-		AIFBaseCharacter* const Dummy = World->SpawnActor<AIFBaseCharacter>(EnemyClass, Center, FRotator::ZeroRotator, SpawnParams);
-		if (!Dummy)
-		{
-			continue;
-		}
-
-		// Dummies never fight and never count: no controller brain, no collision,
-		// no wave tracking, no death delegates. They exist only to render a few frames.
-		if (AController* Ctrl = Dummy->GetController())
-		{
-			Ctrl->UnPossess();
-			Ctrl->Destroy();
-		}
-		Dummy->SetActorEnableCollision(false);
-		WarmupActors.Add(Dummy);
-
-		if (!WarmupProjectileClass)
-		{
-			if (UIFCombatComponent* Combat = Dummy->GetCombatComponent())
-			{
-				if (UIFMageCombatComponent* Mage = Cast<UIFMageCombatComponent>(Combat))
-				{
-					WarmupProjectileClass = Mage->GetProjectileClass();
-				}
-			}
-		}
-	}
-
-	if (WarmupProjectileClass)
-	{
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		// Zero-damage shot straight up: primes projectile render/audio with no one to hit.
-		if (AIFProjectile* const Shot = World->SpawnActor<AIFProjectile>(WarmupProjectileClass, Center + FVector(0.f, 0.f, 200.f), FRotator::ZeroRotator, SpawnParams))
-		{
-			FIFProjectileSpawnArgs Args;
-			Args.SpawnLocation = Shot->GetActorLocation();
-			Args.LaunchDirection = FVector::UpVector;
-			Args.Damage = 0.f;
-			Shot->InitializeProjectile(Args);
-			WarmupActors.Add(Shot);
-		}
-	}
-
-	if (HealPickupClass)
-	{
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-		if (AIFHealPickup* const Pickup = World->SpawnActor<AIFHealPickup>(HealPickupClass, Center, FRotator::ZeroRotator, SpawnParams))
-		{
-			WarmupActors.Add(Pickup);
-		}
-	}
-
-	// Prime wave-start sound+VFX early; reads as the opening horn under GET READY.
-	PlayWaveStartFeedback();
-
-	FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &AIFWaveManager::CleanupWarmupActors);
-	World->GetTimerManager().SetTimer(WarmupTimerHandle, Delegate, FMath::Max(MinWarmupLifetime, WarmupLifetimeSeconds), false);
-}
-
-void AIFWaveManager::CleanupWarmupActors()
-{
-	for (TObjectPtr<AActor>& Actor : WarmupActors)
-	{
-		if (Actor)
-		{
-			Actor->Destroy();
-		}
-	}
-	WarmupActors.Empty();
+	WarmupComponent->StartWarmup(Enemies, HealPickupClass, WaveStartSound, HealSound);
 }

@@ -10,7 +10,6 @@ class UBehaviorTree;
 class UIFCombatComponent;
 class UIFEnemyAIData;
 class UIFHealthComponent;
-class AIFWaveManager;
 
 UCLASS()
 class IRONFIELD_API AIFEnemyController : public AAIController
@@ -56,7 +55,10 @@ private:
 	TObjectPtr<UIFHealthComponent> CachedHealthComponent;
 
 	UPROPERTY(Transient)
-	TObjectPtr<AIFWaveManager> CachedWaveManager;
+	TWeakObjectPtr<AActor> CachedPlayer;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UIFHealthComponent> CachedPlayerHealth;
 
 	UFUNCTION()
 	void HandleOwnCombatStateChanged(ECombatState PreviousState, ECombatState NewState);
@@ -74,5 +76,7 @@ private:
 	void RollPawnAggression();
 	void BindOwnDelegates();
 	void UnbindOwnDelegates();
+	void BindPlayer(AActor* InPlayer);
+	void UnbindPlayer();
 	void ApplyMovementSpeedForState(ECombatState State);
 };

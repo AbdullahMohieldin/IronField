@@ -10,7 +10,7 @@
 #include "Core/IFLog.h"
 #include "Engine/World.h"
 #include "Stats/IFHealthComponent.h"
-#include "Wave/IFWaveManager.h"
+#include "Wave/IFWaveSpawnable.h"
 
 namespace
 {
@@ -68,22 +68,15 @@ void AIFEnemyController::InitializeControlledPawn()
 	{
 		if (UIFActorRegistrySubsystem* const Subsystem = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			CachedWaveManager = Subsystem->GetActor<AIFWaveManager>(IFRegistryRoles::WaveManager);
-			if (!CachedWaveManager)
+			if (AActor* const PlayerActor = Subsystem->GetActor(IFRegistryRoles::Player))
+			{
+				BindPlayer(PlayerActor);
+			}
+			else
 			{
 				Subsystem->OnActorRegistered.AddDynamic(this, &AIFEnemyController::HandleActorRegistered);
 			}
 		}
-	}
-
-	if (!CachedWaveManager)
-	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-AI] %s possessed before WaveManager registered; subscribed to OnActorRegistered."), *GetName());
-	}
-
-	if (CachedWaveManager)
-	{
-		CachedWaveManager->OnPlayerDowned.AddDynamic(this, &AIFEnemyController::HandlePlayerDowned);
 	}
 
 	RollPawnAggression();
@@ -98,7 +91,11 @@ void AIFEnemyController::RollPawnAggression()
 	{
 		const UIFEnemyAIData* const Data = GetAIData();
 		const float Spread = Data ? Data->AggressionSpread : FallbackAggressionSpread;
-		const float Bias = CachedWaveManager ? CachedWaveManager->GetSiegeBiasForWave() : 0.f;
+		float Bias = 0.f;
+		if (const IIFWaveSpawnable* const Spawnable = Cast<IIFWaveSpawnable>(EnemyChar))
+		{
+			Bias = Spawnable->GetSpawnContext().SiegeBias;
+		}
 		EnemyChar->RollAggression(Bias, Spread);
 	}
 }
@@ -106,8 +103,8 @@ void AIFEnemyController::RollPawnAggression()
 void AIFEnemyController::OnUnPossess()
 {
 	UnbindOwnDelegates();
+	UnbindPlayer();
 	CachedCombatComponent = nullptr;
-	CachedWaveManager = nullptr;
 	Super::OnUnPossess();
 }
 
@@ -145,10 +142,7 @@ void AIFEnemyController::UnbindOwnDelegates()
 	}
 	CachedHealthComponent = nullptr;
 
-	if (CachedWaveManager)
-	{
-		CachedWaveManager->OnPlayerDowned.RemoveAll(this);
-	}
+	UnbindPlayer();
 
 	if (const UWorld* const World = GetWorld())
 	{
@@ -159,23 +153,38 @@ void AIFEnemyController::UnbindOwnDelegates()
 	}
 }
 
+void AIFEnemyController::BindPlayer(AActor* InPlayer)
+{
+	if (!InPlayer || CachedPlayer.Get() == InPlayer)
+	{
+		return;
+	}
+
+	UnbindPlayer();
+	CachedPlayer = InPlayer;
+	if (UIFHealthComponent* const Health = InPlayer->FindComponentByClass<UIFHealthComponent>())
+	{
+		CachedPlayerHealth = Health;
+		Health->OnHealthDepleted.AddDynamic(this, &AIFEnemyController::HandlePlayerDowned);
+	}
+}
+
+void AIFEnemyController::UnbindPlayer()
+{
+	if (CachedPlayerHealth.IsValid())
+	{
+		CachedPlayerHealth->OnHealthDepleted.RemoveAll(this);
+		CachedPlayerHealth = nullptr;
+	}
+	CachedPlayer = nullptr;
+}
+
 void AIFEnemyController::HandleActorRegistered(FName ActorRole, AActor* Actor)
 {
-	if (ActorRole != IFRegistryRoles::WaveManager)
+	if (ActorRole == IFRegistryRoles::Player)
 	{
-		return;
+		BindPlayer(Actor);
 	}
-
-	AIFWaveManager* const InWaveManager = Cast<AIFWaveManager>(Actor);
-	if (!InWaveManager || CachedWaveManager == InWaveManager)
-	{
-		return;
-	}
-
-	CachedWaveManager = InWaveManager;
-	CachedWaveManager->OnPlayerDowned.AddDynamic(this, &AIFEnemyController::HandlePlayerDowned);
-
-	RollPawnAggression();
 }
 
 void AIFEnemyController::HandleOwnCombatStateChanged(ECombatState PreviousState, ECombatState NewState)
@@ -218,12 +227,12 @@ void AIFEnemyController::HandleOwnHealthDepleted()
 void AIFEnemyController::HandlePlayerDowned()
 {
 	UBlackboardComponent* const BB = GetBlackboardComponent();
-	if (!BB || !CachedWaveManager)
+	if (!BB || !CachedPlayer.IsValid())
 	{
 		return;
 	}
 
-	if (Cast<AActor>(BB->GetValueAsObject(TargetActorKeyName)) == CachedWaveManager->GetPlayerActor())
+	if (Cast<AActor>(BB->GetValueAsObject(TargetActorKeyName)) == CachedPlayer.Get())
 	{
 		BB->SetValueAsObject(TargetActorKeyName, nullptr);
 	}

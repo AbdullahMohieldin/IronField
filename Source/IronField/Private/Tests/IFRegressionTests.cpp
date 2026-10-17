@@ -17,7 +17,9 @@
 #include "Stats/IFHealthComponent.h"
 #include "Stats/IFStaminaComponent.h"
 #include "Stats/IFStatUtils.h"
+#include "Wave/IFSpawnQueue.h"
 #include "Wave/IFWaveManager.h"
+#include "Wave/IFWaveScalingUtils.h"
 
 // F3: Block stamina depletion
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFBlockStaminaDepletionTest, "IronField.Combat.BlockStaminaDepletion", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
@@ -325,5 +327,82 @@ bool FIFStatUtilsTest::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+// S3: Spawn queue unit tests
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFSpawnQueueTest, "IronField.Wave.SpawnQueue", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+bool FIFSpawnQueueTest::RunTest(const FString& Parameters)
+{
+	FIFSpawnQueue Queue;
+
+	// Initial empty state
+	TestFalse(TEXT("Empty queue should have no pending"), Queue.HasPending());
+	TestEqual(TEXT("Empty queue pending count is 0"), Queue.NumPending(), 0);
+	TestEqual(TEXT("Empty queue total queued is 0"), Queue.TotalQueued(), 0);
+	TestNull(TEXT("Dequeue on empty returns null"), Queue.Dequeue());
+	TestNull(TEXT("Peek on empty returns null"), Queue.Peek());
+
+	// Enqueue items
+	Queue.Enqueue(AIFBaseCharacter::StaticClass());
+	Queue.Enqueue(AIFPlayerCharacter::StaticClass());
+
+	TestTrue(TEXT("Queue should have pending"), Queue.HasPending());
+	TestEqual(TEXT("Pending count is 2"), Queue.NumPending(), 2);
+	TestEqual(TEXT("Total queued is 2"), Queue.TotalQueued(), 2);
+
+	// Peek does not advance cursor
+	TestEqual(TEXT("Peek returns first class"), Queue.Peek(), TSubclassOf<APawn>(AIFBaseCharacter::StaticClass()));
+	TestEqual(TEXT("Pending count after peek is still 2"), Queue.NumPending(), 2);
+
+	// Dequeue first
+	TSubclassOf<APawn> First = Queue.Dequeue();
+	TestEqual(TEXT("Dequeue returns first class"), First, TSubclassOf<APawn>(AIFBaseCharacter::StaticClass()));
+	TestEqual(TEXT("Pending count is now 1"), Queue.NumPending(), 1);
+	TestTrue(TEXT("Queue still has pending"), Queue.HasPending());
+
+	// Dequeue second
+	TSubclassOf<APawn> Second = Queue.Dequeue();
+	TestEqual(TEXT("Dequeue returns second class"), Second, TSubclassOf<APawn>(AIFPlayerCharacter::StaticClass()));
+	TestEqual(TEXT("Pending count is now 0"), Queue.NumPending(), 0);
+	TestFalse(TEXT("Queue has no pending left"), Queue.HasPending());
+
+	// Dequeue past end
+	TestNull(TEXT("Dequeue past end returns null"), Queue.Dequeue());
+
+	// Reset
+	Queue.Enqueue(AIFBaseCharacter::StaticClass());
+	Queue.Reset();
+	TestFalse(TEXT("Reset queue has no pending"), Queue.HasPending());
+	TestEqual(TEXT("Reset queue count is 0"), Queue.NumPending(), 0);
+
+	return true;
+}
+
+// U1: Wave scaling math unit tests
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFScalingMathTest, "IronField.Wave.ScalingMath", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+bool FIFScalingMathTest::RunTest(const FString& Parameters)
+{
+	// Default multiplier 1.0 (baseline identical gameplay)
+	TestEqual(TEXT("Wave 0 default health scale"), IFWaveScalingUtils::ComputeHealthScale(0, 1.0f), 1.0f);
+	TestEqual(TEXT("Wave 5 default health scale"), IFWaveScalingUtils::ComputeHealthScale(5, 1.0f), 1.0f);
+	TestEqual(TEXT("Wave 0 default damage scale"), IFWaveScalingUtils::ComputeDamageScale(0, 1.0f), 1.0f);
+	TestEqual(TEXT("Wave 5 default damage scale"), IFWaveScalingUtils::ComputeDamageScale(5, 1.0f), 1.0f);
+
+	// Scaled multiplier
+	TestEqual(TEXT("Wave 0 scaled health"), IFWaveScalingUtils::ComputeHealthScale(0, 1.2f), 1.0f);
+	TestEqual(TEXT("Wave 1 scaled health"), IFWaveScalingUtils::ComputeHealthScale(1, 1.2f), 1.2f);
+	TestEqual(TEXT("Wave 2 scaled health"), IFWaveScalingUtils::ComputeHealthScale(2, 1.2f), 1.44f);
+
+	TestEqual(TEXT("Wave 0 scaled damage"), IFWaveScalingUtils::ComputeDamageScale(0, 1.5f), 1.0f);
+	TestEqual(TEXT("Wave 1 scaled damage"), IFWaveScalingUtils::ComputeDamageScale(1, 1.5f), 1.5f);
+	TestEqual(TEXT("Wave 2 scaled damage"), IFWaveScalingUtils::ComputeDamageScale(2, 1.5f), 2.25f);
+
+	// ScaleEnemyCount
+	TestEqual(TEXT("Base count preserved for wave 0"), IFWaveScalingUtils::ScaleEnemyCount(5, 0, 1.15f), 5);
+	TestEqual(TEXT("Scale factor 1.0 preserves count"), IFWaveScalingUtils::ScaleEnemyCount(5, 5, 1.0f), 5);
+	TestEqual(TEXT("Wave 1 scaled count (5 * 1.15 = 6)"), IFWaveScalingUtils::ScaleEnemyCount(5, 1, 1.15f), 6);
+
+	return true;
+}
+
 
 

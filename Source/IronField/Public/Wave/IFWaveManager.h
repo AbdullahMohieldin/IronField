@@ -3,13 +3,17 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "TimerManager.h"
+#include "Wave/IFSpawnContext.h"
+#include "Wave/IFSpawnQueue.h"
+#include "Wave/IFWaveScalingUtils.h"
 #include "IFWaveManager.generated.h"
 
+class APawn;
 class AIFPlayerCharacter;
-class AIFBaseCharacter;
 class AIFHealPickup;
+class UIFWaveRewardComponent;
+class UIFWaveWarmupComponent;
 class USoundBase;
-struct FStreamableHandle;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPlayerDowned);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnWaveStarted, int32, WaveNumber);
@@ -25,7 +29,7 @@ struct FEnemyGroupDefinition
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Wave|Config")
-	TSubclassOf<AIFBaseCharacter> EnemyClass;
+	TSubclassOf<APawn> EnemyClass;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Wave|Config", meta = (ClampMin = "1"))
 	int32 EnemyCount = 5;
@@ -48,8 +52,7 @@ class IRONFIELD_API AIFWaveManager : public AActor
 public:
 	AIFWaveManager();
 
-	// Broadcast each time the player's health is depleted. The player revives afterwards,
-	// so enemies use this to drop their current target, not to end the run.
+	// Broadcast each time the player's health is depleted.
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Wave|Events")
 	FOnPlayerDowned OnPlayerDowned;
 
@@ -60,7 +63,6 @@ public:
 	FOnWaveCompleted OnWaveCompleted;
 
 	// Broadcast after wave-clear healing is applied so HUD can show exact amounts.
-	// Zero amounts mean that side was skipped (dead/missing) — listeners show a plain banner.
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Wave|Events")
 	FOnWaveClearHeal OnWaveClearHeal;
 
@@ -77,16 +79,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Config")
 	TArray<FWaveDefinition> Waves;
 
-	// Single base definition for Unlimited mode. Every wave is this definition scaled by wave index.
+	// Single base definition for Unlimited mode.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Config")
 	FWaveDefinition UnlimitedBaseWave;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Config")
 	bool bAutoStartOnBeginPlay = true;
 
-	// Multiplier applied to UnlimitedBaseWave enemy counts per wave (wave 1 = factor^0, wave 2 = factor^1, ...).
+	// Multiplier applied to UnlimitedBaseWave enemy counts per wave.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Config", meta = (ClampMin = "1.0"))
 	float UnlimitedEnemyCountScaleFactor = 1.15f;
+
+	// Per-wave scaling multipliers (U1: default 1.0 preserves identical baseline gameplay).
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Scaling", meta = (ClampMin = "1.0"))
+	float WaveHealthMultiplier = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Scaling", meta = (ClampMin = "1.0"))
+	float WaveDamageMultiplier = 1.0f;
 
 	/** Random XY offset applied around spawn points so enemies do not stack on one spot. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Config", meta = (ClampMin = "0.0"))
@@ -120,11 +129,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Config", meta = (ClampMin = "0.0"))
 	float WaveValidationIntervalSeconds = 2.f;
 
-	// Empty until assigned in Blueprint; guarded at play time.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Feedback")
 	TObjectPtr<USoundBase> WaveStartSound;
 
-	// Wave-clear heal & drops
+	// Authored wave-clear heal & drops (forwarded to RewardComponent)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Wave|Heal", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
 	float PlayerHealPercent = 0.3f;
 
@@ -143,39 +151,31 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Feedback")
 	TObjectPtr<USoundBase> HealSound;
 
-	// First-spawn hitch warmup: during the opening grace, preload every class the run
-	// can spawn and render one of each for a few frames so shader/AnimBP/disk costs
-	// land before first contact instead of mid-fight.
+	// Authored warmup configuration (forwarded to WarmupComponent)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Wave|Warmup")
 	bool bWarmupSpawns = true;
 
-	// How long warmup actors stay alive; must cover several rendered frames.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Wave|Warmup", meta = (ClampMin = "0.1"))
 	float WarmupLifetimeSeconds = 0.35f;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State")
-	int32 TotalEnemiesInWave = 0;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State")
-	int32 EnemiesSpawnedSoFar = 0;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State")
-	int32 EnemiesAlive = 0;
-
-	// Cumulative kills for this run. Never reset per wave (a new run is a new
-	// manager actor, so the initializer is the reset). Drives HUD KILLS + stats.
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State")
-	int32 KillCount = 0;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State")
-	bool bIsWaveActive = false;
-
-	// 1-based wave number for UI. Derived from the zero-based CurrentWaveIndex.
+	// Getters for encapsulated state
 	UFUNCTION(BlueprintPure, Category = "IronField|Wave|State")
 	int32 GetCurrentWave() const { return CurrentWaveIndex + 1; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Wave|State")
 	int32 GetKillCount() const { return KillCount; }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Wave|State")
+	int32 GetEnemiesAlive() const { return EnemiesAlive; }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Wave|State")
+	bool IsWaveActive() const { return bIsWaveActive; }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Wave|State")
+	int32 GetTotalEnemiesInWave() const { return TotalEnemiesInWave; }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Wave|State")
+	int32 GetEnemiesSpawnedSoFar() const { return EnemiesSpawnedSoFar; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Wave|Targeting")
 	AActor* GetPlayerActor() const;
@@ -183,66 +183,85 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Wave|Targeting")
 	AActor* GetStrongholdActor() const;
 
-	UFUNCTION(BlueprintCallable, Category = "IronField|Wave|Actions")
-	void StartNextWave();
-
-	/** Personality shift for the current wave: 1 = full siege (opening), 0 = even split. */
 	UFUNCTION(BlueprintPure, Category = "IronField|Wave|Targeting")
 	float GetSiegeBiasForWave() const { return CurrentWaveIndex <= 0 ? 1.f : 0.f; }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Wave|Components")
+	UIFWaveRewardComponent* GetRewardComponent() const { return RewardComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Wave|Components")
+	UIFWaveWarmupComponent* GetWarmupComponent() const { return WarmupComponent; }
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Wave|Actions")
+	void StartNextWave();
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UIFWaveRewardComponent> RewardComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UIFWaveWarmupComponent> WarmupComponent;
+
+	// Encapsulated state properties
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State", meta = (AllowPrivateAccess = "true"))
+	int32 TotalEnemiesInWave = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State", meta = (AllowPrivateAccess = "true"))
+	int32 EnemiesSpawnedSoFar = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State", meta = (AllowPrivateAccess = "true"))
+	int32 EnemiesAlive = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State", meta = (AllowPrivateAccess = "true"))
+	int32 KillCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Wave|State", meta = (AllowPrivateAccess = "true"))
+	bool bIsWaveActive = false;
+
 	UPROPERTY(Transient)
 	TObjectPtr<AIFPlayerCharacter> CachedPlayer;
 
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<AIFBaseCharacter>> SpawnedEnemies;
+	TArray<TWeakObjectPtr<AActor>> SpawnedEnemies;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AActor>> SpawnPoints;
 
 	int32 CurrentWaveIndex = -1;
 
-	/** Flattened spawn queue for the active wave; trickled out by the spawn timer. */
 	UPROPERTY(Transient)
-	TArray<TSubclassOf<AIFBaseCharacter>> PendingSpawns;
-
-	// Warmup dummies: spawned visible for a few frames during the opening grace,
-	// never tracked as wave enemies, destroyed by CleanupWarmupActors.
-	UPROPERTY(Transient)
-	TArray<TObjectPtr<AActor>> WarmupActors;
-
-	bool bWarmedUp = false;
+	FIFSpawnQueue SpawnQueue;
 
 	FTimerHandle InterWaveTimerHandle;
 	FTimerHandle SpawnTimerHandle;
 	FTimerHandle ValidateTimerHandle;
-	FTimerHandle WarmupTimerHandle;
 	FTimerHandle CorpseCleanupTimerHandle;
-	TSharedPtr<FStreamableHandle> WarmupStreamableHandle;
 
 	UPROPERTY(Transient)
-	TArray<TWeakObjectPtr<AIFBaseCharacter>> PendingCorpses;
+	TArray<TWeakObjectPtr<AActor>> PendingCorpses;
 
-	// Generation counter for async identity: bumped on every BeginWaveFromDefinition
-	// and EndPlay; timer delegates capture the scheduling generation and drop stale firings.
 	uint32 WaveGeneration = 0;
 
-	void NotifyEnemySpawned(AIFBaseCharacter* Enemy);
+	void NotifyEnemySpawned(APawn* Enemy);
 	void SpawnAllEnemiesInWave(const FWaveDefinition& Wave);
 	void BuildSpawnQueue(const FWaveDefinition& Wave);
+
 	UFUNCTION()
 	void TrySpawnPending();
+
 	UFUNCTION()
 	void HandleInterWaveTimer(uint32 ScheduledGeneration);
+
 	UFUNCTION()
 	void HandleSpawnTimerTick(uint32 ScheduledGeneration);
+
 	UFUNCTION()
 	void HandleValidateTimer(uint32 ScheduledGeneration);
+
 	void ScheduleNextWave();
-	void ApplyWaveScaling(AIFBaseCharacter* Enemy) const;
 	FVector PickSpawnLocation(FRotator& OutRotation) const;
 	bool IsUnlimitedRunMode() const;
 	FWaveDefinition BuildUnlimitedWave(int32 WaveIndex) const;
@@ -257,34 +276,22 @@ private:
 	UFUNCTION()
 	void HandleActorRegistered(FName ActorRole, AActor* Actor);
 
-	UFUNCTION()
 	void HandlePlayerRegistered(AIFPlayerCharacter* Player);
 
 	UFUNCTION()
 	void HandlePlayerHealthDepleted();
 
 	UFUNCTION()
-	void HandleEnemyDied(AIFBaseCharacter* DeadEnemy);
+	void HandleEnemyDied(AActor* DeadActor);
 
 	UFUNCTION()
-	void HandleWaveClearHeal(int32 WaveNumber);
+	void HandleRewardWaveClearHeal(int32 WaveNumber, float InPlayerHealed, float InGateRepaired);
 
-	void TrySpawnHealPickup(AIFBaseCharacter* DeadEnemy);
-
-	// First-spawn hitch warmup (see bWarmupSpawns).
 	void PreloadWaveAssets();
-	void CollectWarmupEnemyClasses(TArray<TSubclassOf<AIFBaseCharacter>>& OutClasses) const;
-	UFUNCTION()
-	void HandleWarmupAssetsLoaded();
-	void WarmupSpawnActors();
-	UFUNCTION()
-	void CleanupWarmupActors();
+	void CollectWarmupEnemyClasses(TArray<TSubclassOf<APawn>>& OutClasses) const;
 
 	void BindPlayer(AIFPlayerCharacter* Player);
 	void UnbindPlayer();
-
-	UPROPERTY(Transient)
-	bool bWaveCompletedBound = false;
 
 	friend class FIFWaveCorpseCleanupTest;
 };

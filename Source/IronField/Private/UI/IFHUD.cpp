@@ -232,13 +232,13 @@ void UIFHUD::BindWaveManager(AIFWaveManager* WaveManager)
 	// CurrentWaveIndex starts at -1 before the first wave, so clamp to 1 for display.
 	const int32 InitialWave = FMath::Max(1, WaveManager->GetCurrentWave());
 	HandleWaveStarted(InitialWave);
-	HandleEnemiesAliveChanged(WaveManager->EnemiesAlive);
+	HandleEnemiesAliveChanged(WaveManager->GetEnemiesAlive());
 	HandleKillCountChanged(WaveManager->GetKillCount());
 
 	// The initial push calls ShowBanner via HandleWaveStarted; when the manager has not
 	// actually started a wave yet (HUD constructed first ordering), show the warmup
 	// banner instead — first-spawn shader/asset costs land behind it, not mid-fight.
-	if (!WaveManager->bIsWaveActive && BannerText)
+	if (!WaveManager->IsWaveActive() && BannerText)
 	{
 		ShowBanner(TEXT("GET READY"));
 	}
