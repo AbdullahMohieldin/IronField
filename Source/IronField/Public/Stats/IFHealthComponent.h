@@ -86,4 +86,5 @@ private:
 	void SetHealthClamped(float NewHealth);
 
 	friend class FIFHealPickupFullHealthTest;
+	friend class FIFHealthComponentTest;
 };

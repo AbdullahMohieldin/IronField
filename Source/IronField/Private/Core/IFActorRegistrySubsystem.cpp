@@ -4,6 +4,8 @@
 
 void UIFActorRegistrySubsystem::Deinitialize()
 {
+	PendingNativeCallbacks.Empty();
+	PendingDynamicCallbacks.Empty();
 	RegisteredActors.Empty();
 	Super::Deinitialize();
 }
@@ -25,6 +27,67 @@ void UIFActorRegistrySubsystem::RegisterActor(FName ActorRole, AActor* Actor)
 
 	Slot = Actor;
 	OnActorRegistered.Broadcast(ActorRole, Actor);
+
+	if (TArray<FIFNativeRegistrationCallback>* const Callbacks = PendingNativeCallbacks.Find(ActorRole))
+	{
+		TArray<FIFNativeRegistrationCallback> LocalCallbacks = MoveTemp(*Callbacks);
+		PendingNativeCallbacks.Remove(ActorRole);
+		for (const FIFNativeRegistrationCallback& Item : LocalCallbacks)
+		{
+			if (Item.ContextObject.IsValid() || Item.ContextObject.Get() == nullptr)
+			{
+				if (Item.Callback)
+				{
+					Item.Callback(Actor);
+				}
+			}
+		}
+	}
+
+	if (TArray<FIFDynamicRegistrationCallback>* const DynamicCallbacks = PendingDynamicCallbacks.Find(ActorRole))
+	{
+		TArray<FIFDynamicRegistrationCallback> LocalCallbacks = MoveTemp(*DynamicCallbacks);
+		PendingDynamicCallbacks.Remove(ActorRole);
+		for (const FIFDynamicRegistrationCallback& Item : LocalCallbacks)
+		{
+			if (Item.ContextObject.IsValid() || Item.ContextObject.Get() == nullptr)
+			{
+				Item.Callback.ExecuteIfBound(Actor);
+			}
+		}
+	}
+}
+
+void UIFActorRegistrySubsystem::WhenRegistered(FName ActorRole, const UObject* ContextObject, TFunction<void(AActor*)> Callback)
+{
+	if (ActorRole.IsNone() || !Callback)
+	{
+		return;
+	}
+
+	if (AActor* const Existing = GetActor(ActorRole))
+	{
+		Callback(Existing);
+		return;
+	}
+
+	PendingNativeCallbacks.FindOrAdd(ActorRole).Add({ ContextObject, MoveTemp(Callback) });
+}
+
+void UIFActorRegistrySubsystem::WhenRegistered(FName ActorRole, UObject* ContextObject, FIFOnActorRegisteredDynamicCallback Callback)
+{
+	if (ActorRole.IsNone() || !Callback.IsBound())
+	{
+		return;
+	}
+
+	if (AActor* const Existing = GetActor(ActorRole))
+	{
+		Callback.Execute(Existing);
+		return;
+	}
+
+	PendingDynamicCallbacks.FindOrAdd(ActorRole).Add({ ContextObject, MoveTemp(Callback) });
 }
 
 void UIFActorRegistrySubsystem::UnregisterActor(FName ActorRole, AActor* Actor)

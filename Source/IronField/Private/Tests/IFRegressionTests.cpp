@@ -21,6 +21,7 @@
 #include "Wave/IFSpawnQueue.h"
 #include "Wave/IFWaveManager.h"
 #include "Wave/IFWaveScalingUtils.h"
+#include "Tests/IFTestAutomationTypes.h"
 
 // F3: Block stamina depletion
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFBlockStaminaDepletionTest, "IronField.Combat.BlockStaminaDepletion", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
@@ -176,7 +177,34 @@ bool FIFActorRegistrySubsystemTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Player role should not be registered initially"), Registry->HasActor(IFRegistryRoles::Player));
 		TestNull(TEXT("GetActor for Player role should return null initially"), Registry->GetActor(IFRegistryRoles::Player));
 
-		// Register an actor
+		// WhenRegistered: order independence
+		// Test A: subscription before registration (deferred)
+		bool bDeferredCalled = false;
+		AActor* ReceivedActorA = nullptr;
+		Registry->WhenRegistered(IFRegistryRoles::WaveManager, nullptr, [&bDeferredCalled, &ReceivedActorA](AActor* InActor)
+		{
+			bDeferredCalled = true;
+			ReceivedActorA = InActor;
+		});
+		TestFalse(TEXT("Deferred callback not called before registration"), bDeferredCalled);
+
+		AActor* const DummyWaveManager = World->SpawnActor<AActor>();
+		Registry->RegisterActor(IFRegistryRoles::WaveManager, DummyWaveManager);
+		TestTrue(TEXT("Deferred callback called on registration"), bDeferredCalled);
+		TestEqual(TEXT("Deferred callback received correct actor"), ReceivedActorA, DummyWaveManager);
+
+		// Test B: subscription after registration (immediate)
+		bool bImmediateCalled = false;
+		AActor* ReceivedActorB = nullptr;
+		Registry->WhenRegistered(IFRegistryRoles::WaveManager, nullptr, [&bImmediateCalled, &ReceivedActorB](AActor* InActor)
+		{
+			bImmediateCalled = true;
+			ReceivedActorB = InActor;
+		});
+		TestTrue(TEXT("Immediate callback called synchronously for existing actor"), bImmediateCalled);
+		TestEqual(TEXT("Immediate callback received correct actor"), ReceivedActorB, DummyWaveManager);
+
+		// Register an actor for Player role
 		AActor* const DummyPlayer = World->SpawnActor<AActor>();
 		TestNotNull(TEXT("DummyPlayer actor must be spawned"), DummyPlayer);
 
@@ -186,13 +214,21 @@ bool FIFActorRegistrySubsystemTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("Player role should be registered after RegisterActor"), Registry->HasActor(IFRegistryRoles::Player));
 			TestEqual(TEXT("GetActor should return registered actor"), Registry->GetActor(IFRegistryRoles::Player), DummyPlayer);
 
-			// Unregister with matching actor
-			Registry->UnregisterActor(IFRegistryRoles::Player, DummyPlayer);
+			// Duplicate registration overwrite (logs warning and updates pointer)
+			AActor* const OverwritePlayer = World->SpawnActor<AActor>();
+			Registry->RegisterActor(IFRegistryRoles::Player, OverwritePlayer);
+			TestEqual(TEXT("Overwritten actor is now registered"), Registry->GetActor(IFRegistryRoles::Player), OverwritePlayer);
+
+			// Unregister
+			Registry->UnregisterActor(IFRegistryRoles::Player, OverwritePlayer);
 			TestFalse(TEXT("Player role should not be registered after UnregisterActor"), Registry->HasActor(IFRegistryRoles::Player));
 			TestNull(TEXT("GetActor should return null after unregistration"), Registry->GetActor(IFRegistryRoles::Player));
 
+			OverwritePlayer->Destroy();
 			DummyPlayer->Destroy();
 		}
+
+		DummyWaveManager->Destroy();
 	}
 
 	GEngine->DestroyWorldContext(World);
@@ -245,6 +281,15 @@ bool FIFTeamHostilityTest::RunTest(const FString& Parameters)
 		TestNotNull(TEXT("Enemy can attack Stronghold"), IFCombatTargetingUtils::GetValidAttackTargetHealth(Enemy, Stronghold));
 		TestNotNull(TEXT("Player can attack Enemy"), IFCombatTargetingUtils::GetValidAttackTargetHealth(Player, Enemy));
 		TestNull(TEXT("Enemy cannot attack another Enemy"), IFCombatTargetingUtils::GetValidAttackTargetHealth(Enemy, Enemy2));
+
+		// Neutral team (255) attitude checks
+		const FGenericTeamId NeutralTeam(IFTeamIds::Neutral);
+		const FGenericTeamId PlayerTeam(IFTeamIds::Player);
+		const FGenericTeamId EnemyTeam(IFTeamIds::Enemy);
+		TestEqual(TEXT("Player vs Neutral attitude is Neutral"), IFTeamUtils::SolveAttitude(PlayerTeam, NeutralTeam), ETeamAttitude::Neutral);
+		TestEqual(TEXT("Enemy vs Neutral attitude is Neutral"), IFTeamUtils::SolveAttitude(EnemyTeam, NeutralTeam), ETeamAttitude::Neutral);
+		TestEqual(TEXT("Player vs Enemy attitude is Hostile"), IFTeamUtils::SolveAttitude(PlayerTeam, EnemyTeam), ETeamAttitude::Hostile);
+		TestEqual(TEXT("Player vs Player attitude is Friendly"), IFTeamUtils::SolveAttitude(PlayerTeam, PlayerTeam), ETeamAttitude::Friendly);
 
 		Enemy2->Destroy();
 		Enemy->Destroy();
@@ -375,6 +420,34 @@ bool FIFSpawnQueueTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Reset queue has no pending"), Queue.HasPending());
 	TestEqual(TEXT("Reset queue count is 0"), Queue.NumPending(), 0);
 
+	// Concurrency cap simulation: max 2 active enemies
+	const int32 ConcurrencyCap = 2;
+	int32 ActiveEnemies = 0;
+	for (int32 i = 0; i < 5; ++i)
+	{
+		Queue.Enqueue(AIFBaseCharacter::StaticClass());
+	}
+	TestEqual(TEXT("5 items enqueued"), Queue.NumPending(), 5);
+
+	// Spawn up to concurrency cap
+	while (ActiveEnemies < ConcurrencyCap && Queue.HasPending())
+	{
+		Queue.Dequeue();
+		++ActiveEnemies;
+	}
+	TestEqual(TEXT("Active enemies at concurrency cap"), ActiveEnemies, 2);
+	TestEqual(TEXT("3 items remaining in queue"), Queue.NumPending(), 3);
+
+	// One enemy dies, next spawns
+	--ActiveEnemies;
+	if (ActiveEnemies < ConcurrencyCap && Queue.HasPending())
+	{
+		Queue.Dequeue();
+		++ActiveEnemies;
+	}
+	TestEqual(TEXT("Active enemies back at cap"), ActiveEnemies, 2);
+	TestEqual(TEXT("2 items remaining in queue"), Queue.NumPending(), 2);
+
 	return true;
 }
 
@@ -463,6 +536,160 @@ bool FIFTargetScorerTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// Phase 3: Comprehensive Health Component test
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFHealthComponentTest, "IronField.Stats.Health", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+bool FIFHealthComponentTest::RunTest(const FString& Parameters)
+{
+	UIFHealthComponent* const Health = NewObject<UIFHealthComponent>();
+	TestNotNull(TEXT("Health component must be valid"), Health);
+	if (!Health)
+	{
+		return false;
+	}
 
+	// 1. Initial state & SetMaxHealth
+	Health->SetMaxHealth(100.f, true);
+	TestEqual(TEXT("MaxHealth is 100"), Health->GetMaxHealth(), 100.f);
+	TestEqual(TEXT("HealthPercent is 1.0"), Health->GetHealthPercent(), 1.0f);
+	TestFalse(TEXT("Not dead initially"), Health->IsDead());
 
+	// 2. Damage deduction
+	Health->ApplyDamage(30.f);
+	TestEqual(TEXT("HealthPercent after 30 damage is 0.7"), Health->GetHealthPercent(), 0.7f);
 
+	// 3. Clamp limits: healing cannot exceed MaxHealth
+	Health->ApplyHealing(50.f);
+	TestEqual(TEXT("Health clamped to MaxHealth after overheal"), Health->GetHealthPercent(), 1.0f);
+
+	// 4. Invincibility window
+	Health->SetInvincible(true);
+	TestTrue(TEXT("Invincible is true"), Health->IsInvincible());
+	Health->ApplyDamage(50.f);
+	TestEqual(TEXT("Invincible ignores damage"), Health->GetHealthPercent(), 1.0f);
+	Health->SetInvincible(false);
+
+	// 5. Single death broadcast & clamp to 0
+	UIFTestAutomationListener* const HealthListener = NewObject<UIFTestAutomationListener>();
+	Health->OnDeath.AddDynamic(HealthListener, &UIFTestAutomationListener::HandleDeath);
+	Health->OnHealthDepleted.AddDynamic(HealthListener, &UIFTestAutomationListener::HandleHealthDepleted);
+
+	Health->ApplyDamage(200.f);
+	TestTrue(TEXT("Dead after fatal damage"), Health->IsDead());
+	TestEqual(TEXT("Health percent clamped to 0"), Health->GetHealthPercent(), 0.0f);
+	TestEqual(TEXT("OnDeath broadcast once"), HealthListener->DeathCount, 1);
+	TestEqual(TEXT("OnHealthDepleted broadcast once"), HealthListener->HealthDepletedCount, 1);
+
+	// Further damage while dead does NOT broadcast death again
+	Health->ApplyDamage(50.f);
+	TestEqual(TEXT("OnDeath not rebroadcast while already dead"), HealthListener->DeathCount, 1);
+	TestEqual(TEXT("OnHealthDepleted not rebroadcast while already dead"), HealthListener->HealthDepletedCount, 1);
+
+	// 6. Revive state reset
+	Health->SetReviveHealth(40.f);
+	Health->Revive();
+	TestFalse(TEXT("No longer dead after revive"), Health->IsDead());
+	TestEqual(TEXT("Health restored to ReviveHealth (40%)"), Health->GetHealthPercent(), 0.4f);
+
+	// Reviving a living character does nothing
+	Health->Revive();
+	TestEqual(TEXT("Reviving living character does nothing"), Health->GetHealthPercent(), 0.4f);
+
+	// 7. SetMaxHealth shrink clamps current health
+	Health->SetMaxHealth(20.f, false);
+	TestEqual(TEXT("New MaxHealth is 20"), Health->GetMaxHealth(), 20.f);
+	TestEqual(TEXT("Current health clamped to new MaxHealth (100%)"), Health->GetHealthPercent(), 1.0f);
+
+	return true;
+}
+
+// Phase 3: Comprehensive Stamina Component test
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFStaminaComponentTest, "IronField.Stats.Stamina", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+bool FIFStaminaComponentTest::RunTest(const FString& Parameters)
+{
+	UWorld* const World = UWorld::CreateWorld(EWorldType::Game, false);
+	TestNotNull(TEXT("Test world must be valid"), World);
+	if (!World)
+	{
+		return false;
+	}
+
+	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
+	WorldContext.SetCurrentWorld(World);
+
+	AActor* const OwnerActor = World->SpawnActor<AActor>();
+	TestNotNull(TEXT("OwnerActor must be valid"), OwnerActor);
+	if (!OwnerActor)
+	{
+		GEngine->DestroyWorldContext(World);
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	UIFStaminaComponent* const Stamina = NewObject<UIFStaminaComponent>(OwnerActor);
+	TestNotNull(TEXT("Stamina component must be valid"), Stamina);
+	if (!Stamina)
+	{
+		OwnerActor->Destroy();
+		GEngine->DestroyWorldContext(World);
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	Stamina->RegisterComponent();
+
+	// 1. Initial state
+	TestEqual(TEXT("Initial stamina is 100%"), Stamina->GetStaminaPercent(), 1.0f);
+	TestTrue(TEXT("Has 50 stamina"), Stamina->HasStamina(50.f));
+
+	// 2. Cost consumption & tick auto-enable
+	const bool bConsumed = Stamina->TryConsumeStamina(40.f);
+	TestTrue(TEXT("TryConsumeStamina succeeded for 40"), bConsumed);
+	TestEqual(TEXT("Stamina is 60%"), Stamina->GetStaminaPercent(), 0.6f);
+	TestTrue(TEXT("Tick enabled while regenerating"), Stamina->IsComponentTickEnabled());
+
+	// TryConsumeStamina fails if not enough stamina
+	const bool bFailedConsume = Stamina->TryConsumeStamina(70.f);
+	TestFalse(TEXT("TryConsumeStamina failed for 70 (insufficient)"), bFailedConsume);
+	TestEqual(TEXT("Stamina unchanged at 60%"), Stamina->GetStaminaPercent(), 0.6f);
+
+	// 3. Regen delay timer
+	// Ticking while TimeSinceLastStaminaDrain < StaminaRegenDelay (1.75s) should NOT regenerate
+	Stamina->TickComponent(1.0f, LEVELTICK_All, nullptr);
+	TestEqual(TEXT("Stamina does not regen before delay elapsed"), Stamina->GetStaminaPercent(), 0.6f);
+
+	// Ticking past delay should regenerate (StaminaRegenRate is 30/s)
+	Stamina->TickComponent(1.75f, LEVELTICK_All, nullptr);
+	TestTrue(TEXT("Stamina regenerated past delay"), Stamina->GetStaminaPercent() > 0.6f);
+
+	// Regenerate all the way to max -> tick should auto-disable
+	Stamina->TickComponent(5.0f, LEVELTICK_All, nullptr);
+	TestEqual(TEXT("Stamina reached 100%"), Stamina->GetStaminaPercent(), 1.0f);
+	TestFalse(TEXT("Tick auto-disabled when stamina reaches max"), Stamina->IsComponentTickEnabled());
+
+	// 4. Drain to depletion and single depletion broadcast
+	UIFTestAutomationListener* const StaminaListener = NewObject<UIFTestAutomationListener>();
+	Stamina->OnStaminaDepleted.AddDynamic(StaminaListener, &UIFTestAutomationListener::HandleStaminaDepleted);
+
+	Stamina->StartContinuousDrain(50.f);
+	TestTrue(TEXT("Is draining stamina"), Stamina->IsDrainingStamina());
+
+	// Drain 1s: 100 - 50 = 50
+	Stamina->TickComponent(1.0f, LEVELTICK_All, nullptr);
+	TestEqual(TEXT("Stamina at 50%"), Stamina->GetStaminaPercent(), 0.5f);
+	TestEqual(TEXT("Depleted not broadcast at 50%"), StaminaListener->StaminaDepletedCount, 0);
+
+	// Drain 2s: 50 - 100 <= 0 -> hits 0 and stops continuous drain
+	Stamina->TickComponent(2.0f, LEVELTICK_All, nullptr);
+	TestEqual(TEXT("Stamina at 0%"), Stamina->GetStaminaPercent(), 0.0f);
+	TestEqual(TEXT("Depleted broadcast once"), StaminaListener->StaminaDepletedCount, 1);
+	TestFalse(TEXT("Continuous drain stopped on depletion"), Stamina->IsDrainingStamina());
+
+	// Ticking again while at 0 should not broadcast depletion again
+	Stamina->DrainStamina(0.5f);
+	TestEqual(TEXT("Depleted not rebroadcast when already at 0"), StaminaListener->StaminaDepletedCount, 1);
+
+	OwnerActor->Destroy();
+	GEngine->DestroyWorldContext(World);
+	World->DestroyWorld(false);
+	return true;
+}

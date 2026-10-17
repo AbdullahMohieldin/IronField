@@ -13,6 +13,7 @@ namespace IFRegistryRoles
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActorRoleRegistered, FName, ActorRole, AActor*, Actor);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActorRoleUnregistered, FName, ActorRole, AActor*, Actor);
+DECLARE_DYNAMIC_DELEGATE_OneParam(FIFOnActorRegisteredDynamicCallback, AActor*, Actor);
 
 /**
  * World subsystem managing role-keyed singleton actor registrations (e.g. Player, Stronghold, WaveManager).
@@ -44,6 +45,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Registry")
 	bool HasActor(FName ActorRole) const;
 
+	/** Native C++ callback: executed immediately if already registered, or on registration. Exactly once. */
+	void WhenRegistered(FName ActorRole, const UObject* ContextObject, TFunction<void(AActor*)> Callback);
+
+	/** Blueprint / Dynamic callback: executed immediately if already registered, or on registration. Exactly once. */
+	UFUNCTION(BlueprintCallable, Category = "IronField|Registry", meta = (DefaultToSelf = "ContextObject"))
+	void WhenRegistered(FName ActorRole, UObject* ContextObject, FIFOnActorRegisteredDynamicCallback Callback);
+
 	template <typename TActor>
 	TActor* GetActor(FName ActorRole) const
 	{
@@ -59,4 +67,19 @@ public:
 private:
 	UPROPERTY(Transient)
 	TMap<FName, TObjectPtr<AActor>> RegisteredActors;
+
+	struct FIFNativeRegistrationCallback
+	{
+		TWeakObjectPtr<const UObject> ContextObject;
+		TFunction<void(AActor*)> Callback;
+	};
+
+	struct FIFDynamicRegistrationCallback
+	{
+		TWeakObjectPtr<const UObject> ContextObject;
+		FIFOnActorRegisteredDynamicCallback Callback;
+	};
+
+	TMap<FName, TArray<FIFNativeRegistrationCallback>> PendingNativeCallbacks;
+	TMap<FName, TArray<FIFDynamicRegistrationCallback>> PendingDynamicCallbacks;
 };

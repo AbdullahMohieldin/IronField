@@ -67,4 +67,6 @@ private:
 
 	void SetStaminaClamped(float NewStamina);
 	void BroadcastStaminaDepletedIfNeeded(float PreviousStamina);
+
+	friend class FIFStaminaComponentTest;
 };
