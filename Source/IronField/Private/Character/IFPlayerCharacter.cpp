@@ -261,8 +261,6 @@ void AIFPlayerCharacter::AttemptRevive()
 	UIFCombatComponent* const Combat = GetCombatComponent();
 	if (!Health || !Combat)
 	{
-		UE_LOG(LogIronField, Warning, TEXT("[IF-Revive] AttemptRevive aborted: Health=%s Combat=%s."),
-			Health ? TEXT("valid") : TEXT("null"), Combat ? TEXT("valid") : TEXT("null"));
 		return;
 	}
 
@@ -272,8 +270,6 @@ void AIFPlayerCharacter::AttemptRevive()
 	RestoreAliveState();
 
 	bIsGettingUp = true;
-	UE_LOG(LogIronField, Log, TEXT("[IF-Revive] %s revived: HP=%.0f Invincible=true GettingUp=true."),
-		*GetName(), Health->GetMaxHealth() * Health->GetHealthPercent());
 
 	// The AnimBP calls NotifyGetUpFinished; this timer prevents a permanent lockout if that call is missing.
 	if (UWorld* const World = GetWorld())
@@ -288,9 +284,6 @@ void AIFPlayerCharacter::NotifyGetUpFinished()
 	{
 		World->GetTimerManager().ClearTimer(GetUpFallbackTimerHandle);
 	}
-
-	UE_LOG(LogIronField, Log, TEXT("[IF-Revive] %s NotifyGetUpFinished: GettingUp=%s."),
-		*GetName(), bIsGettingUp ? TEXT("true") : TEXT("false"));
 
 	if (bIsGettingUp)
 	{
@@ -307,7 +300,6 @@ void AIFPlayerCharacter::CompleteRevive()
 		Health->SetInvincible(false);
 	}
 
-	UE_LOG(LogIronField, Log, TEXT("[IF-Revive] %s CompleteRevive: Invincible=false GettingUp=false."), *GetName());
 	bUseControllerRotationYaw = true;
 	UpdateTickEnabled();
 	UpdateMovementSpeed();

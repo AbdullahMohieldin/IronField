@@ -33,7 +33,6 @@ AIFProjectile::AIFProjectile()
 	VFXComponent->bAutoActivate = true;
 
 	CollisionSphere->OnComponentBeginOverlap.AddDynamic(this, &AIFProjectile::HandleSphereBeginOverlap);
-	CollisionSphere->OnComponentHit.AddDynamic(this, &AIFProjectile::HandleSphereHit);
 }
 
 void AIFProjectile::BeginPlay()
@@ -47,7 +46,6 @@ void AIFProjectile::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (CollisionSphere)
 	{
 		CollisionSphere->OnComponentBeginOverlap.RemoveAll(this);
-		CollisionSphere->OnComponentHit.RemoveAll(this);
 	}
 	Super::EndPlay(EndPlayReason);
 }
@@ -81,11 +79,6 @@ void AIFProjectile::InitializeProjectile(const FIFProjectileSpawnArgs& Args)
 }
 
 void AIFProjectile::HandleSphereBeginOverlap(UPrimitiveComponent*, AActor* OtherActor, UPrimitiveComponent*, int32, bool, const FHitResult&)
-{
-	HandleImpact(OtherActor);
-}
-
-void AIFProjectile::HandleSphereHit(UPrimitiveComponent*, AActor* OtherActor, UPrimitiveComponent*, FVector, const FHitResult&)
 {
 	HandleImpact(OtherActor);
 }

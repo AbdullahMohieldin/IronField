@@ -8,9 +8,9 @@ class AIFProjectile;
 
 /**
  * Ranged combat for the mage: cast montage + projectile fire.
- * The inherited melee categories (combo/weapon) are hidden because they do not apply.
+ * The inherited melee combo categories are hidden because they do not apply.
  */
-UCLASS(HideCategories = ("IronField|Combat|Stamina", "IronField|Combat|Combo", "IronField|Combat|State", "IronField|Combat|Weapon"))
+UCLASS(HideCategories = ("IronField|Combat|Combo", "IronField|Combat|State"))
 class IRONFIELD_API UIFMageCombatComponent : public UIFCombatComponent
 {
 	GENERATED_BODY()

@@ -82,6 +82,12 @@ void AIFEnemyController::InitializeControlledPawn()
 		CachedWaveManager->OnPlayerDowned.AddDynamic(this, &AIFEnemyController::HandlePlayerDowned);
 	}
 
+	RollPawnAggression();
+	BindOwnDelegates();
+}
+
+void AIFEnemyController::RollPawnAggression()
+{
 	// Roll this enemy's personality: wave bias shifts the population mean
 	// (e.g. wave 1 sieges), spread keeps packs mixed.
 	if (AIFEnemyCharacter* const EnemyChar = Cast<AIFEnemyCharacter>(GetPawn()))
@@ -91,8 +97,6 @@ void AIFEnemyController::InitializeControlledPawn()
 		const float Bias = CachedWaveManager ? CachedWaveManager->GetSiegeBiasForWave() : 0.f;
 		EnemyChar->RollAggression(Bias, Spread);
 	}
-
-	BindOwnDelegates();
 }
 
 void AIFEnemyController::OnUnPossess()
@@ -161,13 +165,7 @@ void AIFEnemyController::HandleWaveManagerRegistered(AIFWaveManager* InWaveManag
 	CachedWaveManager = InWaveManager;
 	CachedWaveManager->OnPlayerDowned.AddDynamic(this, &AIFEnemyController::HandlePlayerDowned);
 
-	if (AIFEnemyCharacter* const EnemyChar = Cast<AIFEnemyCharacter>(GetPawn()))
-	{
-		const UIFEnemyAIData* const Data = GetAIData();
-		const float Spread = Data ? Data->AggressionSpread : FallbackAggressionSpread;
-		const float Bias = CachedWaveManager->GetSiegeBiasForWave();
-		EnemyChar->RollAggression(Bias, Spread);
-	}
+	RollPawnAggression();
 }
 
 void AIFEnemyController::HandleOwnCombatStateChanged(ECombatState PreviousState, ECombatState NewState)

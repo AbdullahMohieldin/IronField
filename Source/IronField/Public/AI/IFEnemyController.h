@@ -71,6 +71,7 @@ private:
 	void HandleWaveManagerRegistered(AIFWaveManager* InWaveManager);
 
 	void InitializeControlledPawn();
+	void RollPawnAggression();
 	void BindOwnDelegates();
 	void UnbindOwnDelegates();
 	void ApplyMovementSpeedForState(ECombatState State);
