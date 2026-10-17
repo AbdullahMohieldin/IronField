@@ -7,9 +7,7 @@
 #include "Combat/IFProjectile.h"
 #include "Core/IFGameInstance.h"
 #include "Core/IFLog.h"
-#include "Core/IFPlayerSubsystem.h"
-#include "Core/IFStrongholdSubsystem.h"
-#include "Core/IFWaveManagerSubsystem.h"
+#include "Core/IFActorRegistrySubsystem.h"
 #include "Core/IFFeedbackUtils.h"
 #include "Engine/AssetManager.h"
 #include "Engine/World.h"
@@ -42,9 +40,9 @@ AActor* AIFWaveManager::GetStrongholdActor() const
 {
 	if (const UWorld* const World = GetWorld())
 	{
-		if (const UIFStrongholdSubsystem* const Subsystem = World->GetSubsystem<UIFStrongholdSubsystem>())
+		if (const UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			return Subsystem->GetStronghold();
+			return Registry->GetActor(IFRegistryRoles::Stronghold);
 		}
 	}
 	return nullptr;
@@ -508,20 +506,17 @@ void AIFWaveManager::BeginPlay()
 		return;
 	}
 
-	if (UIFWaveManagerSubsystem* const Subsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
+	if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 	{
-		Subsystem->RegisterWaveManager(this);
-	}
+		Registry->RegisterActor(IFRegistryRoles::WaveManager, this);
 
-	if (UIFPlayerSubsystem* const PlayerSubsystem = World->GetSubsystem<UIFPlayerSubsystem>())
-	{
-		if (AIFPlayerCharacter* const Player = PlayerSubsystem->GetPlayer())
+		if (AIFPlayerCharacter* const Player = Registry->GetActor<AIFPlayerCharacter>(IFRegistryRoles::Player))
 		{
 			HandlePlayerRegistered(Player);
 		}
 		else
 		{
-			PlayerSubsystem->OnPlayerRegistered.AddDynamic(this, &AIFWaveManager::HandlePlayerRegistered);
+			Registry->OnActorRegistered.AddDynamic(this, &AIFWaveManager::HandleActorRegistered);
 		}
 	}
 
@@ -549,14 +544,10 @@ void AIFWaveManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (UWorld* const World = GetWorld())
 	{
-		if (UIFWaveManagerSubsystem* const Subsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			Subsystem->UnregisterWaveManager(this);
-		}
-
-		if (UIFPlayerSubsystem* const PlayerSubsystem = World->GetSubsystem<UIFPlayerSubsystem>())
-		{
-			PlayerSubsystem->OnPlayerRegistered.RemoveDynamic(this, &AIFWaveManager::HandlePlayerRegistered);
+			Registry->UnregisterActor(IFRegistryRoles::WaveManager, this);
+			Registry->OnActorRegistered.RemoveDynamic(this, &AIFWaveManager::HandleActorRegistered);
 		}
 
 		World->GetTimerManager().ClearTimer(InterWaveTimerHandle);
@@ -588,6 +579,14 @@ void AIFWaveManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UnbindAllSpawnedEnemyDelegates();
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void AIFWaveManager::HandleActorRegistered(FName ActorRole, AActor* Actor)
+{
+	if (ActorRole == IFRegistryRoles::Player)
+	{
+		HandlePlayerRegistered(Cast<AIFPlayerCharacter>(Actor));
+	}
 }
 
 void AIFWaveManager::HandlePlayerRegistered(AIFPlayerCharacter* Player)
@@ -678,9 +677,9 @@ void AIFWaveManager::HandleWaveClearHeal(int32 WaveNumber)
 		};
 
 		// Heal player
-		if (UIFPlayerSubsystem* const PlayerSubsystem = World->GetSubsystem<UIFPlayerSubsystem>())
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			if (AIFPlayerCharacter* const Player = PlayerSubsystem->GetPlayer())
+			if (AIFPlayerCharacter* const Player = Registry->GetActor<AIFPlayerCharacter>(IFRegistryRoles::Player))
 			{
 				ApplyClearHeal(Player->GetHealthComponent(), PlayerHealPercent, PlayerHealed,
 					TEXT("Player healed"), TEXT("[IF-Heal] Player dead - skipping heal."), Player);

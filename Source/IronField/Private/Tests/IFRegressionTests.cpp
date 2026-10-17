@@ -5,6 +5,7 @@
 #include "Combat/IFPlayerCombatComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "Core/IFActorRegistrySubsystem.h"
 #include "Pickup/IFHealPickup.h"
 #include "Stats/IFHealthComponent.h"
 #include "Wave/IFWaveManager.h"
@@ -133,6 +134,53 @@ bool FIFWaveCorpseCleanupTest::RunTest(const FString& Parameters)
 		}
 
 		WaveManager->Destroy();
+	}
+
+	GEngine->DestroyWorldContext(World);
+	World->DestroyWorld(false);
+	return true;
+}
+
+// S4: Unified actor registry subsystem
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFActorRegistrySubsystemTest, "IronField.Core.ActorRegistrySubsystem", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+bool FIFActorRegistrySubsystemTest::RunTest(const FString& Parameters)
+{
+	UWorld* const World = UWorld::CreateWorld(EWorldType::Game, false);
+	TestNotNull(TEXT("Test world must be valid"), World);
+	if (!World)
+	{
+		return false;
+	}
+
+	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
+	WorldContext.SetCurrentWorld(World);
+
+	UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>();
+	TestNotNull(TEXT("Registry subsystem must be valid"), Registry);
+
+	if (Registry)
+	{
+		// Initial state: no actor registered for Player role
+		TestFalse(TEXT("Player role should not be registered initially"), Registry->HasActor(IFRegistryRoles::Player));
+		TestNull(TEXT("GetActor for Player role should return null initially"), Registry->GetActor(IFRegistryRoles::Player));
+
+		// Register an actor
+		AActor* const DummyPlayer = World->SpawnActor<AActor>();
+		TestNotNull(TEXT("DummyPlayer actor must be spawned"), DummyPlayer);
+
+		if (DummyPlayer)
+		{
+			Registry->RegisterActor(IFRegistryRoles::Player, DummyPlayer);
+			TestTrue(TEXT("Player role should be registered after RegisterActor"), Registry->HasActor(IFRegistryRoles::Player));
+			TestEqual(TEXT("GetActor should return registered actor"), Registry->GetActor(IFRegistryRoles::Player), DummyPlayer);
+
+			// Unregister with matching actor
+			Registry->UnregisterActor(IFRegistryRoles::Player, DummyPlayer);
+			TestFalse(TEXT("Player role should not be registered after UnregisterActor"), Registry->HasActor(IFRegistryRoles::Player));
+			TestNull(TEXT("GetActor should return null after unregistration"), Registry->GetActor(IFRegistryRoles::Player));
+
+			DummyPlayer->Destroy();
+		}
 	}
 
 	GEngine->DestroyWorldContext(World);

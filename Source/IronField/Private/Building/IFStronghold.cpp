@@ -3,7 +3,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Core/IFFeedbackUtils.h"
-#include "Core/IFStrongholdSubsystem.h"
+#include "Core/IFActorRegistrySubsystem.h"
 #include "Engine/World.h"
 #include "Stats/IFHealthComponent.h"
 
@@ -42,9 +42,9 @@ void AIFStronghold::BeginPlay()
 
 	if (UWorld* const World = GetWorld())
 	{
-		if (UIFStrongholdSubsystem* const Subsystem = World->GetSubsystem<UIFStrongholdSubsystem>())
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			Subsystem->RegisterStronghold(this);
+			Registry->RegisterActor(IFRegistryRoles::Stronghold, this);
 		}
 	}
 }
@@ -59,9 +59,9 @@ void AIFStronghold::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	if (UWorld* const World = GetWorld())
 	{
-		if (UIFStrongholdSubsystem* const Subsystem = World->GetSubsystem<UIFStrongholdSubsystem>())
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			Subsystem->UnregisterStronghold(this);
+			Registry->UnregisterActor(IFRegistryRoles::Stronghold, this);
 		}
 	}
 

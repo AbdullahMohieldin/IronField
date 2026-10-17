@@ -6,8 +6,7 @@
 #include "Core/IFGameInstance.h"
 #include "Core/IFLog.h"
 #include "Core/IFPlayerController.h"
-#include "Core/IFStrongholdSubsystem.h"
-#include "Core/IFWaveManagerSubsystem.h"
+#include "Core/IFActorRegistrySubsystem.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Wave/IFWaveManager.h"
@@ -30,27 +29,21 @@ void AIFGameMode::BeginPlay()
 		return;
 	}
 
-	if (UIFWaveManagerSubsystem* const WaveSubsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
+	if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 	{
-		if (AIFWaveManager* const WaveManager = WaveSubsystem->GetWaveManager())
+		if (AIFWaveManager* const WaveManager = Registry->GetActor<AIFWaveManager>(IFRegistryRoles::WaveManager))
 		{
 			HandleWaveManagerRegistered(WaveManager);
 		}
-		else
-		{
-			WaveSubsystem->OnWaveManagerRegistered.AddDynamic(this, &AIFGameMode::HandleWaveManagerRegistered);
-		}
-	}
 
-	if (UIFStrongholdSubsystem* const StrongholdSubsystem = World->GetSubsystem<UIFStrongholdSubsystem>())
-	{
-		if (AIFStronghold* const Stronghold = StrongholdSubsystem->GetStronghold())
+		if (AIFStronghold* const Stronghold = Registry->GetActor<AIFStronghold>(IFRegistryRoles::Stronghold))
 		{
 			HandleStrongholdRegistered(Stronghold);
 		}
-		else
+
+		if (!BoundWaveManager || !BoundStronghold)
 		{
-			StrongholdSubsystem->OnStrongholdRegistered.AddDynamic(this, &AIFGameMode::HandleStrongholdRegistered);
+			Registry->OnActorRegistered.AddDynamic(this, &AIFGameMode::HandleActorRegistered);
 		}
 	}
 }
@@ -60,14 +53,9 @@ void AIFGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UWorld* const World = GetWorld();
 	if (World)
 	{
-		if (UIFWaveManagerSubsystem* const WaveSubsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			WaveSubsystem->OnWaveManagerRegistered.RemoveDynamic(this, &AIFGameMode::HandleWaveManagerRegistered);
-		}
-
-		if (UIFStrongholdSubsystem* const StrongholdSubsystem = World->GetSubsystem<UIFStrongholdSubsystem>())
-		{
-			StrongholdSubsystem->OnStrongholdRegistered.RemoveDynamic(this, &AIFGameMode::HandleStrongholdRegistered);
+			Registry->OnActorRegistered.RemoveDynamic(this, &AIFGameMode::HandleActorRegistered);
 		}
 	}
 
@@ -84,6 +72,18 @@ void AIFGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void AIFGameMode::HandleActorRegistered(FName ActorRole, AActor* Actor)
+{
+	if (ActorRole == IFRegistryRoles::WaveManager)
+	{
+		HandleWaveManagerRegistered(Cast<AIFWaveManager>(Actor));
+	}
+	else if (ActorRole == IFRegistryRoles::Stronghold)
+	{
+		HandleStrongholdRegistered(Cast<AIFStronghold>(Actor));
+	}
 }
 
 void AIFGameMode::HandleWaveManagerRegistered(AIFWaveManager* WaveManager)

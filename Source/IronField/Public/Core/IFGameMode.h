@@ -22,6 +22,9 @@ protected:
 
 private:
 	UFUNCTION()
+	void HandleActorRegistered(FName ActorRole, AActor* Actor);
+
+	UFUNCTION()
 	void HandleWaveManagerRegistered(AIFWaveManager* WaveManager);
 
 	UFUNCTION()

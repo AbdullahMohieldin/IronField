@@ -3,9 +3,9 @@
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "Core/IFGameInstance.h"
+#include "Core/IFActorRegistrySubsystem.h"
 #include "Core/IFLog.h"
 #include "Core/IFPlayerControllerUtils.h"
-#include "Core/IFWaveManagerSubsystem.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Wave/IFWaveManager.h"
@@ -74,8 +74,8 @@ void UIFGameOverScreenWidget::ApplyStatsLine()
 	// Default path: build "WAVE N - KILLS M" from the live wave manager so the
 	// existing ShowGameOverScreen(Result) caller needs no change.
 	const UWorld* const World = GetWorld();
-	const UIFWaveManagerSubsystem* const Subsystem = World ? World->GetSubsystem<UIFWaveManagerSubsystem>() : nullptr;
-	const AIFWaveManager* const WaveManager = Subsystem ? Subsystem->GetWaveManager() : nullptr;
+	const UIFActorRegistrySubsystem* const Subsystem = World ? World->GetSubsystem<UIFActorRegistrySubsystem>() : nullptr;
+	const AIFWaveManager* const WaveManager = Subsystem ? Subsystem->GetActor<AIFWaveManager>(IFRegistryRoles::WaveManager) : nullptr;
 	if (!WaveManager)
 	{
 		return;

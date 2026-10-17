@@ -67,10 +67,7 @@ private:
 	void HandlePlayerStaminaChanged(float Percent);
 
 	UFUNCTION()
-	void HandlePlayerRegistered(AIFPlayerCharacter* Player);
-
-	UFUNCTION()
-	void HandleStrongholdRegistered(AIFStronghold* Stronghold);
+	void HandleActorRegistered(FName ActorRole, AActor* Actor);
 
 	UFUNCTION()
 	void HandleStrongholdHealthChanged(float Percent);
@@ -93,8 +90,6 @@ private:
 	UFUNCTION()
 	void PollLoadingVeil();
 
-	UFUNCTION()
-	void HandleWaveManagerRegistered(AIFWaveManager* WaveManager);
 
 	UFUNCTION()
 	void HideBanner();

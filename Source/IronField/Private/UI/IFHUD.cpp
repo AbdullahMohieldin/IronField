@@ -6,10 +6,8 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/TextBlock.h"
+#include "Core/IFActorRegistrySubsystem.h"
 #include "Core/IFLog.h"
-#include "Core/IFPlayerSubsystem.h"
-#include "Core/IFStrongholdSubsystem.h"
-#include "Core/IFWaveManagerSubsystem.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
 #include "ShaderPipelineCache.h"
@@ -56,40 +54,27 @@ void UIFHUD::NativeConstruct()
 		return;
 	}
 
-	if (!bPlayerBound)
+	if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 	{
-		if (UIFPlayerSubsystem* const PlayerSubsystem = World->GetSubsystem<UIFPlayerSubsystem>())
+		if (!bPlayerBound)
 		{
-			PlayerSubsystem->OnPlayerRegistered.AddDynamic(this, &UIFHUD::HandlePlayerRegistered);
+			if (AIFPlayerCharacter* const Player = Registry->GetActor<AIFPlayerCharacter>(IFRegistryRoles::Player))
+			{
+				BindPlayerStatBars(Player);
+			}
 		}
-	}
 
-	if (UIFStrongholdSubsystem* const StrongholdSubsystem = World->GetSubsystem<UIFStrongholdSubsystem>())
-	{
-		// The HUD normally constructs before level actors begin play, so the stronghold
-		// usually arrives through the registration delegate rather than the direct path.
-		if (AIFStronghold* const Stronghold = StrongholdSubsystem->GetStronghold())
+		if (AIFStronghold* const Stronghold = Registry->GetActor<AIFStronghold>(IFRegistryRoles::Stronghold))
 		{
 			BindStrongholdStatBar(Stronghold);
 		}
-		else
-		{
-			StrongholdSubsystem->OnStrongholdRegistered.AddDynamic(this, &UIFHUD::HandleStrongholdRegistered);
-		}
-	}
 
-	// Same dual-path pattern for waves: direct when the manager already registered,
-	// delegate otherwise (covers HUD-constructed-first ordering).
-	if (UIFWaveManagerSubsystem* const WaveSubsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
-	{
-		if (AIFWaveManager* const WaveManager = WaveSubsystem->GetWaveManager())
+		if (AIFWaveManager* const WaveManager = Registry->GetActor<AIFWaveManager>(IFRegistryRoles::WaveManager))
 		{
 			BindWaveManager(WaveManager);
 		}
-		else
-		{
-			WaveSubsystem->OnWaveManagerRegistered.AddDynamic(this, &UIFHUD::HandleWaveManagerRegistered);
-		}
+
+		Registry->OnActorRegistered.AddDynamic(this, &UIFHUD::HandleActorRegistered);
 	}
 }
 
@@ -103,19 +88,9 @@ void UIFHUD::NativeDestruct()
 		World->GetTimerManager().ClearTimer(DamageFlashTimerHandle);
 		World->GetTimerManager().ClearTimer(LoadingVeilTimerHandle);
 
-		if (UIFStrongholdSubsystem* const Subsystem = World->GetSubsystem<UIFStrongholdSubsystem>())
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			Subsystem->OnStrongholdRegistered.RemoveDynamic(this, &UIFHUD::HandleStrongholdRegistered);
-		}
-
-		if (UIFPlayerSubsystem* const PlayerSubsystem = World->GetSubsystem<UIFPlayerSubsystem>())
-		{
-			PlayerSubsystem->OnPlayerRegistered.RemoveDynamic(this, &UIFHUD::HandlePlayerRegistered);
-		}
-
-		if (UIFWaveManagerSubsystem* const WaveSubsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
-		{
-			WaveSubsystem->OnWaveManagerRegistered.RemoveDynamic(this, &UIFHUD::HandleWaveManagerRegistered);
+			Registry->OnActorRegistered.RemoveDynamic(this, &UIFHUD::HandleActorRegistered);
 		}
 	}
 
@@ -124,9 +99,20 @@ void UIFHUD::NativeDestruct()
 	Super::NativeDestruct();
 }
 
-void UIFHUD::HandlePlayerRegistered(AIFPlayerCharacter* Player)
+void UIFHUD::HandleActorRegistered(FName ActorRole, AActor* Actor)
 {
-	BindPlayerStatBars(Player);
+	if (ActorRole == IFRegistryRoles::Player)
+	{
+		BindPlayerStatBars(Cast<AIFPlayerCharacter>(Actor));
+	}
+	else if (ActorRole == IFRegistryRoles::Stronghold)
+	{
+		BindStrongholdStatBar(Cast<AIFStronghold>(Actor));
+	}
+	else if (ActorRole == IFRegistryRoles::WaveManager)
+	{
+		BindWaveManager(Cast<AIFWaveManager>(Actor));
+	}
 }
 
 void UIFHUD::BindPlayerStatBars(AIFPlayerCharacter* InPlayer)
@@ -146,9 +132,9 @@ void UIFHUD::BindPlayerStatBars(AIFPlayerCharacter* InPlayer)
 	{
 		if (const UWorld* const World = GetWorld())
 		{
-			if (const UIFPlayerSubsystem* const Subsystem = World->GetSubsystem<UIFPlayerSubsystem>())
+			if (const UIFActorRegistrySubsystem* const Subsystem = World->GetSubsystem<UIFActorRegistrySubsystem>())
 			{
-				Player = Subsystem->GetPlayer();
+				Player = Subsystem->GetActor<AIFPlayerCharacter>(IFRegistryRoles::Player);
 			}
 		}
 	}
@@ -187,11 +173,6 @@ void UIFHUD::BindPlayerStatBars(AIFPlayerCharacter* InPlayer)
 	PlayerStaminaBar->SetTargetPercent(Stamina->GetStaminaPercent());
 }
 
-void UIFHUD::HandleStrongholdRegistered(AIFStronghold* Stronghold)
-{
-	BindStrongholdStatBar(Stronghold);
-}
-
 void UIFHUD::BindStrongholdStatBar(AIFStronghold* Stronghold)
 {
 	if (bStrongholdBound)
@@ -217,11 +198,6 @@ void UIFHUD::BindStrongholdStatBar(AIFStronghold* Stronghold)
 	BoundStrongholdHealth = Health;
 	ApplyBarColors();
 	StrongholdHealthBar->SetTargetPercent(Health->GetHealthPercent());
-}
-
-void UIFHUD::HandleWaveManagerRegistered(AIFWaveManager* WaveManager)
-{
-	BindWaveManager(WaveManager);
 }
 
 void UIFHUD::BindWaveManager(AIFWaveManager* WaveManager)

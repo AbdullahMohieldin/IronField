@@ -68,7 +68,7 @@ private:
 	void HandlePlayerDowned();
 
 	UFUNCTION()
-	void HandleWaveManagerRegistered(AIFWaveManager* InWaveManager);
+	void HandleActorRegistered(FName ActorRole, AActor* Actor);
 
 	void InitializeControlledPawn();
 	void RollPawnAggression();

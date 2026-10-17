@@ -5,7 +5,7 @@
 #include "Combat/IFPlayerCombatComponent.h"
 #include "Core/IFLog.h"
 #include "Core/IFPlayerController.h"
-#include "Core/IFPlayerSubsystem.h"
+#include "Core/IFActorRegistrySubsystem.h"
 #include "Engine/World.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -74,9 +74,9 @@ void AIFPlayerCharacter::BeginPlay()
 
 	if (UWorld* const World = GetWorld())
 	{
-		if (UIFPlayerSubsystem* const Subsystem = World->GetSubsystem<UIFPlayerSubsystem>())
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			Subsystem->RegisterPlayer(this);
+			Registry->RegisterActor(IFRegistryRoles::Player, this);
 		}
 	}
 
@@ -128,9 +128,9 @@ void AIFPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	if (UWorld* const World = GetWorld())
 	{
-		if (UIFPlayerSubsystem* const Subsystem = World->GetSubsystem<UIFPlayerSubsystem>())
+		if (UIFActorRegistrySubsystem* const Registry = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			Subsystem->UnregisterPlayer(this);
+			Registry->UnregisterActor(IFRegistryRoles::Player, this);
 		}
 	}
 

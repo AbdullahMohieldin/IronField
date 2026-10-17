@@ -255,6 +255,9 @@ private:
 	void CacheSpawnPoints();
 
 	UFUNCTION()
+	void HandleActorRegistered(FName ActorRole, AActor* Actor);
+
+	UFUNCTION()
 	void HandlePlayerRegistered(AIFPlayerCharacter* Player);
 
 	UFUNCTION()

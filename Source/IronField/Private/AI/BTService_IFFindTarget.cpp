@@ -6,10 +6,9 @@
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Character/IFEnemyCharacter.h"
+#include "Core/IFActorRegistrySubsystem.h"
 #include "Core/IFLog.h"
-#include "Core/IFWaveManagerSubsystem.h"
 #include "Stats/IFHealthComponent.h"
-#include "Wave/IFWaveManager.h"
 
 namespace
 {
@@ -31,18 +30,6 @@ namespace
 		}
 
 		return true;
-	}
-
-	AIFWaveManager* ResolveWaveManager(const UBehaviorTreeComponent& OwnerComp)
-	{
-		if (const UWorld* const World = OwnerComp.GetWorld())
-		{
-			if (const UIFWaveManagerSubsystem* const Subsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
-			{
-				return Subsystem->GetWaveManager();
-			}
-		}
-		return nullptr;
 	}
 
 	/** Soft distance desire: 1.0 in your face, fading with range. Same curve for both targets. */
@@ -72,9 +59,10 @@ void UBTService_IFFindTarget::TickNode(UBehaviorTreeComponent& OwnerComp, uint8*
 void UBTService_IFFindTarget::ChooseTarget(UBehaviorTreeComponent& OwnerComp) const
 {
 	const APawn* const Pawn = OwnerComp.GetAIOwner() ? OwnerComp.GetAIOwner()->GetPawn() : nullptr;
-	AIFWaveManager* const WaveManager = ResolveWaveManager(OwnerComp);
 	UBlackboardComponent* const BB = OwnerComp.GetBlackboardComponent();
-	if (!Pawn || !WaveManager || !BB)
+	const UWorld* const World = OwnerComp.GetWorld();
+	const UIFActorRegistrySubsystem* const Registry = World ? World->GetSubsystem<UIFActorRegistrySubsystem>() : nullptr;
+	if (!Pawn || !BB || !Registry)
 	{
 		return;
 	}
@@ -87,8 +75,8 @@ void UBTService_IFFindTarget::ChooseTarget(UBehaviorTreeComponent& OwnerComp) co
 	}
 	const float DetectionRange = AIData->PlayerDetectionRange;
 
-	AActor* const Player = WaveManager->GetPlayerActor();
-	AActor* const Stronghold = WaveManager->GetStrongholdActor();
+	AActor* const Player = Registry->GetActor(IFRegistryRoles::Player);
+	AActor* const Stronghold = Registry->GetActor(IFRegistryRoles::Stronghold);
 	AActor* const Current = GetBlackboardTargetActor(OwnerComp, TargetActorKey);
 
 	const bool bPlayerOk = IsUsableTarget(Player)
@@ -97,7 +85,6 @@ void UBTService_IFFindTarget::ChooseTarget(UBehaviorTreeComponent& OwnerComp) co
 
 	AIFEnemyCharacter* const Enemy = OwnerComp.GetAIOwner() ? Cast<AIFEnemyCharacter>(OwnerComp.GetAIOwner()->GetPawn()) : nullptr;
 	const float Aggression = Enemy ? Enemy->GetAggression() : 0.5f;
-	const UWorld* const World = OwnerComp.GetWorld();
 	const float Now = World ? World->GetTimeSeconds() : 0.f;
 
 	// One scorer for both candidates: distance desire shaped by personality.

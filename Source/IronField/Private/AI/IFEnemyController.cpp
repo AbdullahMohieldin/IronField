@@ -6,8 +6,8 @@
 #include "BrainComponent.h"
 #include "Character/IFEnemyCharacter.h"
 #include "Combat/IFCombatComponent.h"
+#include "Core/IFActorRegistrySubsystem.h"
 #include "Core/IFLog.h"
-#include "Core/IFWaveManagerSubsystem.h"
 #include "Engine/World.h"
 #include "Stats/IFHealthComponent.h"
 #include "Wave/IFWaveManager.h"
@@ -62,19 +62,19 @@ void AIFEnemyController::InitializeControlledPawn()
 
 	if (const UWorld* const World = GetWorld())
 	{
-		if (UIFWaveManagerSubsystem* const Subsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
+		if (UIFActorRegistrySubsystem* const Subsystem = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			CachedWaveManager = Subsystem->GetWaveManager();
+			CachedWaveManager = Subsystem->GetActor<AIFWaveManager>(IFRegistryRoles::WaveManager);
 			if (!CachedWaveManager)
 			{
-				Subsystem->OnWaveManagerRegistered.AddDynamic(this, &AIFEnemyController::HandleWaveManagerRegistered);
+				Subsystem->OnActorRegistered.AddDynamic(this, &AIFEnemyController::HandleActorRegistered);
 			}
 		}
 	}
 
 	if (!CachedWaveManager)
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-AI] %s possessed before WaveManager registered; subscribed to OnWaveManagerRegistered."), *GetName());
+		UE_LOG(LogIronField, Log, TEXT("[IF-AI] %s possessed before WaveManager registered; subscribed to OnActorRegistered."), *GetName());
 	}
 
 	if (CachedWaveManager)
@@ -148,15 +148,21 @@ void AIFEnemyController::UnbindOwnDelegates()
 
 	if (const UWorld* const World = GetWorld())
 	{
-		if (UIFWaveManagerSubsystem* const Subsystem = World->GetSubsystem<UIFWaveManagerSubsystem>())
+		if (UIFActorRegistrySubsystem* const Subsystem = World->GetSubsystem<UIFActorRegistrySubsystem>())
 		{
-			Subsystem->OnWaveManagerRegistered.RemoveAll(this);
+			Subsystem->OnActorRegistered.RemoveAll(this);
 		}
 	}
 }
 
-void AIFEnemyController::HandleWaveManagerRegistered(AIFWaveManager* InWaveManager)
+void AIFEnemyController::HandleActorRegistered(FName ActorRole, AActor* Actor)
 {
+	if (ActorRole != IFRegistryRoles::WaveManager)
+	{
+		return;
+	}
+
+	AIFWaveManager* const InWaveManager = Cast<AIFWaveManager>(Actor);
 	if (!InWaveManager || CachedWaveManager == InWaveManager)
 	{
 		return;
