@@ -36,7 +36,7 @@ protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> ResultTitleText;
 
-	UPROPERTY(meta = (BindWidget))
+	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> StatsText;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|UI|GameOver")

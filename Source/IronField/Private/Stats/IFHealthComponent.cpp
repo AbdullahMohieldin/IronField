@@ -5,7 +5,7 @@
 
 namespace
 {
-	// Health is never allowed to drop below this floor.
+	// Minimum valid floor for MaxHealth and ReviveHealth.
 	constexpr float MinHealthValue = 1.f;
 }
 

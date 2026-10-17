@@ -101,6 +101,9 @@ void AIFWaveManager::BeginWaveFromDefinition(const FWaveDefinition& Wave)
 	// Invalidate any timer callbacks scheduled under the previous wave.
 	WaveGeneration++;
 
+	// Flush any pending corpse cleanup from the previous wave before clearing spawned lists.
+	CleanupWaveCorpses();
+
 	EnemiesSpawnedSoFar = 0;
 	EnemiesAlive = 0;
 	TotalEnemiesInWave = 0;
@@ -426,7 +429,6 @@ void AIFWaveManager::CompleteWaveIfFinished()
 		World->GetTimerManager().ClearTimer(ValidateTimerHandle);
 	}
 
-	CleanupWaveCorpses();
 	ScheduleNextWave();
 }
 
@@ -445,31 +447,43 @@ void AIFWaveManager::HandleEnemyDied(AIFBaseCharacter* DeadEnemy)
 	KillCount++;
 	OnKillCountChanged.Broadcast(KillCount);
 
+	// Track corpses independently from active spawned enemies
+	PendingCorpses.Add(DeadEnemy);
+	SpawnedEnemies.Remove(DeadEnemy);
+
 	// Refill concurrency from the queue as the player scores kills.
 	TrySpawnPending();
+
+	// Spawn heal pickup before wave completion check so DeadEnemy is still valid
+	TrySpawnHealPickup(DeadEnemy);
+
 	CompleteWaveIfFinished();
 
-	// Spawn heal pickup on death
-	TrySpawnHealPickup(DeadEnemy);
+	// Defer corpse cleanup so death animations complete
+	if (UWorld* const World = GetWorld())
+	{
+		if (!World->GetTimerManager().IsTimerActive(CorpseCleanupTimerHandle))
+		{
+			World->GetTimerManager().SetTimer(CorpseCleanupTimerHandle, this, &AIFWaveManager::CleanupWaveCorpses, CorpseDespawnDelaySeconds, false);
+		}
+	}
 }
 
 void AIFWaveManager::CleanupWaveCorpses()
 {
-	for (int32 Index = SpawnedEnemies.Num() - 1; Index >= 0; --Index)
+	if (UWorld* const World = GetWorld())
 	{
-		AIFBaseCharacter* const Enemy = SpawnedEnemies[Index];
-		if (!Enemy)
-		{
-			SpawnedEnemies.RemoveAt(Index);
-			continue;
-		}
+		World->GetTimerManager().ClearTimer(CorpseCleanupTimerHandle);
+	}
 
-		if (Enemy->IsDead())
+	for (int32 Index = PendingCorpses.Num() - 1; Index >= 0; --Index)
+	{
+		if (AIFBaseCharacter* const Corpse = PendingCorpses[Index].Get())
 		{
-			Enemy->Destroy();
-			SpawnedEnemies.RemoveAt(Index);
+			Corpse->Destroy();
 		}
 	}
+	PendingCorpses.Empty();
 }
 
 void AIFWaveManager::UnbindAllSpawnedEnemyDelegates()
@@ -549,6 +563,7 @@ void AIFWaveManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		World->GetTimerManager().ClearTimer(SpawnTimerHandle);
 		World->GetTimerManager().ClearTimer(ValidateTimerHandle);
 		World->GetTimerManager().ClearTimer(WarmupTimerHandle);
+		World->GetTimerManager().ClearTimer(CorpseCleanupTimerHandle);
 	}
 
 	// Invalidate timer callbacks already in flight during teardown.
@@ -561,6 +576,7 @@ void AIFWaveManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	CleanupWarmupActors();
+	CleanupWaveCorpses();
 
 	if (bWaveCompletedBound)
 	{
@@ -715,13 +731,13 @@ void AIFWaveManager::TrySpawnHealPickup(AIFBaseCharacter* DeadEnemy)
 		SpawnLocation.Z += TraceMissGroundOffset; // slight offset above ground if no trace hit
 	}
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
-
-	AIFHealPickup* const Pickup = World->SpawnActor<AIFHealPickup>(HealPickupClass, SpawnLocation, FRotator::ZeroRotator, SpawnParams);
+	const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
+	AIFHealPickup* const Pickup = World->SpawnActorDeferred<AIFHealPickup>(
+		HealPickupClass, SpawnTransform, this, nullptr, ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn);
 	if (Pickup)
 	{
 		Pickup->HealAmount = PickupHealAmount;
+		Pickup->FinishSpawning(SpawnTransform);
 		UE_LOG(LogIronField, Log, TEXT("[IF-Heal] Spawned heal pickup at %s (amount=%.0f)."), *SpawnLocation.ToString(), PickupHealAmount);
 	}
 }

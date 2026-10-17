@@ -96,11 +96,7 @@ void AIFPlayerCharacter::BeginPlay()
 void AIFPlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	if (GetVelocity().SizeSquared2D() <= SprintExitSpeedSquared || !HasSprintInput())
-	{
-		StopSprint();
-	}
+	UpdateSprintState();
 }
 
 void AIFPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -227,7 +223,8 @@ void AIFPlayerCharacter::Jump()
 
 void AIFPlayerCharacter::OnDeathStarted()
 {
-	StopSprint();
+	bSprintRequested = false;
+	UpdateSprintState();
 	bUseControllerRotationYaw = false;
 	UpdateTickEnabled();
 	StartReviveTimer();
@@ -235,7 +232,7 @@ void AIFPlayerCharacter::OnDeathStarted()
 
 void AIFPlayerCharacter::HandleStaminaDepleted()
 {
-	StopSprint();
+	UpdateSprintState();
 }
 
 void AIFPlayerCharacter::ClearReviveTimers()
@@ -337,12 +334,14 @@ void AIFPlayerCharacter::Move(const FInputActionValue& Value)
 	AddMovementInput(YawMatrix.GetUnitAxis(EAxis::Y), CachedMovementInput.X);
 
 	UpdateMovementSpeed();
+	UpdateSprintState();
 }
 
 void AIFPlayerCharacter::StopMoving()
 {
 	CachedMovementInput = FVector2D::ZeroVector;
-	StopSprint();
+	UpdateMovementSpeed();
+	UpdateSprintState();
 }
 
 void AIFPlayerCharacter::Look(const FInputActionValue& Value)
@@ -364,45 +363,59 @@ void AIFPlayerCharacter::Look(const FInputActionValue& Value)
 
 void AIFPlayerCharacter::StartSprint()
 {
-	if (bIsSprinting || IsGettingUp())
-	{
-		return;
-	}
-
-	const UIFCombatComponent* const Combat = GetCombatComponent();
-	if (!Combat || !Combat->IsIdle())
-	{
-		return;
-	}
-
-	UIFStaminaComponent* const Stamina = GetStaminaComponent();
-	if (!Stamina || !Stamina->HasStamina(MinimumStaminaToStartSprint))
-	{
-		return;
-	}
-
-	bIsSprinting = true;
-	Stamina->StartContinuousDrain(SprintStaminaDrainRate);
-	UpdateTickEnabled();
-	UpdateMovementSpeed();
+	bSprintRequested = true;
+	UpdateSprintState();
 }
 
 void AIFPlayerCharacter::StopSprint()
 {
-	if (!bIsSprinting)
+	bSprintRequested = false;
+	UpdateSprintState();
+}
+
+void AIFPlayerCharacter::UpdateSprintState()
+{
+	bool bShouldSprint = false;
+
+	if (bSprintRequested && !IsDead() && !IsGettingUp() && HasSprintInput())
 	{
-		return;
+		const UIFCombatComponent* const Combat = GetCombatComponent();
+		if (Combat && Combat->IsIdle())
+		{
+			const UIFStaminaComponent* const Stamina = GetStaminaComponent();
+			if (Stamina)
+			{
+				if (bIsSprinting)
+				{
+					bShouldSprint = Stamina->GetStaminaPercent() > 0.f;
+				}
+				else
+				{
+					bShouldSprint = Stamina->HasStamina(MinimumStaminaToStartSprint);
+				}
+			}
+		}
 	}
 
-	bIsSprinting = false;
-
-	if (UIFStaminaComponent* const Stamina = GetStaminaComponent())
+	if (bShouldSprint != bIsSprinting)
 	{
-		Stamina->StopContinuousDrain();
-	}
+		bIsSprinting = bShouldSprint;
 
-	UpdateTickEnabled();
-	UpdateMovementSpeed();
+		if (UIFStaminaComponent* const Stamina = GetStaminaComponent())
+		{
+			if (bIsSprinting)
+			{
+				Stamina->StartContinuousDrain(SprintStaminaDrainRate);
+			}
+			else
+			{
+				Stamina->StopContinuousDrain();
+			}
+		}
+
+		UpdateTickEnabled();
+		UpdateMovementSpeed();
+	}
 }
 
 bool AIFPlayerCharacter::TryPrepareCombatAction()
@@ -412,7 +425,8 @@ bool AIFPlayerCharacter::TryPrepareCombatAction()
 		return false;
 	}
 
-	StopSprint();
+	bSprintRequested = false;
+	UpdateSprintState();
 	return true;
 }
 

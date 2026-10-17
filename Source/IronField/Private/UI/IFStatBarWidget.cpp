@@ -6,7 +6,7 @@
 UIFStatBarWidget::UIFStatBarWidget(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	// Pure C++ NativeTick is not enabled unless this flag is set (or BP implements Tick).
+	// Engine quirk: UUserWidget suppresses NativeTick unless bHasScriptImplementedTick is true or TickFrequency is explicitly overridden.
 	bHasScriptImplementedTick = true;
 }
 

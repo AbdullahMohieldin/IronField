@@ -138,6 +138,8 @@ private:
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Player|Movement", meta = (AllowPrivateAccess = "true"))
 	bool bIsSprinting = false;
 
+	bool bSprintRequested = false;
+
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Player|Movement", meta = (AllowPrivateAccess = "true"))
 	FVector2D CachedMovementInput = FVector2D::ZeroVector;
 
@@ -166,6 +168,7 @@ private:
 	void HandleCombatStateChanged(ECombatState PreviousState, ECombatState NewState);
 
 	void UpdateMovementSpeed();
+	void UpdateSprintState();
 	bool HasSprintInput() const;
 	float CalculateDesiredMovementSpeed() const;
 	UIFPlayerCombatComponent* GetPlayerCombatComponent() const;

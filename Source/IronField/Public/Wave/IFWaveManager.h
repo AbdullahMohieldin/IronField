@@ -100,6 +100,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Config", meta = (ClampMin = "0.05"))
 	float SpawnIntervalSeconds = 0.5f;
 
+	/** Delay before dead enemies are destroyed so death animations finish playing. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Config", meta = (ClampMin = "0.1"))
+	float CorpseDespawnDelaySeconds = 1.0f;
+
 	/** Wait before the first spawn of each wave so the banner reads before contact. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Wave|Config", meta = (ClampMin = "0.0"))
 	float SpawnStartDelaySeconds = 2.5f;
@@ -216,7 +220,11 @@ private:
 	FTimerHandle SpawnTimerHandle;
 	FTimerHandle ValidateTimerHandle;
 	FTimerHandle WarmupTimerHandle;
+	FTimerHandle CorpseCleanupTimerHandle;
 	TSharedPtr<FStreamableHandle> WarmupStreamableHandle;
+
+	UPROPERTY(Transient)
+	TArray<TWeakObjectPtr<AIFBaseCharacter>> PendingCorpses;
 
 	// Generation counter for async identity: bumped on every BeginWaveFromDefinition
 	// and EndPlay; timer delegates capture the scheduling generation and drop stale firings.

@@ -90,7 +90,7 @@ bool AIFHealPickup::TryHealActor(AActor* Actor)
 	}
 
 	UIFHealthComponent* const Health = Player->GetHealthComponent();
-	if (!Health || Health->IsDead())
+	if (!Health || Health->IsDead() || Health->GetHealthPercent() >= 1.f)
 	{
 		return false;
 	}
