@@ -14,7 +14,7 @@ class UPrimitiveComponent;
  * Combat component with melee combo steps, weapon collision box resolution, and attack hit registration.
  */
 UCLASS()
-class IRONFIELD_API UIFComboCombatComponent : public UIFCombatComponent
+class IFSYSTEMS_API UIFComboCombatComponent : public UIFCombatComponent
 {
 	GENERATED_BODY()
 

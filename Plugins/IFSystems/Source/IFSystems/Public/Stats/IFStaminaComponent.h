@@ -9,7 +9,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnStaminaDepleted);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStaminaChanged, float, Percent);
 
 UCLASS()
-class IRONFIELD_API UIFStaminaComponent : public UActorComponent
+class IFSYSTEMS_API UIFStaminaComponent : public UActorComponent
 {
 	GENERATED_BODY()
 

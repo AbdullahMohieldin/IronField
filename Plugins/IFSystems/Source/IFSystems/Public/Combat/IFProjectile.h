@@ -14,7 +14,7 @@ class UNiagaraComponent;
 
 /** Single source of truth for a shot: spawn pose and flight come from one direction. */
 USTRUCT()
-struct FIFProjectileSpawnArgs
+struct IFSYSTEMS_API FIFProjectileSpawnArgs
 {
 	GENERATED_BODY()
 
@@ -35,7 +35,7 @@ struct FIFProjectileSpawnArgs
 };
 
 UCLASS()
-class IRONFIELD_API AIFProjectile : public AActor
+class IFSYSTEMS_API AIFProjectile : public AActor
 {
 	GENERATED_BODY()
 

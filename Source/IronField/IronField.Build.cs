@@ -14,7 +14,8 @@ public class IronField : ModuleRules
 			"UMG",
 			"AIModule",
 			"Niagara",
-			"SlateCore"
+			"SlateCore",
+			"IFSystems"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {

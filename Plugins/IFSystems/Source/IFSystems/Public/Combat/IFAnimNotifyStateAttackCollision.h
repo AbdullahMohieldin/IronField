@@ -5,7 +5,7 @@
 #include "IFAnimNotifyStateAttackCollision.generated.h"
 
 UCLASS()
-class IRONFIELD_API UIFAnimNotifyStateAttackCollision : public UAnimNotifyState
+class IFSYSTEMS_API UIFAnimNotifyStateAttackCollision : public UAnimNotifyState
 {
 	GENERATED_BODY()
 

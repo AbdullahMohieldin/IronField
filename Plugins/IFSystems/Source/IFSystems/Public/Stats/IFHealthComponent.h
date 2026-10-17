@@ -11,7 +11,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamaged, AActor*, InstigatorActo
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDeath, AActor*, DeadActor);
 
 UCLASS()
-class IRONFIELD_API UIFHealthComponent : public UActorComponent
+class IFSYSTEMS_API UIFHealthComponent : public UActorComponent
 {
 	GENERATED_BODY()
 

@@ -20,7 +20,7 @@ DECLARE_DYNAMIC_DELEGATE_OneParam(FIFOnActorRegisteredDynamicCallback, AActor*, 
  * Decouples actor lookup from concrete subsystem types and concrete class dependencies.
  */
 UCLASS()
-class IRONFIELD_API UIFActorRegistrySubsystem : public UWorldSubsystem
+class IFSYSTEMS_API UIFActorRegistrySubsystem : public UWorldSubsystem
 {
 	GENERATED_BODY()
 

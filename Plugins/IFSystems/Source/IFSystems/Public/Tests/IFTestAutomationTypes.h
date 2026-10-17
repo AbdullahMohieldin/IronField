@@ -8,7 +8,7 @@
  * Helper listener object for capturing dynamic multicast delegate broadcasts in automation tests.
  */
 UCLASS()
-class IRONFIELD_API UIFTestAutomationListener : public UObject
+class IFSYSTEMS_API UIFTestAutomationListener : public UObject
 {
 	GENERATED_BODY()
 

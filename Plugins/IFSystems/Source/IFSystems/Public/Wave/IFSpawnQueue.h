@@ -8,7 +8,7 @@
  * Pure spawn queue logic with concurrency cap support and cursor-based O(1) popping.
  */
 USTRUCT(BlueprintType)
-struct IRONFIELD_API FIFSpawnQueue
+struct IFSYSTEMS_API FIFSpawnQueue
 {
 	GENERATED_BODY()
 

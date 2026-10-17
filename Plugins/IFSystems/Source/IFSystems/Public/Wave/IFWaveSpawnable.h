@@ -11,7 +11,7 @@ class UIFWaveSpawnable : public UInterface
 	GENERATED_BODY()
 };
 
-class IRONFIELD_API IIFWaveSpawnable
+class IFSYSTEMS_API IIFWaveSpawnable
 {
 	GENERATED_BODY()
 

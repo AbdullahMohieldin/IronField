@@ -5,7 +5,7 @@
 #include "IFAnimNotifyLaunchProjectile.generated.h"
 
 UCLASS()
-class IRONFIELD_API UIFAnimNotifyLaunchProjectile : public UAnimNotify
+class IFSYSTEMS_API UIFAnimNotifyLaunchProjectile : public UAnimNotify
 {
 	GENERATED_BODY()
 

@@ -4,7 +4,7 @@
 #include "IFSpawnContext.generated.h"
 
 USTRUCT(BlueprintType)
-struct IRONFIELD_API FIFSpawnContext
+struct IFSYSTEMS_API FIFSpawnContext
 {
 	GENERATED_BODY()
 

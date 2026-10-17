@@ -17,6 +17,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "IFSystems",
+			"Enabled": true
+		},
+		{
 			"Name": "ModelingToolsEditorMode",
 			"Enabled": true,
 			"TargetAllowList": [

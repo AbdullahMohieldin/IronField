@@ -17,7 +17,7 @@ class UNiagaraSystem;
  * Base combat component managing core combat state, hit reactions, and damage scaling.
  */
 UCLASS()
-class IRONFIELD_API UIFCombatComponent : public UActorComponent
+class IFSYSTEMS_API UIFCombatComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
