@@ -1,14 +1,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Stats/IFStatComponent.h"
+#include "Components/ActorComponent.h"
+#include "Stats/IFStatUtils.h"
 #include "IFStaminaComponent.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnStaminaDepleted);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStaminaChanged, float, Percent);
 
 UCLASS()
-class IRONFIELD_API UIFStaminaComponent : public UIFStatComponent
+class IRONFIELD_API UIFStaminaComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
@@ -31,7 +32,7 @@ public:
 	void StopContinuousDrain();
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Stamina|State")
-	float GetStaminaPercent() const { return ComputePercent(CurrentStamina, MaxStamina); }
+	float GetStaminaPercent() const { return IFStatUtils::ComputePercent(CurrentStamina, MaxStamina); }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Stamina|State")
 	bool HasStamina(float MinimumAmount) const { return CurrentStamina >= MinimumAmount; }

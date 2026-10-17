@@ -15,6 +15,8 @@
 #include "Core/IFActorRegistrySubsystem.h"
 #include "Pickup/IFHealPickup.h"
 #include "Stats/IFHealthComponent.h"
+#include "Stats/IFStaminaComponent.h"
+#include "Stats/IFStatUtils.h"
 #include "Wave/IFWaveManager.h"
 
 // F3: Block stamina depletion
@@ -288,4 +290,40 @@ bool FIFDamageScaleTest::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+// U7: Stat utilities unit tests
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFStatUtilsTest, "IronField.Stats.StatUtils", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+bool FIFStatUtilsTest::RunTest(const FString& Parameters)
+{
+	// ComputePercent
+	TestEqual(TEXT("Full percentage"), IFStatUtils::ComputePercent(100.f, 100.f), 1.0f);
+	TestEqual(TEXT("Half percentage"), IFStatUtils::ComputePercent(50.f, 100.f), 0.5f);
+	TestEqual(TEXT("Zero current"), IFStatUtils::ComputePercent(0.f, 100.f), 0.0f);
+	TestEqual(TEXT("Zero max guard"), IFStatUtils::ComputePercent(50.f, 0.f), 0.0f);
+	TestEqual(TEXT("Negative max guard"), IFStatUtils::ComputePercent(50.f, -10.f), 0.0f);
+
+	// ApplyClampedValue
+	float Value = 50.f;
+	const bool bChanged1 = IFStatUtils::ApplyClampedValue(Value, 100.f, 75.f);
+	TestTrue(TEXT("Value should change to 75"), bChanged1);
+	TestEqual(TEXT("Value is 75"), Value, 75.f);
+
+	// Over-max clamping
+	const bool bChanged2 = IFStatUtils::ApplyClampedValue(Value, 100.f, 150.f);
+	TestTrue(TEXT("Value should change to 100"), bChanged2);
+	TestEqual(TEXT("Value clamped to max"), Value, 100.f);
+
+	// Under-zero clamping
+	const bool bChanged3 = IFStatUtils::ApplyClampedValue(Value, 100.f, -20.f);
+	TestTrue(TEXT("Value should change to 0"), bChanged3);
+	TestEqual(TEXT("Value clamped to 0"), Value, 0.f);
+
+	// No-change returns false
+	const bool bChanged4 = IFStatUtils::ApplyClampedValue(Value, 100.f, 0.f);
+	TestFalse(TEXT("No-change should return false"), bChanged4);
+	TestEqual(TEXT("Value remains 0"), Value, 0.f);
+
+	return true;
+}
+
 

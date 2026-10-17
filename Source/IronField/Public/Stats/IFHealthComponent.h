@@ -1,7 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Stats/IFStatComponent.h"
+#include "Components/ActorComponent.h"
+#include "Stats/IFStatUtils.h"
 #include "IFHealthComponent.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnHealthDepleted);
@@ -9,7 +10,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHealthChanged, float, Percent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamaged, AActor*, InstigatorActor, float, Damage);
 
 UCLASS()
-class IRONFIELD_API UIFHealthComponent : public UIFStatComponent
+class IRONFIELD_API UIFHealthComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
@@ -45,7 +46,7 @@ public:
 	float GetMaxHealth() const { return MaxHealth; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Health|State")
-	float GetHealthPercent() const { return ComputePercent(CurrentHealth, MaxHealth); }
+	float GetHealthPercent() const { return IFStatUtils::ComputePercent(CurrentHealth, MaxHealth); }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Health|State")
 	bool IsDead() const { return bIsDead; }

@@ -97,13 +97,13 @@ void UIFHealthComponent::HandleOwnerTakeAnyDamage(AActor*, float Damage, const U
 
 	ApplyDamage(Damage);
 
-	AActor* const InstigatorActor = InstigatedBy ? Cast<AActor>(InstigatedBy->GetPawn()) : DamageCauser;
+	AActor* const InstigatorActor = InstigatedBy ? InstigatedBy->GetPawn() : DamageCauser;
 	OnDamaged.Broadcast(InstigatorActor, Damage);
 }
 
 void UIFHealthComponent::SetHealthClamped(float NewHealth)
 {
-	if (ApplyClampedValue(CurrentHealth, MaxHealth, NewHealth))
+	if (IFStatUtils::ApplyClampedValue(CurrentHealth, MaxHealth, NewHealth))
 	{
 		OnHealthChanged.Broadcast(GetHealthPercent());
 	}

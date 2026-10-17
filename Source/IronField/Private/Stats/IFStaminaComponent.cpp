@@ -115,7 +115,7 @@ void UIFStaminaComponent::UpdateTickEnabled()
 void UIFStaminaComponent::SetStaminaClamped(float NewStamina)
 {
 	const float PreviousStamina = CurrentStamina;
-	if (ApplyClampedValue(CurrentStamina, MaxStamina, NewStamina))
+	if (IFStatUtils::ApplyClampedValue(CurrentStamina, MaxStamina, NewStamina))
 	{
 		OnStaminaChanged.Broadcast(GetStaminaPercent());
 	}
