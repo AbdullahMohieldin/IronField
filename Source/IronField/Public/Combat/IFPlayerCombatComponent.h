@@ -121,4 +121,6 @@ protected:
 private:
 	/** Last spin-hit time per target so one long collision window re-hits on an interval. */
 	TMap<TWeakObjectPtr<AActor>, float> SpinLastHitTimes;
+
+	friend class FIFBlockStaminaDepletionTest;
 };

@@ -75,4 +75,6 @@ private:
 	void HandleOwnerTakeAnyDamage(AActor* DamagedActor, float Damage, const UDamageType* DamageType, AController* InstigatedBy, AActor* DamageCauser);
 
 	void SetHealthClamped(float NewHealth);
+
+	friend class FIFHealPickupFullHealthTest;
 };

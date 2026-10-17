@@ -63,4 +63,6 @@ private:
 	void DestroyPickup();
 
 	bool TryHealActor(AActor* Actor);
+
+	friend class FIFHealPickupFullHealthTest;
 };

@@ -282,4 +282,6 @@ private:
 
 	UPROPERTY(Transient)
 	bool bWaveCompletedBound = false;
+
+	friend class FIFWaveCorpseCleanupTest;
 };
