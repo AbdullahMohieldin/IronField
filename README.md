@@ -1,56 +1,190 @@
 # IronField
 
-A modular C++ gameplay systems demo built in Unreal Engine 5.8. 
+A modular, production-grade C++ Gameplay Systems & Architecture showcase built in **Unreal Engine 5.8**.
 
-The project is structured as an architectural showcase demonstrating decoupled communication, component-based character mechanics, heuristic AI targeting, and event-driven wave management.
+The project demonstrates high-standard systems engineering, component-based composition, pure heuristic AI targeting, decoupled actor discovery, and modular wave management. Core reusable gameplay systems are extracted into an isolated, standalone plugin (`Plugins/IFSystems`) with zero dependencies on concrete game-level actors.
 
-## Core Systems
+---
 
-### 1. Decoupled Subsystem Architecture
-- Level actors register with dedicated `UWorldSubsystem` instances (`UIFPlayerSubsystem`, `UIFStrongholdSubsystem`, `UIFWaveManagerSubsystem`).
-- Gameplay systems, HUD widgets, and AI controllers discover target actors through subsystems via dynamic delegates, preventing hard actor references and cyclic dependencies.
+## Architecture Overview
 
-### 2. Component-Based Combat Pipeline
-- **`UIFCombatComponent`**: Controls weapon trace volumes, animation-notify hit windows (`AnimNotifyState_IFAttackWindow`), and per-swing hit uniqueness tracking.
-- **`UIFPlayerCombatComponent`**: Implements buffered combo chaining, directional blocking with stamina-based guard breaking and chip damage, and sustained spin attacks with per-target re-hit intervals.
-- **`UIFHealthComponent` & `UIFStaminaComponent`**: Self-contained stat components managing damage mitigation, death/revive lifecycles, and delayed stamina regeneration economics.
+```mermaid
+graph TD
+    subgraph IFSystemsPlugin ["Plugins/IFSystems (Standalone Reusable Systems Module)"]
+        direction TB
+        subgraph Core ["Core Systems"]
+            Registry["UIFActorRegistrySubsystem<br/><i>(Role-keyed singleton discovery & WhenRegistered)</i>"]
+            Log["IFLog & IFFeedbackUtils<br/><i>(Centralized category & FX dispatch)</i>"]
+        end
+        subgraph Stats ["Stats System"]
+            Health["UIFHealthComponent<br/><i>(Invincibility, mitigation, death/revive)</i>"]
+            Stamina["UIFStaminaComponent<br/><i>(Regen delays, continuous drain, tick-gate)</i>"]
+            StatUtils["IFStatUtils<br/><i>(Pure clamped math & percentage calculation)</i>"]
+        end
+        subgraph Combat ["Combat Pipeline"]
+            CombatComp["UIFCombatComponent<br/><i>(Damage scale, hit reactions, defense)</i>"]
+            ComboComp["UIFComboCombatComponent<br/><i>(Combo buffering, weapon collision)</i>"]
+            Projectile["AIFProjectile<br/><i>(Predictive flight, range decay)</i>"]
+            Team["IFTeamTypes & Utilities<br/><i>(IGenericTeamAgentInterface attitude solver)</i>"]
+            Notifies["IFAnimNotifies<br/><i>(Attack collision & projectile launch windows)</i>"]
+        end
+        subgraph Wave ["Wave Infrastructure"]
+            Queue["FIFSpawnQueue<br/><i>(O(1) cursor popping & concurrency cap)</i>"]
+            Context["FIFSpawnContext & IIFWaveSpawnable<br/><i>(Deferred injection before BeginPlay)</i>"]
+            ScaleUtils["IFWaveScalingUtils<br/><i>(Pure wave multiplier math)</i>"]
+        end
+        subgraph AI ["AI Foundation"]
+            Scorer["FIFTargetScoring<br/><i>(Pure stateless targeting scorer & hysteresis)</i>"]
+        end
+    end
 
-### 3. Heuristic AI Targeting & Behavior Trees
-- Enemy controllers (`AIFEnemyController`) utilize Behavior Trees decoupled from pawn archetypes.
-- Custom target selection service (`UIFBTService_FindTarget`) scores candidates dynamically based on:
-  - Distance falloff using radii-aware surface-to-surface distance (`IFCombatTargetingUtils`).
-  - Target commitment bonuses with hysteresis locks to prevent target flickering.
-  - Per-agent aggression factors and wave-level siege biases.
-  - Direct retaliation multipliers triggered upon taking player damage.
+    subgraph IronFieldGame ["Source/IronField (Concrete Game Module)"]
+        Characters["AIFBaseCharacter / AIFPlayerCharacter<br/>AIFMeleeEnemyCharacter / AIFMageEnemyCharacter"]
+        CombatImpl["UIFPlayerCombatComponent<br/>UIFMeleeCombatComponent / UIFMageCombatComponent"]
+        AIImpl["AIFEnemyController & BehaviorTree Services<br/><i>(BTService_IFFindTarget, UIFEnemyAIData)</i>"]
+        Director["AIFWaveManager<br/><i>(WarmupComponent, RewardComponent, SpawnPoints)</i>"]
+        Environment["AIFStronghold & AIFHealPickup"]
+        GameCore["AIFGameMode, UIFGameInstance, UIFHUD, UIFBestRunSave"]
+    end
 
-### 4. Wave Director & Spawner
-- `AIFWaveManager` coordinates spawn scheduling through a concurrency-capped queue with opening grace periods and inter-wave breathers.
-- Pre-warms enemy character assets asynchronously using `FStreamableManager` prior to wave start to eliminate combat frame drops.
-- Supports authored progression (Normal Mode) and procedural scaling curves (Unlimited Mode).
-
-### 5. Persistence
-- `UIFGameInstance` handles seamless cross-level state transfer between the main menu and arena.
-- `UIFBestRunSave` serializes run statistics to disk via binary `USaveGame`.
-
-## Architecture & Boundary Rules
-
-- **C++**: All gameplay logic, state machines, math, combat mitigation, scoring equations, and timers.
-- **Blueprints**: Asset assignment, animation montage references, visual effects, and UI layouts.
-- **DataAssets**: Tunable configuration values (`UIFEnemyAIData`) allowing data-driven balancing without modifying code.
-
-## Project Structure
-
-```text
-Source/IronField/
-├── AI/          BehaviorTree tasks, services, decorators, and AI controller
-├── Building/    Stronghold actor and objective logic
-├── Character/   Base, player, melee, and mage character classes
-├── Combat/      Combat components, targeting utilities, and anim notifies
-├── Core/        GameMode, GameInstance, and World Subsystems
-├── Stats/       Health and stamina components
-├── UI/          HUD widgets and SaveGame serialization
-└── Wave/        Wave manager, spawner logic, and spawn point actors
+    Characters --> |Derives from & Uses| CombatComp
+    Characters --> |Owns| Health
+    Characters --> |Owns| Stamina
+    Characters --> |Implements| Context
+    Characters --> |Implements| Team
+    CombatImpl --> |Specializes| ComboComp
+    Director --> |Drives| Queue
+    Director --> |Uses| ScaleUtils
+    Director --> |Registers to| Registry
+    AIImpl --> |Evaluates targets via| Scorer
+    AIImpl --> |Discovers targets via| Registry
+    Environment --> |Registers to| Registry
+    Environment --> |Implements| Team
 ```
+
+---
+
+## Core Systems Breakdown
+
+### 1. Unified Subsystem Actor Registry (`UIFActorRegistrySubsystem`)
+- Replaces scattered, singleton-style manager lookups with a single world subsystem keyed by `FName` role (`Player`, `Stronghold`, `WaveManager`).
+- **Order Independence (`WhenRegistered`)**: Callers can subscribe either before or after an actor registers. If registered prior, callbacks fire synchronously; if registered after, callbacks execute exactly once upon registration.
+- Native C++ lambda overload (`TFunction<void(AActor*)>`) eliminates `UFUNCTION` boilerplate for non-reflected callers.
+
+### 2. Team Attitude & Hostility Matrix (`IGenericTeamAgentInterface`)
+- Replaces brittle `Cast<AAIController>` checks with Unreal's standard `IGenericTeamAgentInterface` (`Team 0 = Player/Allies`, `Team 1 = Enemies`, `Team 255 = Neutral`).
+- The Stronghold is authored as an allied objective on Team 0, unifying damage filtering and attack targeting under a single, symmetric solver (`IFTeamUtils::SolveAttitude`).
+
+### 3. Component-Based Combat Pipeline & Subobject Safety
+- **Subobject Instantiation Safety**: `AIFBaseCharacter` instantiates `CreateDefaultSubobject<UIFCombatComponent>`. Derived characters such as `AIFMageEnemyCharacter` override this via `SetDefaultSubobjectClass<UIFMageCombatComponent>()` without type slicing or engine crashes.
+- **`UIFCombatComponent`**: Centralizes hit reaction montage lifecycles, damage intake routing, and `DamageScale`.
+- **`UIFComboCombatComponent`**: Specializes melee characters with multi-step attack combos, buffered inputs, and tagged weapon box collision resolution (`IFWeapon` tag preference).
+
+### 4. Self-Contained Stat Components (`UIFHealthComponent`, `UIFStaminaComponent`)
+- Zero dependencies on character or pawn classes; operate purely on generic `UActorComponent` contracts.
+- **`UIFHealthComponent`**: Clamped mitigation, invincibility windows, single death broadcasting guarantee, and revive mechanics.
+- **`UIFStaminaComponent`**: Economics-driven consumption, post-drain regeneration delays (`StaminaRegenDelay`), continuous drain gating, and automatic component tick disabling when fully regenerated.
+
+### 5. Modular Wave Management (`AIFWaveManager`)
+- **`FIFSpawnQueue`**: Cursor-based $O(1)$ queue eliminates array shifting allocations and supports runtime concurrency caps.
+- **`IIFWaveSpawnable` & `FIFSpawnContext`**: Injects wave difficulty, siege biases, and health/damage scaling factors into spawned pawns via deferred spawning *before* `BeginPlay`.
+- Extracted actor components:
+  - `UIFWaveWarmupComponent`: Asynchronously pre-warms character meshes and particle assets via `FStreamableManager`.
+  - `UIFWaveRewardComponent`: Handles end-of-wave health replenishment and arena pickup spawns.
+
+### 6. Pure Heuristic AI Targeting Scorer (`FIFTargetScoring`)
+- Completely decoupled from `UObject` and engine state; 100% deterministic and unit-testable.
+- Combines soft monotonic distance falloff ($D(d) = \frac{1}{1 + d/R}$), personality aggression weighting, commitment lock hysteresis, and grudge retaliation multipliers into a stateless calculation.
+
+---
+
+## Extension Guides
+
+### Guide 1: Authoring a New Enemy Archetype (e.g. Rogue / Archer)
+You can introduce a new enemy archetype with unique combat mechanics and AI tuning without altering the `IFSystems` plugin or engine source:
+
+1. **C++ (if custom combat behavior is needed)**:
+   - Inherit a combat component from `UIFCombatComponent` or `UIFComboCombatComponent` (e.g. `UIFArcherCombatComponent`).
+   - Create a character class inheriting from `AIFEnemyCharacter`. In its constructor, call:
+     ```cpp
+     SetDefaultSubobjectClass<UIFArcherCombatComponent>(AIFBaseCharacter::CombatComponentName);
+     ```
+2. **Data-Driven AI Balancing**:
+   - Create a new `UIFEnemyAIData` DataAsset in Content Browser (e.g. `DA_EnemyAI_Archer`).
+   - Tune `PlayerDetectionRange`, `AggressionSpread`, `CommitLockSeconds`, and `DistanceFalloffRange`.
+3. **Wave Integration**:
+   - Open your authored `FWaveDefinition` in `BP_WaveManager`.
+   - Add your new enemy Blueprint to `EnemySpawns`. The wave director will automatically stage, pre-warm, deferred-spawn, and scale the archetype.
+
+### Guide 2: Authoring a New Wave Reward (e.g. Stamina Boost)
+Wave rewards are fully componentized:
+
+1. Create a new `UActorComponent` (or Blueprint Component), e.g., `UBP_WaveStaminaRewardComponent`.
+2. In `BeginPlay`, fetch `AIFWaveManager` (via `UIFActorRegistrySubsystem::GetActor(IFRegistryRoles::WaveManager)`).
+3. Bind to `AIFWaveManager::OnWaveCompleted`.
+4. On broadcast, retrieve the player character and apply the stamina buff or spawn custom loot.
+5. Attach the component directly to `BP_WaveManager` in the level. No existing spawner or game-loop code needs modification.
+
+---
+
+## Using `IFSystems` in Another Unreal Engine Project
+
+The `Plugins/IFSystems` plugin is fully isolated and ready for drag-and-drop integration into external projects:
+
+1. Copy `Plugins/IFSystems` into your project's `Plugins/` folder.
+2. In your `<Project>.uproject`, add:
+   ```json
+   {
+       "Name": "IFSystems",
+       "Enabled": true
+   }
+   ```
+3. In your `<Project>.Build.cs`, add `"IFSystems"` to `PublicDependencyModuleNames`:
+   ```csharp
+   PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "IFSystems" });
+   ```
+4. Attach `UIFHealthComponent`, `UIFStaminaComponent`, or `UIFCombatComponent` to any Actor, or implement `IGenericTeamAgentInterface` to leverage the team hostility system.
+
+---
+
+## Technical Trade-offs & Deliberate Decisions
+
+- **Gameplay Ability System (GAS) vs. Lightweight Custom Components**:
+  - *Decision:* For IronField's fast-paced, 3C third-person action scope, full GAS introduces substantial boilerplate, attribute set indirection, and networking setup overhead. Lightweight, dedicated components (`UIFHealthComponent`, `UIFStaminaComponent`, `UIFComboCombatComponent`) provide strict type safety, zero dynamic memory allocations on hot paths, and instant onboarding clarity while maintaining 100% decoupled boundaries.
+- **Registry Lifetime**:
+  - *Decision:* `UIFActorRegistrySubsystem` is tied to `UWorldSubsystem` rather than `UGameInstanceSubsystem`. This guarantees clean state invalidation and zero cross-level pointer leaks when traveling between Main Menu and Arena maps.
+- **Stat Clamping Math**:
+  - *Decision:* Pure inline mathematical functions (`IFStatUtils`) isolate math from component lifecycle state, enabling thorough unit-testing without spawning test worlds or actor containers.
+
+---
+
+## Automated Testing & Headless Verification
+
+The codebase includes a comprehensive 12-test suite covering health, stamina, spawn queues, wave math, target scoring, registry ordering, and team hostility.
+
+### Running Headless Automation Tests via CLI
+```powershell
+& "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+    "<ProjectPath>\IronField.uproject" `
+    -ExecCmds="Automation RunTests IronField" `
+    -TestExit="Automation Test Queue Empty" `
+    -stdout -nullrhi -unattended -nopause -NoSplash
+```
+
+### Compiling Development Editor & Shipping Targets
+```powershell
+# Development Editor
+& "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" `
+    IronFieldEditor Win64 Development `
+    -Project="<ProjectPath>\IronField.uproject" -WaitMutex
+
+# Win64 Shipping
+& "C:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" `
+    IronField Win64 Shipping `
+    -Project="<ProjectPath>\IronField.uproject" -WaitMutex
+```
+
+---
 
 ## Controls
 
@@ -62,15 +196,10 @@ Source/IronField/
 | Sprint | `Shift` (Hold) | Forward movement acceleration; drains stamina |
 | Attack | `Left Mouse Button` | Combo attack chain |
 | Block | `Right Mouse Button` (Hold) | Directional block; mitigates damage, absorbs hits via stamina |
-| Spin Attack | `X` (Hold) | Area attack loop; drains stamina |
+| Spin Attack | `X` (Hold) | Sustained area attack loop; continuous stamina drain |
 
-## Build & Requirements
+---
 
-- **Engine Version**: Unreal Engine 5.8
-- **Toolchain**: Visual Studio 2022 (MSVC v143)
-- **Target Platform**: Windows 64-bit (`Shipping` / `Development`)
+## Third-Party Notices & Attribution
 
-To build from source:
-1. Clone the repository.
-2. Right-click `IronField.uproject` and select **Generate Visual Studio project files**.
-3. Open `IronField.sln` and compile the `IronField` project in `Development Editor` or `Shipping`.
+See [Content/ThirdParty/NOTICE.md](Content/ThirdParty/NOTICE.md) for third-party asset licensing and attribution details regarding potion static meshes, textures, and audio assets.

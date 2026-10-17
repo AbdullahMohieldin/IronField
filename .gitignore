@@ -38,12 +38,19 @@ Content/Developers/
 Content/__ExternalActors__/
 Content/__ExternalObjects__/
 
-# Exclude all content by default, then whitelist first-party folders.
-# Content/ThirdParty/ (marketplace packs) stays local-only — size and
-# redistribution terms — so it is deliberately NOT re-included here.
+# Exclude all content by default, then whitelist first-party folders and tracked third-party essentials.
+# Content/ThirdParty/ marketplace packs generally stay local-only due to size and redistribution terms,
+# except for the minimal tracked pickup meshes/audio referenced by BP_HealPickup and NOTICE.md.
 Content/*
 !Content/IronField/
 !Content/IronField/**
+!Content/ThirdParty/
+Content/ThirdParty/*
+!Content/ThirdParty/NOTICE.md
+!Content/ThirdParty/PotionMeshes/
+!Content/ThirdParty/PotionMeshes/**
+!Content/ThirdParty/PotionSound/
+!Content/ThirdParty/PotionSound/**
 
 # Local user and dev settings
 Config/*PerProjectUserSettings.ini
