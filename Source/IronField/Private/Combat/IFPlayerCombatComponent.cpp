@@ -343,6 +343,11 @@ void UIFPlayerCombatComponent::HandleStaminaDepleted()
 	{
 		StopSpinGracefully();
 	}
+
+	if (IsBlocking())
+	{
+		StopBlock();
+	}
 }
 
 bool UIFPlayerCombatComponent::TryPlayBlockMontage()

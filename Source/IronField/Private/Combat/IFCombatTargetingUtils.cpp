@@ -38,8 +38,7 @@ namespace IFCombatTargetingUtils
 			return nullptr;
 		}
 
-		// Any actor with health is damageable.  This includes the stronghold;
-		// neither melee nor ranged player attacks need a special target rule.
+		// Any actor with health is damageable once team hostility and stronghold rules pass.
 		UIFHealthComponent* const TargetHealth = TargetActor->FindComponentByClass<UIFHealthComponent>();
 		return (TargetHealth && !TargetHealth->IsDead()) ? TargetHealth : nullptr;
 	}

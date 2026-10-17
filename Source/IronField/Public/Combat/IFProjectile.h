@@ -81,8 +81,12 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<AActor> ProjectileInstigator;
 
+	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Projectile")
 	float Damage = 0.f;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Projectile")
 	TSubclassOf<UDamageType> DamageTypeClass;
+
 	bool bHasHit = false;
 
 	UFUNCTION()

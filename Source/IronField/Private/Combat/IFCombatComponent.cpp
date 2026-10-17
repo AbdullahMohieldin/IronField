@@ -449,27 +449,46 @@ void UIFCombatComponent::ResolveWeaponCollisionBox()
 		return;
 	}
 
-	// One-box convention, nothing to assign: a root-level box is almost
-	// certainly a leftover, so a parented box always wins over one.
 	TArray<UBoxComponent*> Boxes;
 	Owner->GetComponents<UBoxComponent>(Boxes);
+
+	// Preferred: look for an explicit IFWeapon tag on the collision box.
 	for (UBoxComponent* const Box : Boxes)
 	{
-		if (Box && Box->GetAttachParent())
+		if (Box && Box->ComponentHasTag(TEXT("IFWeapon")))
 		{
 			WeaponCollisionBox = Box;
 			break;
 		}
 	}
 
-	if (!WeaponCollisionBox && Boxes.IsValidIndex(0))
+	// Fallback heuristic: a parented box wins over an unparented root-level box.
+	if (!WeaponCollisionBox)
 	{
-		WeaponCollisionBox = Boxes[0];
+		for (UBoxComponent* const Box : Boxes)
+		{
+			if (Box && Box->GetAttachParent())
+			{
+				WeaponCollisionBox = Box;
+				break;
+			}
+		}
+
+		if (!WeaponCollisionBox && Boxes.IsValidIndex(0))
+		{
+			WeaponCollisionBox = Boxes[0];
+		}
+
+		if (WeaponCollisionBox)
+		{
+			UE_LOG(LogIronField, Warning, TEXT("[IF-Combat] %s resolved WeaponCollisionBox via heuristic (%s). Tag it with 'IFWeapon' in Blueprint."),
+				*GetNameSafe(Owner), *GetNameSafe(WeaponCollisionBox));
+		}
 	}
 
-	if (Boxes.Num() > 1)
+	if (Boxes.Num() > 1 && (!WeaponCollisionBox || !WeaponCollisionBox->ComponentHasTag(TEXT("IFWeapon"))))
 	{
-		UE_LOG(LogIronField, Warning, TEXT("[IF-Combat] %s has %d weapon boxes; using %s. Keep exactly one."),
+		UE_LOG(LogIronField, Warning, TEXT("[IF-Combat] %s has %d weapon boxes; using %s. Keep exactly one or tag the intended box 'IFWeapon'."),
 			*GetNameSafe(Owner), Boxes.Num(), *GetNameSafe(WeaponCollisionBox));
 	}
 }
