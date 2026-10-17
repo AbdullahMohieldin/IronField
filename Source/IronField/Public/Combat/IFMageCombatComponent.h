@@ -5,32 +5,23 @@
 #include "IFMageCombatComponent.generated.h"
 
 class AIFProjectile;
+class UAnimMontage;
 
 /**
  * Ranged combat for the mage: cast montage + projectile fire.
- * The inherited melee combo categories are hidden because they do not apply.
  */
-UCLASS(HideCategories = ("IronField|Combat|Combo", "IronField|Combat|State"))
+UCLASS()
 class IRONFIELD_API UIFMageCombatComponent : public UIFCombatComponent
 {
 	GENERATED_BODY()
 
 public:
 	virtual void StartAttack() override;
+	virtual void CancelAttack() override;
 	virtual void LaunchProjectileAttack() override;
-	virtual void BeginAttackCollision() override {}
-	virtual void EndAttackCollision() override {}
-
-	/** Multiplies per-instance damage for wave scaling. */
-	void ApplyDamageScale(float Multiplier) { AttackDamage = FMath::Max(0.f, AttackDamage * Multiplier); }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Enemy|Projectile")
 	TSubclassOf<AIFProjectile> GetProjectileClass() const { return ProjectileClass; }
-
-protected:
-	virtual float GetCurrentAttackDamage() const override { return AttackDamage; }
-	virtual TSubclassOf<UDamageType> GetCurrentDamageTypeClass() const override { return DamageTypeClass; }
-	virtual bool CanQueueComboAttack() const override { return false; }
 
 private:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Enemy|Cast", meta = (AllowPrivateAccess = "true"))
@@ -50,4 +41,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Enemy|Damage", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<UDamageType> DamageTypeClass;
+
+	void ClearCastMontageDelegate();
+
+	UFUNCTION()
+	void HandleCastMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 };

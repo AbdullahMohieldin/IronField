@@ -1,19 +1,16 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Combat/IFCombatComponent.h"
+#include "Combat/IFComboCombatComponent.h"
 #include "IFMeleeCombatComponent.generated.h"
 
 UCLASS()
-class IRONFIELD_API UIFMeleeCombatComponent : public UIFCombatComponent
+class IRONFIELD_API UIFMeleeCombatComponent : public UIFComboCombatComponent
 {
 	GENERATED_BODY()
 
 public:
 	virtual float GetComboContinueChance(int32 ComboIndex) const override;
-
-	/** Multiplies per-instance damage for wave scaling. BP damage stays authoritative. */
-	void ApplyDamageScale(float Multiplier) { DamageMultiplier = FMath::Max(0.f, DamageMultiplier * Multiplier); }
 
 protected:
 	virtual bool RequiresWeaponCollisionBox() const override { return true; }

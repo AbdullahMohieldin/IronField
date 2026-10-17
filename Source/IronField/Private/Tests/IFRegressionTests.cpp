@@ -2,6 +2,9 @@
 #include "Misc/AutomationTest.h"
 #include "Character/IFBaseCharacter.h"
 #include "Character/IFPlayerCharacter.h"
+#include "Combat/IFCombatComponent.h"
+#include "Combat/IFMageCombatComponent.h"
+#include "Combat/IFMeleeCombatComponent.h"
 #include "Combat/IFPlayerCombatComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -248,3 +251,41 @@ bool FIFTeamHostilityTest::RunTest(const FString& Parameters)
 	World->DestroyWorld(false);
 	return true;
 }
+
+// S2, U2: Damage scaling centralization
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFDamageScaleTest, "IronField.Combat.DamageScale", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+bool FIFDamageScaleTest::RunTest(const FString& Parameters)
+{
+	UIFCombatComponent* const BaseCombat = NewObject<UIFCombatComponent>();
+	UIFMeleeCombatComponent* const MeleeCombat = NewObject<UIFMeleeCombatComponent>();
+	UIFMageCombatComponent* const MageCombat = NewObject<UIFMageCombatComponent>();
+
+	TestNotNull(TEXT("BaseCombat must be valid"), BaseCombat);
+	TestNotNull(TEXT("MeleeCombat must be valid"), MeleeCombat);
+	TestNotNull(TEXT("MageCombat must be valid"), MageCombat);
+
+	if (BaseCombat && MeleeCombat && MageCombat)
+	{
+		// Baseline default is 1.0f (U2 requirement)
+		TestEqual(TEXT("Base combat default DamageScale must be 1.0"), BaseCombat->GetDamageScale(), 1.0f);
+		TestEqual(TEXT("Melee combat default DamageScale must be 1.0"), MeleeCombat->GetDamageScale(), 1.0f);
+		TestEqual(TEXT("Mage combat default DamageScale must be 1.0"), MageCombat->GetDamageScale(), 1.0f);
+
+		// Setting scale works across all component types
+		BaseCombat->SetDamageScale(1.5f);
+		TestEqual(TEXT("Base combat DamageScale should be 1.5"), BaseCombat->GetDamageScale(), 1.5f);
+
+		MeleeCombat->SetDamageScale(2.0f);
+		TestEqual(TEXT("Melee combat DamageScale should be 2.0"), MeleeCombat->GetDamageScale(), 2.0f);
+
+		MageCombat->SetDamageScale(0.5f);
+		TestEqual(TEXT("Mage combat DamageScale should be 0.5"), MageCombat->GetDamageScale(), 0.5f);
+
+		// Negative clamp to 0.0f
+		BaseCombat->SetDamageScale(-1.0f);
+		TestEqual(TEXT("Negative scale must be clamped to 0.0"), BaseCombat->GetDamageScale(), 0.0f);
+	}
+
+	return true;
+}
+

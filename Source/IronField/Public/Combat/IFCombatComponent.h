@@ -6,15 +6,16 @@
 #include "IFCombatComponent.generated.h"
 
 class UAnimInstance;
-class UBoxComponent;
+class UAnimMontage;
 class UDamageType;
-class UIFHealthComponent;
 class UIFStaminaComponent;
 class USkeletalMeshComponent;
-class UPrimitiveComponent;
 class USoundBase;
 class UNiagaraSystem;
 
+/**
+ * Base combat component managing core combat state, hit reactions, and damage scaling.
+ */
 UCLASS()
 class IRONFIELD_API UIFCombatComponent : public UActorComponent
 {
@@ -27,7 +28,7 @@ public:
 	FOnCombatStateChanged OnCombatStateChanged;
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat|Actions")
-	virtual void StartAttack();
+	virtual void StartAttack() {}
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat|Actions")
 	virtual void StartBlock() {}
@@ -39,7 +40,7 @@ public:
 	virtual void ResetCombatState();
 
 	/** Stops a playing attack montage and returns to idle. Safe to call when no attack is active. */
-	void CancelAttack();
+	virtual void CancelAttack();
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat|Actions")
 	void HandleOwnerDeath();
@@ -47,8 +48,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat|Actions")
 	void HandleOwnerRevived();
 
-	virtual void BeginAttackCollision();
-	virtual void EndAttackCollision();
+	/** Virtual attack collision hooks overridden by melee/combo components. */
+	virtual void BeginAttackCollision() {}
+	virtual void EndAttackCollision() {}
 
 	/** Shared hit entry for melee weapon boxes and ranged projectiles. */
 	virtual void ReceiveAttack(AActor* Instigator, float Damage, TSubclassOf<UDamageType> DamageTypeClass);
@@ -57,6 +59,12 @@ public:
 	AActor* GetAttackTarget() const { return CachedAttackTarget.Get(); }
 
 	virtual void LaunchProjectileAttack() {}
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Combat|Damage")
+	void SetDamageScale(float NewScale) { DamageScale = FMath::Max(0.f, NewScale); }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Combat|Damage")
+	float GetDamageScale() const { return DamageScale; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat|State")
 	ECombatState GetCombatState() const { return CombatState; }
@@ -73,9 +81,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat|State")
 	bool IsDead() const { return CombatState == ECombatState::Dead; }
 
-	/** AI melee only; the base returns 0 so the player combo never auto-continues. */
-	virtual float GetComboContinueChance(int32 ComboIndex) const { return 0.f; }
-
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
@@ -88,42 +93,16 @@ protected:
 
 	TWeakObjectPtr<AActor> CachedAttackTarget;
 
-	UPROPERTY(Transient)
-	TObjectPtr<UAnimMontage> ActiveAttackMontage;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat|Combo")
-	TArray<FIFComboStep> ComboSteps;
-
-	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Combat|State")
-	bool bComboQueued = false;
-
-	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Combat|State")
-	int32 CurrentComboIndex = 0;
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat|Damage", meta = (ClampMin = "0.0"))
+	float DamageScale = 1.0f;
 
 	void SetCombatState(ECombatState NewState);
 	UAnimInstance* GetAnimInstance() const;
 	bool HasUsableStamina(float Amount) const;
-	void ResetRegisteredAttackHits();
 	void RestoreIdleStateUnlessDead();
-	void ClearAttackMontageDelegate();
 	virtual void ClearReactionMontageDelegates();
 
-	virtual float GetCurrentAttackDamage() const;
-	virtual TSubclassOf<UDamageType> GetCurrentDamageTypeClass() const;
-	virtual bool CanQueueComboAttack() const;
-
-	/** Melee-style components deal damage through the weapon box; true makes a missing assignment a logged warning. */
-	virtual bool RequiresWeaponCollisionBox() const { return false; }
-
 	virtual void PlayHitReactionMontage();
-
-	bool CanPlayAttackMontage(int32 ComboIndex) const;
-	bool TryPlayAttackMontage(int32 ComboIndex);
-	float GetComboStaminaCost(int32 ComboIndex) const;
-	bool HasNextComboStep() const { return ComboSteps.IsValidIndex(CurrentComboIndex + 1); }
-
-	UFUNCTION()
-	void HandleAttackMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	UFUNCTION()
 	virtual void HandleHitReactionMontageEnded(UAnimMontage* Montage, bool bInterrupted);
@@ -131,7 +110,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat|Animation", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAnimMontage> HitReactionMontage;
 
-	// Empty until assigned in Blueprint; guarded at play time.
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat|Feedback", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USoundBase> HitSound;
 
@@ -141,28 +119,4 @@ protected:
 private:
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Combat|State", meta = (AllowPrivateAccess = "true"))
 	ECombatState CombatState = ECombatState::Idle;
-
-	bool bAttackCollisionActive = false;
-	float ActiveAttackDamage = 0.f;
-	TSubclassOf<UDamageType> ActiveDamageTypeClass;
-	TSet<TWeakObjectPtr<AActor>> RegisteredAttackHits;
-
-	// Runtime cache for the fighter's single weapon box, resolved in BeginPlay.
-	// Not editor-visible: one box per fighter by convention, so no picker.
-	UPROPERTY(Transient)
-	TObjectPtr<UBoxComponent> WeaponCollisionBox;
-
-	UFUNCTION()
-	void HandleWeaponBoxBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
-
-	void ResolveAttackHit(AActor* TargetActor);
-	/** Health component only when attack collision is active and the target is legally hittable. */
-	UIFHealthComponent* GetValidActiveAttackTargetHealth(AActor* TargetActor) const;
-	void ResolveWeaponCollisionBox();
-	void SetWeaponCollisionEnabled(bool bEnabled) const;
-	void PlayHitFeedback(const AActor* TargetActor) const;
-
-protected:
-	/** Single-hit gate per attack window. Virtual so spin can allow timed re-hits. */
-	virtual bool TryRegisterAttackHit(AActor* TargetActor);
 };

@@ -3,15 +3,18 @@
 #include "AIController.h"
 #include "AI/IFBTUtils.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "BehaviorTree/BlackboardComponent.h"
-#include "Combat/IFProjectile.h"
 #include "Combat/IFCombatTargetingUtils.h"
+#include "Combat/IFProjectile.h"
 #include "Components/CapsuleComponent.h"
+#include "Core/IFAnimMontageUtils.h"
 #include "GameFramework/Pawn.h"
 
 namespace
 {
 	constexpr float SpawnClearancePadding = 20.f;
+	constexpr float CastBlendOutTime = 0.2f;
 }
 
 void UIFMageCombatComponent::StartAttack()
@@ -27,7 +30,7 @@ void UIFMageCombatComponent::StartAttack()
 		return;
 	}
 
-	ClearAttackMontageDelegate();
+	ClearCastMontageDelegate();
 
 	const float PlayLength = AnimInstance->Montage_Play(CastMontage);
 	if (PlayLength <= 0.f)
@@ -35,14 +38,50 @@ void UIFMageCombatComponent::StartAttack()
 		return;
 	}
 
-	ActiveAttackMontage = CastMontage;
-	bComboQueued = false;
-	CurrentComboIndex = 0;
 	SetCombatState(ECombatState::Attacking);
 
 	FOnMontageEnded EndDelegate;
-	EndDelegate.BindUObject(this, &UIFMageCombatComponent::HandleAttackMontageEnded);
+	EndDelegate.BindUObject(this, &UIFMageCombatComponent::HandleCastMontageEnded);
 	AnimInstance->Montage_SetEndDelegate(EndDelegate, CastMontage);
+}
+
+void UIFMageCombatComponent::CancelAttack()
+{
+	ClearCastMontageDelegate();
+
+	if (UAnimInstance* const AnimInstance = GetAnimInstance())
+	{
+		if (CastMontage && AnimInstance->Montage_IsPlaying(CastMontage))
+		{
+			AnimInstance->Montage_Stop(CastBlendOutTime, CastMontage);
+		}
+	}
+
+	RestoreIdleStateUnlessDead();
+}
+
+void UIFMageCombatComponent::ClearCastMontageDelegate()
+{
+	if (!CastMontage)
+	{
+		return;
+	}
+
+	if (UAnimInstance* const AnimInstance = GetAnimInstance())
+	{
+		IFAnimMontageUtils::ClearMontageEndDelegate(AnimInstance, CastMontage);
+	}
+}
+
+void UIFMageCombatComponent::HandleCastMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage != CastMontage)
+	{
+		return;
+	}
+
+	ClearCastMontageDelegate();
+	RestoreIdleStateUnlessDead();
 }
 
 void UIFMageCombatComponent::LaunchProjectileAttack()
@@ -95,8 +134,8 @@ void UIFMageCombatComponent::LaunchProjectileAttack()
 	Args.SpawnLocation = Owner->GetActorLocation() + AimDir * ClearanceRadius;
 	Args.LaunchDirection = AimDir;
 	Args.Instigator = Owner;
-	Args.Damage = GetCurrentAttackDamage();
-	Args.DamageTypeClass = GetCurrentDamageTypeClass();
+	Args.Damage = AttackDamage * GetDamageScale();
+	Args.DamageTypeClass = DamageTypeClass;
 
 	// Deferred so InitializeProjectile runs before overlap and BeginPlay.
 	const FTransform SpawnTransform(Args.LaunchDirection.Rotation(), Args.SpawnLocation);

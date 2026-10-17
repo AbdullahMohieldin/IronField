@@ -1,14 +1,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Combat/IFCombatComponent.h"
+#include "Combat/IFComboCombatComponent.h"
 #include "IFPlayerCombatComponent.generated.h"
 
 class AActor;
 class UDamageType;
 
 UCLASS()
-class IRONFIELD_API UIFPlayerCombatComponent : public UIFCombatComponent
+class IRONFIELD_API UIFPlayerCombatComponent : public UIFComboCombatComponent
 {
 	GENERATED_BODY()
 
