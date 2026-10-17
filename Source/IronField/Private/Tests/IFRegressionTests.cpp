@@ -5,6 +5,10 @@
 #include "Combat/IFPlayerCombatComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "Building/IFStronghold.h"
+#include "Character/IFMeleeEnemyCharacter.h"
+#include "Combat/IFCombatTargetingUtils.h"
+#include "Combat/IFTeamTypes.h"
 #include "Core/IFActorRegistrySubsystem.h"
 #include "Pickup/IFHealPickup.h"
 #include "Stats/IFHealthComponent.h"
@@ -181,6 +185,63 @@ bool FIFActorRegistrySubsystemTest::RunTest(const FString& Parameters)
 
 			DummyPlayer->Destroy();
 		}
+	}
+
+	GEngine->DestroyWorldContext(World);
+	World->DestroyWorld(false);
+	return true;
+}
+
+// S1: Team hostility & attitude checks
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FIFTeamHostilityTest, "IronField.Combat.TeamHostility", EAutomationTestFlags_ApplicationContextMask | EAutomationTestFlags::ProductFilter)
+bool FIFTeamHostilityTest::RunTest(const FString& Parameters)
+{
+	UWorld* const World = UWorld::CreateWorld(EWorldType::Game, false);
+	TestNotNull(TEXT("Test world must be valid"), World);
+	if (!World)
+	{
+		return false;
+	}
+
+	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
+	WorldContext.SetCurrentWorld(World);
+
+	AIFPlayerCharacter* const Player = World->SpawnActor<AIFPlayerCharacter>();
+	AIFStronghold* const Stronghold = World->SpawnActor<AIFStronghold>();
+	AIFMeleeEnemyCharacter* const Enemy = World->SpawnActor<AIFMeleeEnemyCharacter>();
+	AIFMeleeEnemyCharacter* const Enemy2 = World->SpawnActor<AIFMeleeEnemyCharacter>();
+
+	TestNotNull(TEXT("Player must be spawned"), Player);
+	TestNotNull(TEXT("Stronghold must be spawned"), Stronghold);
+	TestNotNull(TEXT("Enemy must be spawned"), Enemy);
+	TestNotNull(TEXT("Enemy2 must be spawned"), Enemy2);
+
+	if (Player && Stronghold && Enemy && Enemy2)
+	{
+		// Team IDs
+		TestEqual(TEXT("Player team must be 0"), Player->GetGenericTeamId().GetId(), static_cast<uint8>(0));
+		TestEqual(TEXT("Stronghold team must be 0"), Stronghold->GetGenericTeamId().GetId(), static_cast<uint8>(0));
+		TestEqual(TEXT("Enemy team must be 1"), Enemy->GetGenericTeamId().GetId(), static_cast<uint8>(1));
+		TestEqual(TEXT("Enemy2 team must be 1"), Enemy2->GetGenericTeamId().GetId(), static_cast<uint8>(1));
+
+		// Attitude checks
+		TestTrue(TEXT("Player and Stronghold must be friendly"), IFTeamUtils::AreFriendly(Player, Stronghold));
+		TestFalse(TEXT("Player and Stronghold must not be hostile"), IFTeamUtils::AreHostile(Player, Stronghold));
+		TestTrue(TEXT("Player and Enemy must be hostile"), IFTeamUtils::AreHostile(Player, Enemy));
+		TestTrue(TEXT("Enemy and Stronghold must be hostile"), IFTeamUtils::AreHostile(Enemy, Stronghold));
+		TestTrue(TEXT("Enemies must be friendly to each other"), IFTeamUtils::AreFriendly(Enemy, Enemy2));
+		TestFalse(TEXT("Enemies must not be hostile to each other"), IFTeamUtils::AreHostile(Enemy, Enemy2));
+
+		// Combat targeting validity
+		TestNull(TEXT("Player cannot attack Stronghold"), IFCombatTargetingUtils::GetValidAttackTargetHealth(Player, Stronghold));
+		TestNotNull(TEXT("Enemy can attack Stronghold"), IFCombatTargetingUtils::GetValidAttackTargetHealth(Enemy, Stronghold));
+		TestNotNull(TEXT("Player can attack Enemy"), IFCombatTargetingUtils::GetValidAttackTargetHealth(Player, Enemy));
+		TestNull(TEXT("Enemy cannot attack another Enemy"), IFCombatTargetingUtils::GetValidAttackTargetHealth(Enemy, Enemy2));
+
+		Enemy2->Destroy();
+		Enemy->Destroy();
+		Stronghold->Destroy();
+		Player->Destroy();
 	}
 
 	GEngine->DestroyWorldContext(World);

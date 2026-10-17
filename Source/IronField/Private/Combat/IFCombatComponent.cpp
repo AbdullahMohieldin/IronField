@@ -1,8 +1,6 @@
 #include "Combat/IFCombatComponent.h"
 
 #include "Animation/AnimInstance.h"
-#include "AIController.h"
-#include "Character/IFEnemyCharacter.h"
 #include "Combat/IFCombatTargetingUtils.h"
 #include "Components/BoxComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -144,19 +142,6 @@ void UIFCombatComponent::ReceiveAttack(AActor* Instigator, float Damage, TSubcla
 	if (IsDead())
 	{
 		return;
-	}
-
-	// Retaliation: a player-caused hit stamps a grudge on enemies so the AI can turn on its attacker.
-	if (const APawn* const InstigatorPawn = Cast<APawn>(Instigator))
-	{
-		const bool bFromPlayer = Cast<AAIController>(InstigatorPawn->GetController()) == nullptr;
-		if (bFromPlayer)
-		{
-			if (AIFEnemyCharacter* const EnemyOwner = Cast<AIFEnemyCharacter>(Owner))
-			{
-				EnemyOwner->NotifyHitByPlayer();
-			}
-		}
 	}
 
 	PlayHitReactionMontage();

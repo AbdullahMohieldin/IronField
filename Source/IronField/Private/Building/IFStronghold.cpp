@@ -1,5 +1,6 @@
 #include "Building/IFStronghold.h"
 
+#include "Combat/IFTeamTypes.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Core/IFFeedbackUtils.h"
@@ -102,4 +103,9 @@ void AIFStronghold::HandleDestruction()
 	}
 
 	SetActorEnableCollision(false);
+}
+
+ETeamAttitude::Type AIFStronghold::GetTeamAttitudeTowards(const AActor& Other) const
+{
+	return IFTeamUtils::GetAttitudeTowards(this, &Other);
 }

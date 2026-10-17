@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "GenericTeamAgentInterface.h"
 #include "IFBaseCharacter.generated.h"
 
 class UAnimInstance;
@@ -13,11 +14,16 @@ class UNiagaraSystem;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCharacterDied, AIFBaseCharacter*, Character);
 
 UCLASS()
-class IRONFIELD_API AIFBaseCharacter : public ACharacter
+class IRONFIELD_API AIFBaseCharacter : public ACharacter, public IGenericTeamAgentInterface
 {
 	GENERATED_BODY()
 
 public:
+	// IGenericTeamAgentInterface
+	virtual void SetGenericTeamId(const FGenericTeamId& InTeamID) override { TeamID = InTeamID; }
+	virtual FGenericTeamId GetGenericTeamId() const override { return TeamID; }
+	virtual ETeamAttitude::Type GetTeamAttitudeTowards(const AActor& Other) const override;
+
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Character|Events")
 	FOnCharacterDied OnCharacterDied;
 
@@ -40,6 +46,9 @@ public:
 	virtual void Landed(const FHitResult& Hit) override;
 
 protected:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Team")
+	FGenericTeamId TeamID = FGenericTeamId(0);
+
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Character|Animation")
 	float DeathMontageBlendOutTime = 0.15f;
 

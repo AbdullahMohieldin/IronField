@@ -88,9 +88,17 @@ void UIFHealthComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
-void UIFHealthComponent::HandleOwnerTakeAnyDamage(AActor*, float Damage, const UDamageType*, AController*, AActor*)
+void UIFHealthComponent::HandleOwnerTakeAnyDamage(AActor*, float Damage, const UDamageType*, AController* InstigatedBy, AActor* DamageCauser)
 {
+	if (bIsDead || bIsInvincible || Damage <= 0.f)
+	{
+		return;
+	}
+
 	ApplyDamage(Damage);
+
+	AActor* const InstigatorActor = InstigatedBy ? Cast<AActor>(InstigatedBy->GetPawn()) : DamageCauser;
+	OnDamaged.Broadcast(InstigatorActor, Damage);
 }
 
 void UIFHealthComponent::SetHealthClamped(float NewHealth)

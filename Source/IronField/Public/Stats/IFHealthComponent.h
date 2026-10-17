@@ -6,6 +6,7 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnHealthDepleted);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHealthChanged, float, Percent);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDamaged, AActor*, InstigatorActor, float, Damage);
 
 UCLASS()
 class IRONFIELD_API UIFHealthComponent : public UIFStatComponent
@@ -18,6 +19,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Health|Events")
 	FOnHealthChanged OnHealthChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "IronField|Health|Events")
+	FOnDamaged OnDamaged;
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Health|Actions")
 	void ApplyHealing(float Amount);

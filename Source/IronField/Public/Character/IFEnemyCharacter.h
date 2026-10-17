@@ -41,6 +41,13 @@ public:
 
 	void ApplyMovementSpeedForState(ECombatState State);
 
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+private:
+	UFUNCTION()
+	void HandleDamaged(AActor* InstigatorActor, float Damage);
+
 protected:
 	/** Population mean personality; the roll adds variance around this. */
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Enemy|Targeting", meta = (ClampMin = "0.0", ClampMax = "1.0"))

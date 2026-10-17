@@ -41,6 +41,10 @@ bool AIFEnemyController::IsReadyForNewAttack() const
 void AIFEnemyController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
+	if (const IGenericTeamAgentInterface* const TeamAgent = Cast<IGenericTeamAgentInterface>(InPawn))
+	{
+		SetGenericTeamId(TeamAgent->GetGenericTeamId());
+	}
 	InitializeControlledPawn();
 }
 

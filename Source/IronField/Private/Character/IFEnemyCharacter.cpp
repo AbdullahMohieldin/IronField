@@ -1,6 +1,7 @@
 #include "Character/IFEnemyCharacter.h"
-
+#include "Combat/IFTeamTypes.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Stats/IFHealthComponent.h"
 
 namespace
 {
@@ -10,11 +11,41 @@ namespace
 AIFEnemyCharacter::AIFEnemyCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
+	TeamID = FGenericTeamId(IFTeamIds::Enemy);
+
 	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
 	{
 		Movement->bUseRVOAvoidance = true;
 		Movement->AvoidanceWeight = DefaultAvoidanceWeight;
 		Movement->bOrientRotationToMovement = true;
+	}
+}
+
+void AIFEnemyCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (UIFHealthComponent* const Health = GetHealthComponent())
+	{
+		Health->OnDamaged.AddDynamic(this, &AIFEnemyCharacter::HandleDamaged);
+	}
+}
+
+void AIFEnemyCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UIFHealthComponent* const Health = GetHealthComponent())
+	{
+		Health->OnDamaged.RemoveAll(this);
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void AIFEnemyCharacter::HandleDamaged(AActor* InstigatorActor, float Damage)
+{
+	if (InstigatorActor && IFTeamUtils::AreHostile(this, InstigatorActor))
+	{
+		NotifyHitByPlayer();
 	}
 }
 

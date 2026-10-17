@@ -2,6 +2,7 @@
 
 #include "Animation/AnimInstance.h"
 #include "Combat/IFCombatComponent.h"
+#include "Combat/IFTeamTypes.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Core/IFFeedbackUtils.h"
@@ -191,4 +192,9 @@ UAnimInstance* AIFBaseCharacter::GetMeshAnimInstance() const
 {
 	USkeletalMeshComponent* const MeshComp = GetMesh();
 	return MeshComp ? MeshComp->GetAnimInstance() : nullptr;
+}
+
+ETeamAttitude::Type AIFBaseCharacter::GetTeamAttitudeTowards(const AActor& Other) const
+{
+	return IFTeamUtils::GetAttitudeTowards(this, &Other);
 }

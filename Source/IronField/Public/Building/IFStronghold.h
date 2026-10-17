@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "GenericTeamAgentInterface.h"
 #include "IFStronghold.generated.h"
 
 class UIFHealthComponent;
@@ -17,12 +18,17 @@ UCLASS()
  * melee weapons and projectiles use the same normal damage path as any actor
  * with a UIFHealthComponent.
  */
-class IRONFIELD_API AIFStronghold : public AActor
+class IRONFIELD_API AIFStronghold : public AActor, public IGenericTeamAgentInterface
 {
 	GENERATED_BODY()
 
 public:
 	AIFStronghold();
+
+	// IGenericTeamAgentInterface
+	virtual void SetGenericTeamId(const FGenericTeamId& InTeamID) override { TeamID = InTeamID; }
+	virtual FGenericTeamId GetGenericTeamId() const override { return TeamID; }
+	virtual ETeamAttitude::Type GetTeamAttitudeTowards(const AActor& Other) const override;
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Stronghold")
 	UIFHealthComponent* GetHealthComponent() const { return HealthComponent; }
@@ -31,6 +37,9 @@ public:
 	FOnStrongholdDestroyed OnStrongholdDestroyed;
 
 protected:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Team")
+	FGenericTeamId TeamID = FGenericTeamId(0);
+
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

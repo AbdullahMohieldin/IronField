@@ -1,22 +1,13 @@
 #include "Combat/IFCombatTargetingUtils.h"
 
-#include "AIController.h"
-#include "Building/IFStronghold.h"
 #include "Combat/IFCombatComponent.h"
+#include "Combat/IFTeamTypes.h"
 #include "Engine/DamageEvents.h"
 #include "GameFramework/Pawn.h"
 #include "Stats/IFHealthComponent.h"
 
 namespace IFCombatTargetingUtils
 {
-	namespace
-	{
-		bool IsAIControlled(const APawn* Pawn)
-		{
-			return Pawn && Cast<AAIController>(Pawn->GetController()) != nullptr;
-		}
-	}
-
 	UIFHealthComponent* GetValidAttackTargetHealth(const AActor* InstigatorActor, AActor* TargetActor)
 	{
 		if (!TargetActor || TargetActor == InstigatorActor)
@@ -24,21 +15,12 @@ namespace IFCombatTargetingUtils
 			return nullptr;
 		}
 
-		const APawn* const OwnerPawn = Cast<APawn>(InstigatorActor);
-		const APawn* const TargetPawn = Cast<APawn>(TargetActor);
-		if (IsAIControlled(OwnerPawn) && IsAIControlled(TargetPawn))
+		if (!IFTeamUtils::AreHostile(InstigatorActor, TargetActor))
 		{
 			return nullptr;
 		}
 
-		// The stronghold is the shared objective: only AI enemies may damage it.
-		// This keeps wild player swings/spin next to it from chipping the lose condition.
-		if (Cast<AIFStronghold>(TargetActor) && !IsAIControlled(OwnerPawn))
-		{
-			return nullptr;
-		}
-
-		// Any actor with health is damageable once team hostility and stronghold rules pass.
+		// Any actor with health is damageable once team hostility rules pass.
 		UIFHealthComponent* const TargetHealth = TargetActor->FindComponentByClass<UIFHealthComponent>();
 		return (TargetHealth && !TargetHealth->IsDead()) ? TargetHealth : nullptr;
 	}
