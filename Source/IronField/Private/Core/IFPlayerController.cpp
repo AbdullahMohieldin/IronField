@@ -5,6 +5,8 @@
 #include "Core/IFLog.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
+#include "EnhancedInputComponent.h"
+#include "InputAction.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -34,6 +36,12 @@ void AIFPlayerController::BeginPlay()
 	{
 		MenuWidgetsLoadHandle = Streamable.RequestAsyncLoad(MenuWidgetPaths, FStreamableDelegate::CreateUObject(this, &AIFPlayerController::HandleMenuWidgetsPreloaded));
 	}
+
+	if (!PauseInputAction.IsNull() && !IsValid(PauseInputAction.Get()))
+	{
+		PauseActionLoadHandle = Streamable.RequestAsyncLoad(PauseInputAction.ToSoftObjectPath(),
+			FStreamableDelegate::CreateUObject(this, &AIFPlayerController::HandlePauseActionLoaded));
+	}
 }
 
 void AIFPlayerController::EndPlay(const EEndPlayReason::Type Reason)
@@ -47,6 +55,11 @@ void AIFPlayerController::EndPlay(const EEndPlayReason::Type Reason)
 	{
 		MenuWidgetsLoadHandle->CancelHandle();
 		MenuWidgetsLoadHandle.Reset();
+	}
+	if (PauseActionLoadHandle.IsValid())
+	{
+		PauseActionLoadHandle->CancelHandle();
+		PauseActionLoadHandle.Reset();
 	}
 
 	if (IsValid(HUDWidget))
@@ -70,13 +83,22 @@ void AIFPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 
-	if (IsValid(InputComponent))
+	if (!IsValid(InputComponent))
 	{
-		// P must also fire while paused so the same key resumes; Escape is reserved by PIE.
-		InputComponent->SetTickableWhenPaused(true);
+		return;
+	}
+
+	// P must also fire while paused so the same key resumes; Escape is reserved by PIE.
+	InputComponent->SetTickableWhenPaused(true);
+
+	// Raw keys are the fallback until IA_Pause is assigned; binding both would double-toggle.
+	if (PauseInputAction.IsNull())
+	{
 		InputComponent->BindKey(EKeys::P, IE_Pressed, this, &AIFPlayerController::TogglePause);
 		InputComponent->BindKey(EKeys::Gamepad_Special_Right, IE_Pressed, this, &AIFPlayerController::TogglePause);
 	}
+
+	BindPauseAction();
 }
 
 void AIFPlayerController::HandleHUDClassLoaded()
@@ -101,6 +123,27 @@ void AIFPlayerController::HandleMenuWidgetsPreloaded()
 	MenuWidgetsLoadHandle.Reset();
 }
 
+void AIFPlayerController::HandlePauseActionLoaded()
+{
+	PauseActionLoadHandle.Reset();
+	BindPauseAction();
+}
+
+void AIFPlayerController::BindPauseAction()
+{
+	UInputAction* const Action = PauseInputAction.Get();
+	UEnhancedInputComponent* const EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent);
+	if (!IsValid(Action) || !IsValid(EnhancedInput))
+	{
+		return;
+	}
+
+	// Enhanced Input drops actions while paused unless the asset opts in; enforce it so
+	// the same key always resumes even if the checkbox was missed.
+	Action->bTriggerWhenPaused = true;
+	EnhancedInput->BindAction(Action, ETriggerEvent::Started, this, &AIFPlayerController::TogglePause);
+}
+
 void AIFPlayerController::TogglePause()
 {
 	if (IsGameOverActive())
@@ -108,7 +151,7 @@ void AIFPlayerController::TogglePause()
 		return;
 	}
 
-	SetMatchPaused(!IsValid(PauseMenuWidget));
+	SetMatchPaused(!UGameplayStatics::IsGamePaused(this));
 }
 
 void AIFPlayerController::DebugTogglePause()
@@ -123,21 +166,24 @@ void AIFPlayerController::SetMatchPaused(bool bPaused)
 		return;
 	}
 
+	// Pause state and input mode never depend on widget availability; the menu is optional.
 	if (bPaused)
 	{
 		ShowPauseMenu();
+		ApplyPauseInputMode();
 	}
 	else
 	{
 		ClosePauseMenu();
-		UGameplayStatics::SetGamePaused(this, false);
 		ApplyGameplayInputMode();
 	}
+
+	UGameplayStatics::SetGamePaused(this, bPaused);
 }
 
 void AIFPlayerController::ShowPauseMenu()
 {
-	if (IsGameOverActive() || IsValid(PauseMenuWidget))
+	if (IsValid(PauseMenuWidget))
 	{
 		return;
 	}
@@ -153,14 +199,10 @@ void AIFPlayerController::ShowPauseMenu()
 	}
 
 	PauseMenuWidget = CreateWidget<UUserWidget>(this, WidgetClass);
-	if (!IsValid(PauseMenuWidget))
+	if (IsValid(PauseMenuWidget))
 	{
-		return;
+		PauseMenuWidget->AddToViewport();
 	}
-
-	PauseMenuWidget->AddToViewport();
-	ApplyUIInputMode();
-	UGameplayStatics::SetGamePaused(this, true);
 }
 
 void AIFPlayerController::ClosePauseMenu()
@@ -227,6 +269,16 @@ void AIFPlayerController::ApplyGameplayInputMode()
 	SetInputMode(InputMode);
 	bShowMouseCursor = false;
 	FlushPressedKeys();
+}
+
+void AIFPlayerController::ApplyPauseInputMode()
+{
+	// GameAndUI keeps player input alive so IA_Pause can resume; UIOnly sets IgnoreInput
+	// and would swallow the unpause press along with every other key.
+	FInputModeGameAndUI InputMode;
+	InputMode.SetHideCursorDuringCapture(false);
+	SetInputMode(InputMode);
+	bShowMouseCursor = true;
 }
 
 void AIFPlayerController::ApplyUIInputMode()

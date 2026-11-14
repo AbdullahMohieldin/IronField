@@ -5,6 +5,7 @@
 #include "GameFramework/PlayerController.h"
 #include "IFPlayerController.generated.h"
 
+class UInputAction;
 class UUserWidget;
 struct FStreamableHandle;
 
@@ -45,6 +46,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|UI")
 	TSoftClassPtr<UUserWidget> GameOverScreenWidgetClass;
 
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Input")
+	TSoftObjectPtr<UInputAction> PauseInputAction;
+
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> HUDWidget;
@@ -57,12 +61,16 @@ private:
 
 	TSharedPtr<FStreamableHandle> HUDLoadHandle;
 	TSharedPtr<FStreamableHandle> MenuWidgetsLoadHandle;
+	TSharedPtr<FStreamableHandle> PauseActionLoadHandle;
 
 	void HandleHUDClassLoaded();
 	void HandleMenuWidgetsPreloaded();
+	void HandlePauseActionLoaded();
+	void BindPauseAction();
 	void ShowPauseMenu();
 	void ClosePauseMenu();
 	void ApplyGameplayInputMode();
+	void ApplyPauseInputMode();
 	void ApplyUIInputMode();
 	bool IsGameOverActive() const;
 };

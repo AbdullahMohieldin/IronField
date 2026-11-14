@@ -1,10 +1,10 @@
 #include "Core/IFGameMode.h"
 
+#include "Character/IFPlayerCharacter.h"
 #include "Core/IFGameState.h"
 #include "Core/IFLog.h"
 #include "Core/IFPlayerController.h"
 #include "Engine/World.h"
-#include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
 
@@ -12,7 +12,7 @@ AIFGameMode::AIFGameMode()
 {
 	GameStateClass = AIFGameState::StaticClass();
 	PlayerControllerClass = AIFPlayerController::StaticClass();
-	DefaultPawnClass = ACharacter::StaticClass();
+	DefaultPawnClass = AIFPlayerCharacter::StaticClass();
 }
 
 void AIFGameMode::BeginPlay()
