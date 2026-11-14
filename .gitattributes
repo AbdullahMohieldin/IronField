@@ -1,0 +1,21 @@
+﻿# Default text handling with explicit LF normalization
+* text=auto eol=lf
+
+# C++ Source Code & Build Rules
+*.cpp text diff=cpp
+*.h text diff=cpp
+*.cs text diff=csharp
+*.ini text
+*.uproject text
+*.uplugin text
+
+# Unreal Binary Assets via Git LFS
+*.uasset filter=lfs diff=lfs merge=lfs -text
+*.umap filter=lfs diff=lfs merge=lfs -text
+
+# Audio & Textures via Git LFS
+*.wav filter=lfs diff=lfs merge=lfs -text
+*.mp3 filter=lfs diff=lfs merge=lfs -text
+*.png filter=lfs diff=lfs merge=lfs -text
+*.tga filter=lfs diff=lfs merge=lfs -text
+*.fbx filter=lfs diff=lfs merge=lfs -text

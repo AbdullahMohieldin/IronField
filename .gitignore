@@ -1,0 +1,45 @@
+﻿# Unreal Engine Build & Intermediate Artifacts
+Binaries/
+Build/
+Intermediate/
+DerivedDataCache/
+Saved/
+
+# Project Packaging & Staged Outputs
+Builds/
+StagedBuilds/
+*.apk
+*.ipa
+*.app
+
+# Visual Studio & MSVC Temporary Files
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.opensdf
+*.sdf
+*.suo
+
+# JetBrains Rider & IntelliJ Files
+.idea/
+*.sln.DotSettings.user
+
+# Crash Dumps & Log Files
+*.log
+*.dmp
+*.crash
+
+# OS-Generated Artifacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+
+# Auto-Generated Unreal Header Tool Cache
+Source/**/*.gen.cpp
+Source/**/*.generated.h
+
+# Local User & Editor Preferences
+Config/*UserSettings.ini
