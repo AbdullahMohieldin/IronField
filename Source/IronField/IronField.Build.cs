@@ -10,6 +10,7 @@ public class IronField : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"InputCore",
 			"EnhancedInput",
 			"UMG",
 			"AIModule",
