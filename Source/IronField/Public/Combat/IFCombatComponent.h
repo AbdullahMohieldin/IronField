@@ -28,8 +28,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
 	bool IsBlocking() const { return CombatState == EIFCombatState::Blocking; }
 
-	void HandleOwnerDeath();
-	void HandleOwnerRevived();
+	virtual void HandleOwnerDeath();
+	virtual void HandleOwnerRevived();
 
 protected:
 	void SetCombatState(EIFCombatState NewState);

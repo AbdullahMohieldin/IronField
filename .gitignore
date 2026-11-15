@@ -43,3 +43,7 @@ Source/**/*.generated.h
 
 # Local User & Editor Preferences
 Config/*UserSettings.ini
+
+# Third-party Fab/Paragon packs (migrated locally)
+Content/Paragon*/
+

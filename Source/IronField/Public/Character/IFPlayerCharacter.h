@@ -66,6 +66,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input")
 	TSoftObjectPtr<UInputAction> SprintAction;
 
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input")
+	TSoftObjectPtr<UInputAction> AttackAction;
+
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Movement", meta = (ClampMin = "0.0"))
 	float WalkSpeed = 475.f;
 
@@ -134,6 +137,7 @@ private:
 	void Look(const FInputActionValue& Value);
 	void StartSprint();
 	void StopSprint();
+	void Attack();
 
 	UFUNCTION()
 	void HandleStaminaDepleted();

@@ -3,6 +3,7 @@
 #include "Camera/CameraComponent.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Combat/IFCombatComponent.h"
+#include "Combat/IFPlayerCombatComponent.h"
 #include "Engine/AssetManager.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/StreamableManager.h"
@@ -19,7 +20,7 @@
 #include "TimerManager.h"
 
 AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<UIFPlayerCombatComponent>(AIFBaseCharacter::CombatComponentName))
 {
 	PrimaryActorTick.bCanEverTick = false;
 
@@ -46,8 +47,9 @@ AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializ
 
 	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
 	{
-		Movement->bOrientRotationToMovement = true;
-		Movement->RotationRate = FRotator(0.f, 540.f, 0.f);
+		Movement->bOrientRotationToMovement = false;
+		Movement->bUseControllerDesiredRotation = true;
+		Movement->RotationRate = FRotator(0.f, 720.f, 0.f);
 	}
 
 	SetGenericTeamId(FGenericTeamId(IFTeamIds::Player));
@@ -157,6 +159,10 @@ void AIFPlayerCharacter::RequestInputAssets()
 	{
 		AssetPaths.Add(SprintAction.ToSoftObjectPath());
 	}
+	if (!AttackAction.IsNull())
+	{
+		AssetPaths.Add(AttackAction.ToSoftObjectPath());
+	}
 	if (AssetPaths.IsEmpty())
 	{
 		return;
@@ -249,6 +255,12 @@ void AIFPlayerCharacter::BindInputActions()
 		EnhancedInput->BindAction(Sprint, ETriggerEvent::Completed, this, &AIFPlayerCharacter::StopSprint);
 		EnhancedInput->BindAction(Sprint, ETriggerEvent::Canceled, this, &AIFPlayerCharacter::StopSprint);
 	}
+
+	UInputAction* const Attack = AttackAction.Get();
+	if (IsValid(Attack))
+	{
+		EnhancedInput->BindAction(Attack, ETriggerEvent::Started, this, &AIFPlayerCharacter::Attack);
+	}
 }
 
 void AIFPlayerCharacter::Move(const FInputActionValue& Value)
@@ -305,6 +317,14 @@ void AIFPlayerCharacter::StopSprint()
 {
 	bSprintRequested = false;
 	UpdateSprintState();
+}
+
+void AIFPlayerCharacter::Attack()
+{
+	if (UIFPlayerCombatComponent* const Combat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
+	{
+		Combat->RequestAttack();
+	}
 }
 
 void AIFPlayerCharacter::HandleStaminaDepleted()
@@ -382,12 +402,11 @@ void AIFPlayerCharacter::UpdateRotationMode()
 		return;
 	}
 
-	const UIFCombatComponent* const Combat = GetCombatComponent();
-	const bool bLockToController = IsValid(Combat) && (Combat->IsAttacking() || Combat->IsBlocking());
-
-	// Combat aims with the camera; locomotion faces the movement direction.
-	bUseControllerRotationYaw = bLockToController;
-	Movement->bOrientRotationToMovement = !bLockToController;
+	// Always face controller/camera direction smoothly via RotationRate (720 deg/s)
+	// for directional combat strafing (W=Fwd, A/D=Strafe, S=Bwd).
+	bUseControllerRotationYaw = false;
+	Movement->bOrientRotationToMovement = false;
+	Movement->bUseControllerDesiredRotation = true;
 }
 
 float AIFPlayerCharacter::CalculateDesiredMovementSpeed() const

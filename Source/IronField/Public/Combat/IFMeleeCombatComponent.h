@@ -1,0 +1,92 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Combat/IFCombatComponent.h"
+#include "Combat/IFCombatDataAsset.h"
+#include "UObject/SoftObjectPtr.h"
+#include "IFMeleeCombatComponent.generated.h"
+
+class AIFBaseCharacter;
+class UAnimInstance;
+class UAnimMontage;
+class UIFStaminaComponent;
+struct FStreamableHandle;
+
+UCLASS(ClassGroup = (IronField), meta = (BlueprintSpawnableComponent))
+class IRONFIELD_API UIFMeleeCombatComponent : public UIFCombatComponent
+{
+	GENERATED_BODY()
+
+public:
+	UFUNCTION(BlueprintCallable, Category = "IronField|Combat")
+	bool TryStartAttack();
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
+	bool IsCombatReady() const { return bCombatReady; }
+
+	void OpenHitWindow();
+	void UpdateHitWindow(float DeltaTime);
+	void CloseHitWindow();
+
+	virtual void HandleOwnerDeath() override;
+	virtual void HandleOwnerRevived() override;
+
+protected:
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat")
+	TSoftObjectPtr<UIFCombatDataAsset> CombatData;
+
+	UPROPERTY(EditAnywhere, Category = "IronField|Combat")
+	bool bDrawDebugHitWindow = false;
+
+	bool PlayStep(int32 StepIndex);
+	int32 GetNextStepIndex() const;
+	const FIFMeleeAttackStep* GetCurrentStep() const;
+	UAnimMontage* GetCurrentMontage() const { return CurrentMontage; }
+
+	// Player subclass snaps aim and arms the combo window here; enemies need neither.
+	virtual void HandleStepStarted() {}
+
+	// Last-chance buffer consumption at natural montage end; base has no buffer.
+	virtual bool TryBufferedAdvance() { return false; }
+
+private:
+	UFUNCTION()
+	void HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
+
+	void HandleCombatDataLoaded();
+	void HandleStepAssetsLoaded();
+	void FinishCombo();
+	void StartComboResetTimer();
+	void HandleComboReset();
+	void BuildSamplePoints(TArray<FVector>& OutPoints) const;
+	void ProcessHit(AActor* Target, const FVector& HitLocation);
+
+	UPROPERTY(Transient)
+	TObjectPtr<UIFCombatDataAsset> LoadedCombatData;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimInstance> CachedAnimInstance;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> CurrentMontage;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UIFStaminaComponent> Stamina;
+
+	TWeakObjectPtr<AIFBaseCharacter> OwnerCharacter;
+
+	TSharedPtr<FStreamableHandle> DataLoadHandle;
+	TSharedPtr<FStreamableHandle> StepAssetsLoadHandle;
+
+	int32 CurrentStepIndex = INDEX_NONE;
+	bool bCombatReady = false;
+	bool bHitWindowOpen = false;
+
+	TSet<TWeakObjectPtr<AActor>> HitActorsThisWindow;
+	TArray<FVector> PreviousSamplePoints;
+
+	FTimerHandle ComboResetTimerHandle;
+};
