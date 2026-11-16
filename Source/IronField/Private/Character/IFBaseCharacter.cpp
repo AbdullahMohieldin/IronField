@@ -85,6 +85,28 @@ void AIFBaseCharacter::Landed(const FHitResult& Hit)
 	}
 }
 
+float AIFBaseCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser)
+{
+	if (DamageAmount <= 0.f || !IsAlive())
+	{
+		return 0.f;
+	}
+
+	if (IsValid(CombatComponent) && CombatComponent->TryBlockIncomingDamage(DamageAmount, DamageCauser, EventInstigator))
+	{
+		return 0.f;
+	}
+
+	const float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+
+	if (ActualDamage > 0.f && IsAlive() && IsValid(CombatComponent))
+	{
+		CombatComponent->PlayDirectionalHitReact(DamageCauser, EventInstigator);
+	}
+
+	return ActualDamage;
+}
+
 void AIFBaseCharacter::HandleDeath(AActor*)
 {
 	if (bHasDied)

@@ -28,6 +28,8 @@ public:
 	void UpdateHitWindow(float DeltaTime);
 	void CloseHitWindow();
 
+	virtual void PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator) override;
+
 	virtual void HandleOwnerDeath() override;
 	virtual void HandleOwnerRevived() override;
 
@@ -42,6 +44,7 @@ protected:
 	bool bDrawDebugHitWindow = false;
 
 	bool PlayStep(int32 StepIndex);
+	bool PlayGuardAttack();
 	int32 GetNextStepIndex() const;
 	const FIFMeleeAttackStep* GetCurrentStep() const;
 	UAnimMontage* GetCurrentMontage() const { return CurrentMontage; }
@@ -52,23 +55,13 @@ protected:
 	// Last-chance buffer consumption at natural montage end; base has no buffer.
 	virtual bool TryBufferedAdvance() { return false; }
 
-private:
 	UFUNCTION()
-	void HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
+	virtual void HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
 
-	void HandleCombatDataLoaded();
-	void HandleStepAssetsLoaded();
 	void FinishCombo();
-	void StartComboResetTimer();
-	void HandleComboReset();
-	void BuildSamplePoints(TArray<FVector>& OutPoints) const;
-	void ProcessHit(AActor* Target, const FVector& HitLocation);
 
 	UPROPERTY(Transient)
 	TObjectPtr<UIFCombatDataAsset> LoadedCombatData;
-
-	UPROPERTY(Transient)
-	TObjectPtr<UAnimInstance> CachedAnimInstance;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> CurrentMontage;
@@ -76,12 +69,20 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UIFStaminaComponent> Stamina;
 
-	TWeakObjectPtr<AIFBaseCharacter> OwnerCharacter;
+	int32 CurrentStepIndex = INDEX_NONE;
+	bool bIsExecutingGuardAttack = false;
+
+private:
+	void HandleCombatDataLoaded();
+	void HandleStepAssetsLoaded();
+	void StartComboResetTimer();
+	void HandleComboReset();
+	void BuildSamplePoints(TArray<FVector>& OutPoints) const;
+	void ProcessHit(AActor* Target, const FVector& HitLocation);
 
 	TSharedPtr<FStreamableHandle> DataLoadHandle;
 	TSharedPtr<FStreamableHandle> StepAssetsLoadHandle;
 
-	int32 CurrentStepIndex = INDEX_NONE;
 	bool bCombatReady = false;
 	bool bHitWindowOpen = false;
 

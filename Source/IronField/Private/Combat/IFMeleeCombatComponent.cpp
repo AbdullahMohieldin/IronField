@@ -86,6 +86,8 @@ void UIFMeleeCombatComponent::HandleCombatDataLoaded()
 		return;
 	}
 
+	DirectionalHitReacts = LoadedCombatData->DirectionalHitReacts;
+
 	TArray<FSoftObjectPath> AssetPaths;
 	for (const FIFMeleeAttackStep& Step : LoadedCombatData->ComboSteps)
 	{
@@ -101,6 +103,47 @@ void UIFMeleeCombatComponent::HandleCombatDataLoaded()
 		{
 			AssetPaths.Add(Step.HitSound.ToSoftObjectPath());
 		}
+	}
+
+	if (!LoadedCombatData->ShieldBlock.DeflectMontage.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->ShieldBlock.DeflectMontage.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->ShieldBlock.GuardBreakMontage.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->ShieldBlock.GuardBreakMontage.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->ShieldBlock.GuardAttack.Montage.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.Montage.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->ShieldBlock.GuardAttack.HitVFX.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitVFX.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->ShieldBlock.GuardAttack.HitSound.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitSound.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->SpinAttack.Montage.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->SpinAttack.Montage.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->DirectionalHitReacts.HitReactFront.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactFront.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->DirectionalHitReacts.HitReactBack.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactBack.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->DirectionalHitReacts.HitReactLeft.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactLeft.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->DirectionalHitReacts.HitReactRight.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactRight.ToSoftObjectPath());
 	}
 
 	if (AssetPaths.IsEmpty())
@@ -146,7 +189,17 @@ int32 UIFMeleeCombatComponent::GetNextStepIndex() const
 
 const FIFMeleeAttackStep* UIFMeleeCombatComponent::GetCurrentStep() const
 {
-	if (!IsValid(LoadedCombatData) || !LoadedCombatData->ComboSteps.IsValidIndex(CurrentStepIndex))
+	if (!IsValid(LoadedCombatData))
+	{
+		return nullptr;
+	}
+
+	if (bIsExecutingGuardAttack)
+	{
+		return &LoadedCombatData->ShieldBlock.GuardAttack;
+	}
+
+	if (!LoadedCombatData->ComboSteps.IsValidIndex(CurrentStepIndex))
 	{
 		return nullptr;
 	}
@@ -196,7 +249,55 @@ bool UIFMeleeCombatComponent::PlayStep(int32 StepIndex)
 		Stamina->TryConsumeStamina(Step.StaminaCost);
 	}
 
+	bIsExecutingGuardAttack = false;
 	CurrentStepIndex = StepIndex;
+	SetCombatState(EIFCombatState::Attacking);
+	HandleStepStarted();
+	return true;
+}
+
+bool UIFMeleeCombatComponent::PlayGuardAttack()
+{
+	if (!bCombatReady || !IsValid(LoadedCombatData))
+	{
+		return false;
+	}
+
+	const FIFMeleeAttackStep& GuardStep = LoadedCombatData->ShieldBlock.GuardAttack;
+	UAnimMontage* const Montage = GuardStep.Montage.Get();
+	if (!IsValid(Montage) || !IsValid(CachedAnimInstance) || !OwnerCharacter.IsValid())
+	{
+		return false;
+	}
+
+	if (IsValid(Stamina) && !Stamina->HasStamina(GuardStep.StaminaCost))
+	{
+		return false;
+	}
+
+	CloseHitWindow();
+	if (UWorld* const World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ComboResetTimerHandle);
+	}
+
+	UAnimMontage* const PreviousMontage = CurrentMontage;
+	CurrentMontage = Montage;
+
+	const float PlayLength = CachedAnimInstance->Montage_Play(Montage, 1.f);
+	if (PlayLength <= 0.f)
+	{
+		CurrentMontage = PreviousMontage;
+		return false;
+	}
+
+	if (IsValid(Stamina))
+	{
+		Stamina->TryConsumeStamina(GuardStep.StaminaCost);
+	}
+
+	bIsExecutingGuardAttack = true;
+	CurrentStepIndex = INDEX_NONE;
 	SetCombatState(EIFCombatState::Attacking);
 	HandleStepStarted();
 	return true;
@@ -213,6 +314,13 @@ void UIFMeleeCombatComponent::HandleMontageBlendingOut(UAnimMontage* Montage, bo
 		return;
 	}
 
+	if (bIsExecutingGuardAttack)
+	{
+		bIsExecutingGuardAttack = false;
+		FinishCombo();
+		return;
+	}
+
 	if (!bInterrupted && TryBufferedAdvance())
 	{
 		return;
@@ -224,6 +332,8 @@ void UIFMeleeCombatComponent::HandleMontageBlendingOut(UAnimMontage* Montage, bo
 void UIFMeleeCombatComponent::FinishCombo()
 {
 	CurrentMontage = nullptr;
+	CurrentStepIndex = INDEX_NONE;
+	bIsExecutingGuardAttack = false;
 	CloseHitWindow();
 	SetCombatState(EIFCombatState::Idle);
 	StartComboResetTimer();
@@ -259,6 +369,7 @@ void UIFMeleeCombatComponent::HandleOwnerDeath()
 	// that BlendingOut from touching combat state.
 	CurrentMontage = nullptr;
 	CurrentStepIndex = INDEX_NONE;
+	bIsExecutingGuardAttack = false;
 	CloseHitWindow();
 
 	if (UWorld* const World = GetWorld())
@@ -272,6 +383,7 @@ void UIFMeleeCombatComponent::HandleOwnerDeath()
 void UIFMeleeCombatComponent::HandleOwnerRevived()
 {
 	CurrentStepIndex = INDEX_NONE;
+	bIsExecutingGuardAttack = false;
 	Super::HandleOwnerRevived();
 }
 
@@ -444,4 +556,24 @@ void UIFMeleeCombatComponent::ProcessHit(AActor* Target, const FVector& HitLocat
 	{
 		UGameplayStatics::PlaySoundAtLocation(GetOwner(), HitSound, HitLocation);
 	}
+}
+
+void UIFMeleeCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator)
+{
+	if (IsAttacking())
+	{
+		if (IsValid(CachedAnimInstance) && IsValid(CurrentMontage))
+		{
+			CachedAnimInstance->Montage_Stop(0.1f, CurrentMontage);
+		}
+		CloseHitWindow();
+		CurrentStepIndex = INDEX_NONE;
+		bIsExecutingGuardAttack = false;
+		if (UWorld* const World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(ComboResetTimerHandle);
+		}
+	}
+
+	Super::PlayDirectionalHitReact(DamageCauser, EventInstigator);
 }

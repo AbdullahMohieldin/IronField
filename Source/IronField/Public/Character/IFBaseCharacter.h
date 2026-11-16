@@ -34,6 +34,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Character|State")
 	bool IsDead() const;
 
+	UFUNCTION(BlueprintPure, Category = "IronField|Character|State")
+	bool IsAlive() const { return !IsDead(); }
+
+	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
+
 	// IGenericTeamAgentInterface
 	virtual void SetGenericTeamId(const FGenericTeamId& InTeamID) override { TeamID = InTeamID; }
 	virtual FGenericTeamId GetGenericTeamId() const override { return TeamID; }

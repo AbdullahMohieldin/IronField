@@ -47,6 +47,94 @@ struct FIFMeleeAttackStep
 	TSoftObjectPtr<USoundBase> HitSound;
 };
 
+USTRUCT(BlueprintType)
+struct FIFShieldBlockConfig
+{
+	GENERATED_BODY()
+
+	FIFShieldBlockConfig()
+	{
+		GuardAttack.Damage = 22.f;
+		GuardAttack.StaminaCost = 12.f;
+		GuardAttack.HitStartSocket = TEXT("FX_Sword_Bottom");
+		GuardAttack.HitEndSocket = TEXT("FX_Sword_Top");
+		GuardAttack.HitRadius = 18.f;
+		GuardAttack.TraceSampleCount = 6;
+		GuardAttack.FallbackComboWindowStartNormalized = 0.65f;
+	}
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Block")
+	TSoftObjectPtr<UAnimMontage> DeflectMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Block")
+	TSoftObjectPtr<UAnimMontage> GuardBreakMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Block")
+	FIFMeleeAttackStep GuardAttack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Block", meta = (ClampMin = "0.0", ClampMax = "360.0"))
+	float MaxBlockAngleDegrees = 120.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Block", meta = (ClampMin = "0.0"))
+	float BlockStaminaCostMultiplier = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Block", meta = (ClampMin = "0.0"))
+	float MinBlockEntryStamina = 5.f;
+};
+
+USTRUCT(BlueprintType)
+struct FIFSpinAttackConfig
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin")
+	TSoftObjectPtr<UAnimMontage> Montage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "0.0"))
+	float Damage = 45.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "0.0"))
+	float StaminaCost = 25.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "0.0"))
+	float CooldownSeconds = 4.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "0.0"))
+	float Radius = 260.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin")
+	TObjectPtr<UNiagaraSystem> HitVFX = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin")
+	TObjectPtr<USoundBase> HitSound = nullptr;
+};
+
+USTRUCT(BlueprintType)
+struct FIFDirectionalHitReactConfig
+{
+	GENERATED_BODY()
+
+	FIFDirectionalHitReactConfig()
+		: HitReactFront(FSoftObjectPath(TEXT("/Game/IronField/Characters/Player/AM_Player_HitReact_Front.AM_Player_HitReact_Front")))
+		, HitReactBack(FSoftObjectPath(TEXT("/Game/IronField/Characters/Player/AM_Player_HitReact_Back.AM_Player_HitReact_Back")))
+		, HitReactLeft(FSoftObjectPath(TEXT("/Game/IronField/Characters/Player/AM_Player_HitReact_Left.AM_Player_HitReact_Left")))
+		, HitReactRight(FSoftObjectPath(TEXT("/Game/IronField/Characters/Player/AM_Player_HitReact_Right.AM_Player_HitReact_Right")))
+	{
+	}
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact")
+	TSoftObjectPtr<UAnimMontage> HitReactFront;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact")
+	TSoftObjectPtr<UAnimMontage> HitReactBack;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact")
+	TSoftObjectPtr<UAnimMontage> HitReactLeft;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact")
+	TSoftObjectPtr<UAnimMontage> HitReactRight;
+};
+
 UCLASS(BlueprintType)
 class IRONFIELD_API UIFCombatDataAsset : public UDataAsset
 {
@@ -59,4 +147,13 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat", meta = (ClampMin = "0.0"))
 	float ComboResetSeconds = 0.8f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Combat")
+	FIFShieldBlockConfig ShieldBlock;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Combat")
+	FIFSpinAttackConfig SpinAttack;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Combat")
+	FIFDirectionalHitReactConfig DirectionalHitReacts;
 };

@@ -35,6 +35,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Player|State")
 	void NotifyGetUpFinished();
 
+	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Combat")
+	void StartBlock();
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Combat")
+	void StopBlock();
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Combat")
+	void RequestSpinAttack();
+
 	UFUNCTION(Exec)
 	void DebugDamage(float Amount);
 
@@ -68,6 +77,12 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input")
 	TSoftObjectPtr<UInputAction> AttackAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> BlockAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> SpinAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Movement", meta = (ClampMin = "0.0"))
 	float WalkSpeed = 475.f;

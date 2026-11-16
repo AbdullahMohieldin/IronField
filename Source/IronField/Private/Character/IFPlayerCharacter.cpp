@@ -261,6 +261,18 @@ void AIFPlayerCharacter::BindInputActions()
 	{
 		EnhancedInput->BindAction(Attack, ETriggerEvent::Started, this, &AIFPlayerCharacter::Attack);
 	}
+
+	if (IsValid(BlockAction))
+	{
+		EnhancedInput->BindAction(BlockAction, ETriggerEvent::Started, this, &AIFPlayerCharacter::StartBlock);
+		EnhancedInput->BindAction(BlockAction, ETriggerEvent::Completed, this, &AIFPlayerCharacter::StopBlock);
+		EnhancedInput->BindAction(BlockAction, ETriggerEvent::Canceled, this, &AIFPlayerCharacter::StopBlock);
+	}
+
+	if (IsValid(SpinAction))
+	{
+		EnhancedInput->BindAction(SpinAction, ETriggerEvent::Started, this, &AIFPlayerCharacter::RequestSpinAttack);
+	}
 }
 
 void AIFPlayerCharacter::Move(const FInputActionValue& Value)
@@ -304,6 +316,12 @@ void AIFPlayerCharacter::Jump()
 		return;
 	}
 
+	const UIFCombatComponent* const Combat = GetCombatComponent();
+	if (IsValid(Combat) && (Combat->IsStunned() || Combat->IsBlocking()))
+	{
+		return;
+	}
+
 	Super::Jump();
 }
 
@@ -324,6 +342,30 @@ void AIFPlayerCharacter::Attack()
 	if (UIFPlayerCombatComponent* const Combat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
 	{
 		Combat->RequestAttack();
+	}
+}
+
+void AIFPlayerCharacter::StartBlock()
+{
+	if (UIFPlayerCombatComponent* const Combat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
+	{
+		Combat->StartBlock();
+	}
+}
+
+void AIFPlayerCharacter::StopBlock()
+{
+	if (UIFPlayerCombatComponent* const Combat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
+	{
+		Combat->StopBlock();
+	}
+}
+
+void AIFPlayerCharacter::RequestSpinAttack()
+{
+	if (UIFPlayerCombatComponent* const Combat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
+	{
+		Combat->RequestSpinAttack();
 	}
 }
 
@@ -414,6 +456,10 @@ float AIFPlayerCharacter::CalculateDesiredMovementSpeed() const
 	const UIFCombatComponent* const Combat = GetCombatComponent();
 	if (IsValid(Combat))
 	{
+		if (Combat->IsStunned())
+		{
+			return 0.f;
+		}
 		if (Combat->IsAttacking())
 		{
 			return AttackMoveSpeed;

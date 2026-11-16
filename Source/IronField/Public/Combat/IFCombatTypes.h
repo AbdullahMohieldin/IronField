@@ -9,6 +9,8 @@ enum class EIFCombatState : uint8
 	Idle,
 	Attacking,
 	Blocking,
+	HitReact,
+	Stunned,
 	Dead
 };
 
