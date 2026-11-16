@@ -1,18 +1,12 @@
 #include "Core/IFGameState.h"
 
-void AIFGameState::ApplyMatchState(EIFMatchState NewState)
+void AIFGameState::ApplyMatchResult(EIFGameResult NewResult)
 {
-	if (CurrentMatchState == NewState)
+	if (MatchResult == NewResult)
 	{
 		return;
 	}
 
-	const EIFMatchState PreviousState = CurrentMatchState;
-	CurrentMatchState = NewState;
-	OnMatchStateChanged.Broadcast(PreviousState, NewState);
-}
-
-void AIFGameState::ApplyMatchResult(EIFGameResult NewResult)
-{
 	MatchResult = NewResult;
+	OnGameResultChanged.Broadcast(NewResult);
 }

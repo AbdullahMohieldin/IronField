@@ -73,4 +73,6 @@ private:
 	void ApplyPauseInputMode();
 	void ApplyUIInputMode();
 	bool IsGameOverActive() const;
+
+	bool bIsGameOver = false;
 };

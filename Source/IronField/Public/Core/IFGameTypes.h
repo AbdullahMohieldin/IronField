@@ -4,16 +4,6 @@
 #include "IFGameTypes.generated.h"
 
 UENUM(BlueprintType)
-enum class EIFMatchState : uint8
-{
-	Preparation,
-	WaveActive,
-	Intermission,
-	Victory,
-	Defeat
-};
-
-UENUM(BlueprintType)
 enum class EIFGameResult : uint8
 {
 	None,
@@ -28,4 +18,4 @@ enum class EIFRunMode : uint8
 	Unlimited
 };
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMatchStateChanged, EIFMatchState, PreviousState, EIFMatchState, NewState);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGameResultChanged, EIFGameResult, NewResult);

@@ -138,9 +138,6 @@ void AIFPlayerController::BindPauseAction()
 		return;
 	}
 
-	// Enhanced Input drops actions while paused unless the asset opts in; enforce it so
-	// the same key always resumes even if the checkbox was missed.
-	Action->bTriggerWhenPaused = true;
 	EnhancedInput->BindAction(Action, ETriggerEvent::Started, this, &AIFPlayerController::TogglePause);
 }
 
@@ -216,38 +213,36 @@ void AIFPlayerController::ClosePauseMenu()
 
 void AIFPlayerController::ShowGameOverScreen(EIFGameResult Result)
 {
-	if (IsValid(GameOverScreenWidget))
+	if (bIsGameOver)
 	{
 		return;
 	}
 
+	bIsGameOver = true;
 	ClosePauseMenu();
+	ApplyUIInputMode();
+	UGameplayStatics::SetGamePaused(this, true);
 
 	UClass* WidgetClass = GameOverScreenWidgetClass.Get();
 	if (!IsValid(WidgetClass))
 	{
 		WidgetClass = GameOverScreenWidgetClass.LoadSynchronous();
 	}
-	if (!IsValid(WidgetClass))
+	if (IsValid(WidgetClass))
 	{
-		return;
+		GameOverScreenWidget = CreateWidget<UUserWidget>(this, WidgetClass);
+		if (IsValid(GameOverScreenWidget))
+		{
+			GameOverScreenWidget->AddToViewport();
+		}
 	}
-
-	GameOverScreenWidget = CreateWidget<UUserWidget>(this, WidgetClass);
-	if (!IsValid(GameOverScreenWidget))
-	{
-		return;
-	}
-
-	GameOverScreenWidget->AddToViewport();
-	ApplyUIInputMode();
-	UGameplayStatics::SetGamePaused(this, true);
 
 	UE_LOG(LogIronField, Log, TEXT("[IF-Flow] Game over (result=%d)."), static_cast<int32>(Result));
 }
 
 void AIFPlayerController::RestartMatch()
 {
+	bIsGameOver = false;
 	UGameplayStatics::SetGamePaused(this, false);
 	const FName LevelName = FName(*UGameplayStatics::GetCurrentLevelName(this, true));
 	UGameplayStatics::OpenLevel(this, LevelName);
@@ -255,6 +250,7 @@ void AIFPlayerController::RestartMatch()
 
 void AIFPlayerController::ReturnToMainMenu()
 {
+	bIsGameOver = false;
 	UGameplayStatics::SetGamePaused(this, false);
 	UIFGameInstance* const GameInstance = Cast<UIFGameInstance>(GetGameInstance());
 	if (IsValid(GameInstance))
@@ -290,5 +286,5 @@ void AIFPlayerController::ApplyUIInputMode()
 
 bool AIFPlayerController::IsGameOverActive() const
 {
-	return IsValid(GameOverScreenWidget);
+	return bIsGameOver;
 }

@@ -39,6 +39,8 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	virtual void GatherRequiredAssetPaths(TArray<FSoftObjectPath>& OutAssetPaths) const;
+
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat")
 	TSoftObjectPtr<UIFCombatDataAsset> CombatData;
 

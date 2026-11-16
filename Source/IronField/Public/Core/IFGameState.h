@@ -12,21 +12,14 @@ class IRONFIELD_API AIFGameState : public AGameStateBase
 
 public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Match")
-	EIFMatchState GetCurrentMatchState() const { return CurrentMatchState; }
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Match")
 	EIFGameResult GetMatchResult() const { return MatchResult; }
 
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Match")
-	FOnMatchStateChanged OnMatchStateChanged;
+	FOnGameResultChanged OnGameResultChanged;
 
-	void ApplyMatchState(EIFMatchState NewState);
 	void ApplyMatchResult(EIFGameResult NewResult);
 
 private:
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Match", meta = (AllowPrivateAccess = "true"))
-	EIFMatchState CurrentMatchState = EIFMatchState::Preparation;
-
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Match", meta = (AllowPrivateAccess = "true"))
 	EIFGameResult MatchResult = EIFGameResult::None;
 };

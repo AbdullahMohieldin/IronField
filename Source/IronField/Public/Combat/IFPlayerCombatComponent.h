@@ -36,6 +36,7 @@ public:
 
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual void GatherRequiredAssetPaths(TArray<FSoftObjectPath>& OutAssetPaths) const override;
 	virtual const FIFMeleeAttackStep* GetCurrentStep() const override;
 	virtual void HandleStepStarted() override;
 	virtual bool TryBufferedAdvance() override;

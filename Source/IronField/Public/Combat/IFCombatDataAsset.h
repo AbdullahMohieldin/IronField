@@ -123,14 +123,6 @@ struct FIFDirectionalHitReactConfig
 {
 	GENERATED_BODY()
 
-	FIFDirectionalHitReactConfig()
-		: HitReactFront(FSoftObjectPath(TEXT("/Game/IronField/Characters/Player/AM_Player_HitReact_Front.AM_Player_HitReact_Front")))
-		, HitReactBack(FSoftObjectPath(TEXT("/Game/IronField/Characters/Player/AM_Player_HitReact_Back.AM_Player_HitReact_Back")))
-		, HitReactLeft(FSoftObjectPath(TEXT("/Game/IronField/Characters/Player/AM_Player_HitReact_Left.AM_Player_HitReact_Left")))
-		, HitReactRight(FSoftObjectPath(TEXT("/Game/IronField/Characters/Player/AM_Player_HitReact_Right.AM_Player_HitReact_Right")))
-	{
-	}
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact")
 	TSoftObjectPtr<UAnimMontage> HitReactFront;
 

@@ -427,6 +427,49 @@ bool UIFPlayerCombatComponent::TryBufferedAdvance()
 	return false;
 }
 
+void UIFPlayerCombatComponent::GatherRequiredAssetPaths(TArray<FSoftObjectPath>& OutAssetPaths) const
+{
+	Super::GatherRequiredAssetPaths(OutAssetPaths);
+
+	if (!IsValid(LoadedCombatData))
+	{
+		return;
+	}
+
+	if (!LoadedCombatData->ShieldBlock.DeflectMontage.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.DeflectMontage.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->ShieldBlock.GuardBreakMontage.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.GuardBreakMontage.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->ShieldBlock.GuardAttack.Montage.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.Montage.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->ShieldBlock.GuardAttack.HitVFX.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitVFX.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->ShieldBlock.GuardAttack.HitSound.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitSound.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->SpinAttack.Montage.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->SpinAttack.Montage.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->SpinAttack.HitVFX.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->SpinAttack.HitVFX.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->SpinAttack.HitSound.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->SpinAttack.HitSound.ToSoftObjectPath());
+	}
+}
+
 const FIFMeleeAttackStep* UIFPlayerCombatComponent::GetCurrentStep() const
 {
 	if (bIsSpinAttacking && IsValid(LoadedCombatData))

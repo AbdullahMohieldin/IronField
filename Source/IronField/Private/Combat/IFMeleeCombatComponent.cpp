@@ -69,6 +69,47 @@ void UIFMeleeCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+void UIFMeleeCombatComponent::GatherRequiredAssetPaths(TArray<FSoftObjectPath>& OutAssetPaths) const
+{
+	if (!IsValid(LoadedCombatData))
+	{
+		return;
+	}
+
+	for (const FIFMeleeAttackStep& Step : LoadedCombatData->ComboSteps)
+	{
+		if (!Step.Montage.IsNull())
+		{
+			OutAssetPaths.Add(Step.Montage.ToSoftObjectPath());
+		}
+		if (!Step.HitVFX.IsNull())
+		{
+			OutAssetPaths.Add(Step.HitVFX.ToSoftObjectPath());
+		}
+		if (!Step.HitSound.IsNull())
+		{
+			OutAssetPaths.Add(Step.HitSound.ToSoftObjectPath());
+		}
+	}
+
+	if (!LoadedCombatData->DirectionalHitReacts.HitReactFront.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactFront.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->DirectionalHitReacts.HitReactBack.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactBack.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->DirectionalHitReacts.HitReactLeft.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactLeft.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->DirectionalHitReacts.HitReactRight.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactRight.ToSoftObjectPath());
+	}
+}
+
 void UIFMeleeCombatComponent::HandleCombatDataLoaded()
 {
 	LoadedCombatData = CombatData.Get();
@@ -83,70 +124,7 @@ void UIFMeleeCombatComponent::HandleCombatDataLoaded()
 	DirectionalHitReacts = LoadedCombatData->DirectionalHitReacts;
 
 	TArray<FSoftObjectPath> AssetPaths;
-	for (const FIFMeleeAttackStep& Step : LoadedCombatData->ComboSteps)
-	{
-		if (!Step.Montage.IsNull())
-		{
-			AssetPaths.Add(Step.Montage.ToSoftObjectPath());
-		}
-		if (!Step.HitVFX.IsNull())
-		{
-			AssetPaths.Add(Step.HitVFX.ToSoftObjectPath());
-		}
-		if (!Step.HitSound.IsNull())
-		{
-			AssetPaths.Add(Step.HitSound.ToSoftObjectPath());
-		}
-	}
-
-	if (!LoadedCombatData->ShieldBlock.DeflectMontage.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->ShieldBlock.DeflectMontage.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->ShieldBlock.GuardBreakMontage.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->ShieldBlock.GuardBreakMontage.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->ShieldBlock.GuardAttack.Montage.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.Montage.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->ShieldBlock.GuardAttack.HitVFX.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitVFX.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->ShieldBlock.GuardAttack.HitSound.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitSound.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->SpinAttack.Montage.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->SpinAttack.Montage.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->SpinAttack.HitVFX.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->SpinAttack.HitVFX.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->SpinAttack.HitSound.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->SpinAttack.HitSound.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->DirectionalHitReacts.HitReactFront.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactFront.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->DirectionalHitReacts.HitReactBack.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactBack.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->DirectionalHitReacts.HitReactLeft.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactLeft.ToSoftObjectPath());
-	}
-	if (!LoadedCombatData->DirectionalHitReacts.HitReactRight.IsNull())
-	{
-		AssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactRight.ToSoftObjectPath());
-	}
+	GatherRequiredAssetPaths(AssetPaths);
 
 	if (AssetPaths.IsEmpty())
 	{

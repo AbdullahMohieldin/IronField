@@ -97,7 +97,14 @@ float AIFBaseCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const
 		return 0.f;
 	}
 
-	const float ActualDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	if (!IsValid(HealthComponent) || HealthComponent->IsInvincible())
+	{
+		return 0.f;
+	}
+
+	const float PrevHealth = HealthComponent->GetCurrentHealth();
+	Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	const float ActualDamage = PrevHealth - HealthComponent->GetCurrentHealth();
 
 	if (ActualDamage > 0.f && IsAlive() && IsValid(CombatComponent))
 	{
