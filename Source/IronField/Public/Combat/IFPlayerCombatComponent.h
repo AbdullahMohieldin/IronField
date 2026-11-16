@@ -20,10 +20,13 @@ public:
 	void StopBlock();
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat")
-	bool RequestSpinAttack();
+	bool RequestLeapSlam();
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
-	float GetSpinAttackCooldownRemaining() const;
+	bool IsLeapSlamming() const { return bIsLeapSlamming; }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
+	float GetLeapSlamCooldownRemaining() const;
 
 	virtual bool TryBlockIncomingDamage(float DamageAmount, AActor* DamageCauser, AController* EventInstigator) override;
 	virtual void PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator) override;
@@ -57,9 +60,9 @@ private:
 	bool bAttackBuffered = false;
 	bool bComboWindowOpen = false;
 	bool bComboWindowNotifySeen = false;
-	bool bIsSpinAttacking = false;
+	bool bIsLeapSlamming = false;
 
-	float NextSpinAttackAllowedTime = 0.f;
+	float NextLeapSlamAllowedTime = 0.f;
 
 	UPROPERTY(Transient)
 	FIFMeleeAttackStep LeapSlamAttackStep;

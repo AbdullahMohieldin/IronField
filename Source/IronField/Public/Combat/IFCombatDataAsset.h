@@ -83,32 +83,32 @@ struct FIFShieldBlockConfig
 };
 
 USTRUCT(BlueprintType)
-struct FIFSpinAttackConfig
+struct FIFLeapSlamConfig
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam")
 	TSoftObjectPtr<UAnimMontage> Montage;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "0.0"))
 	float Damage = 45.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "0.0"))
 	float StaminaCost = 25.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "0.0"))
 	float CooldownSeconds = 4.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "0.0"))
 	float LeapSlamTraceRadius = 50.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam")
 	FName HitStartSocket = TEXT("FX_Sword_Bottom");
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam")
 	FName HitEndSocket = TEXT("FX_Sword_Top");
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "1", ClampMax = "16"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "1", ClampMax = "16"))
 	int32 TraceSampleCount = 4;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
@@ -153,7 +153,7 @@ public:
 	FIFShieldBlockConfig ShieldBlock;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Combat")
-	FIFSpinAttackConfig SpinAttack;
+	FIFLeapSlamConfig LeapSlam;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Combat")
 	FIFDirectionalHitReactConfig DirectionalHitReacts;

@@ -269,9 +269,9 @@ void AIFPlayerCharacter::BindInputActions()
 		EnhancedInput->BindAction(BlockAction, ETriggerEvent::Canceled, this, &AIFPlayerCharacter::StopBlock);
 	}
 
-	if (IsValid(SpinAction))
+	if (IsValid(LeapSlamAction))
 	{
-		EnhancedInput->BindAction(SpinAction, ETriggerEvent::Started, this, &AIFPlayerCharacter::RequestSpinAttack);
+		EnhancedInput->BindAction(LeapSlamAction, ETriggerEvent::Started, this, &AIFPlayerCharacter::RequestLeapSlam);
 	}
 }
 
@@ -279,6 +279,14 @@ void AIFPlayerCharacter::Move(const FInputActionValue& Value)
 {
 	if (!IsValid(Controller) || IsDead() || bIsGettingUp)
 	{
+		return;
+	}
+
+	// GuardBreak stun locks movement; LeapSlam intentionally remains steerable.
+	const UIFCombatComponent* const Combat = GetCombatComponent();
+	if (IsValid(Combat) && Combat->IsStunned())
+	{
+		CachedMovementInput = FVector2D::ZeroVector;
 		return;
 	}
 
@@ -361,11 +369,11 @@ void AIFPlayerCharacter::StopBlock()
 	}
 }
 
-void AIFPlayerCharacter::RequestSpinAttack()
+void AIFPlayerCharacter::RequestLeapSlam()
 {
 	if (UIFPlayerCombatComponent* const Combat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
 	{
-		Combat->RequestSpinAttack();
+		Combat->RequestLeapSlam();
 	}
 }
 

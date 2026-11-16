@@ -42,7 +42,7 @@ public:
 	void StopBlock();
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Combat")
-	void RequestSpinAttack();
+	void RequestLeapSlam();
 
 	UFUNCTION(Exec)
 	void DebugDamage(float Amount);
@@ -82,7 +82,7 @@ protected:
 	TObjectPtr<UInputAction> BlockAction;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
-	TObjectPtr<UInputAction> SpinAction;
+	TObjectPtr<UInputAction> LeapSlamAction;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Movement", meta = (ClampMin = "0.0"))
 	float WalkSpeed = 475.f;

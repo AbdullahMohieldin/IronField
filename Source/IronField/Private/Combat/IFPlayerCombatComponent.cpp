@@ -189,7 +189,7 @@ void UIFPlayerCombatComponent::TriggerGuardBreak()
 	ClearComboWindowState();
 	CloseHitWindow();
 	CurrentStepIndex = INDEX_NONE;
-	bIsSpinAttacking = false;
+	bIsLeapSlamming = false;
 	bIsExecutingGuardAttack = false;
 
 	SetCombatState(EIFCombatState::Stunned);
@@ -231,55 +231,55 @@ void UIFPlayerCombatComponent::HandleGuardBreakEnded()
 	}
 }
 
-bool UIFPlayerCombatComponent::RequestSpinAttack()
+bool UIFPlayerCombatComponent::RequestLeapSlam()
 {
 	AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
 	if (!IsValid(Player) || Player->IsDead() || Player->IsGettingUp() || IsStunned() || IsInHitReact())
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin ignored: owner invalid, dead, getting up, stunned, or in hit react."));
+		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: owner invalid, dead, getting up, stunned, or in hit react."));
 		return false;
 	}
 
 	const EIFCombatState CurrentState = GetCombatState();
 	if (CurrentState != EIFCombatState::Idle && CurrentState != EIFCombatState::Blocking)
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin ignored (state=%d)."), static_cast<int32>(CurrentState));
+		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored (state=%d)."), static_cast<int32>(CurrentState));
 		return false;
 	}
 
 	if (!IsValid(LoadedCombatData))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin ignored: combat data not loaded."));
+		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: combat data not loaded."));
 		return false;
 	}
 
-	const FIFSpinAttackConfig& SpinConfig = LoadedCombatData->SpinAttack;
+	const FIFLeapSlamConfig& LeapSlamConfig = LoadedCombatData->LeapSlam;
 	const UWorld* const World = GetWorld();
-	if (!IsValid(World) || World->GetTimeSeconds() < NextSpinAttackAllowedTime)
+	if (!IsValid(World) || World->GetTimeSeconds() < NextLeapSlamAllowedTime)
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin ignored: cooldown %.2fs remaining."), GetSpinAttackCooldownRemaining());
+		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: cooldown %.2fs remaining."), GetLeapSlamCooldownRemaining());
 		return false;
 	}
 
-	if (IsValid(Stamina) && !Stamina->HasStamina(SpinConfig.StaminaCost))
+	if (IsValid(Stamina) && !Stamina->HasStamina(LeapSlamConfig.StaminaCost))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin ignored: stamina below cost %.0f."), SpinConfig.StaminaCost);
+		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: stamina below cost %.0f."), LeapSlamConfig.StaminaCost);
 		return false;
 	}
 
-	UAnimMontage* const SpinMontage = SpinConfig.Montage.Get();
-	if (!IsValid(SpinMontage) || !IsValid(CachedAnimInstance))
+	UAnimMontage* const LeapSlamMontage = LeapSlamConfig.Montage.Get();
+	if (!IsValid(LeapSlamMontage) || !IsValid(CachedAnimInstance))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin ignored: montage or anim instance missing."));
+		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: montage or anim instance missing."));
 		return false;
 	}
 
 	const EIFCombatState StartingState = GetCombatState();
 	CloseHitWindow();
 
-	if (!PlayAttackMontage(SpinMontage))
+	if (!PlayAttackMontage(LeapSlamMontage))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin aborted: montage playback failed."));
+		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam aborted: montage playback failed."));
 		return false;
 	}
 
@@ -287,7 +287,7 @@ bool UIFPlayerCombatComponent::RequestSpinAttack()
 
 	if (IsValid(Stamina))
 	{
-		Stamina->TryConsumeStamina(SpinConfig.StaminaCost);
+		Stamina->TryConsumeStamina(LeapSlamConfig.StaminaCost);
 	}
 
 	if (CurrentMontageInstanceID != StartedInstanceID || GetCombatState() != StartingState)
@@ -295,7 +295,7 @@ bool UIFPlayerCombatComponent::RequestSpinAttack()
 		return false;
 	}
 
-	NextSpinAttackAllowedTime = World->GetTimeSeconds() + SpinConfig.CooldownSeconds;
+	NextLeapSlamAllowedTime = World->GetTimeSeconds() + LeapSlamConfig.CooldownSeconds;
 
 	if (const AController* const Controller = Player->GetController())
 	{
@@ -309,28 +309,28 @@ bool UIFPlayerCombatComponent::RequestSpinAttack()
 	CurrentStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
 
-	LeapSlamAttackStep.Montage = SpinConfig.Montage;
-	LeapSlamAttackStep.Damage = SpinConfig.Damage;
-	LeapSlamAttackStep.StaminaCost = SpinConfig.StaminaCost;
-	LeapSlamAttackStep.HitRadius = SpinConfig.LeapSlamTraceRadius;
-	LeapSlamAttackStep.HitStartSocket = SpinConfig.HitStartSocket;
-	LeapSlamAttackStep.HitEndSocket = SpinConfig.HitEndSocket;
-	LeapSlamAttackStep.TraceSampleCount = SpinConfig.TraceSampleCount;
-	LeapSlamAttackStep.HitVFX = SpinConfig.HitVFX;
-	LeapSlamAttackStep.HitSound = SpinConfig.HitSound;
+	LeapSlamAttackStep.Montage = LeapSlamConfig.Montage;
+	LeapSlamAttackStep.Damage = LeapSlamConfig.Damage;
+	LeapSlamAttackStep.StaminaCost = LeapSlamConfig.StaminaCost;
+	LeapSlamAttackStep.HitRadius = LeapSlamConfig.LeapSlamTraceRadius;
+	LeapSlamAttackStep.HitStartSocket = LeapSlamConfig.HitStartSocket;
+	LeapSlamAttackStep.HitEndSocket = LeapSlamConfig.HitEndSocket;
+	LeapSlamAttackStep.TraceSampleCount = LeapSlamConfig.TraceSampleCount;
+	LeapSlamAttackStep.HitVFX = LeapSlamConfig.HitVFX;
+	LeapSlamAttackStep.HitSound = LeapSlamConfig.HitSound;
 
-	bIsSpinAttacking = true;
+	bIsLeapSlamming = true;
 	SetCombatState(EIFCombatState::Attacking);
 	if (CurrentMontageInstanceID != StartedInstanceID || !IsAttacking())
 	{
 		return false;
 	}
 
-	UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin attack started."));
+	UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam attack started."));
 	return true;
 }
 
-float UIFPlayerCombatComponent::GetSpinAttackCooldownRemaining() const
+float UIFPlayerCombatComponent::GetLeapSlamCooldownRemaining() const
 {
 	const UWorld* const World = GetWorld();
 	if (!IsValid(World))
@@ -338,12 +338,12 @@ float UIFPlayerCombatComponent::GetSpinAttackCooldownRemaining() const
 		return 0.f;
 	}
 
-	return FMath::Max(0.f, NextSpinAttackAllowedTime - World->GetTimeSeconds());
+	return FMath::Max(0.f, NextLeapSlamAllowedTime - World->GetTimeSeconds());
 }
 
 void UIFPlayerCombatComponent::OpenComboWindow()
 {
-	if (!IsAttacking() || bIsSpinAttacking)
+	if (!IsAttacking() || bIsLeapSlamming)
 	{
 		return;
 	}
@@ -402,7 +402,7 @@ void UIFPlayerCombatComponent::HandleStepStarted()
 
 void UIFPlayerCombatComponent::HandleFallbackComboWindow()
 {
-	if (!IsAttacking() || bIsSpinAttacking || bComboWindowNotifySeen || bComboWindowOpen)
+	if (!IsAttacking() || bIsLeapSlamming || bComboWindowNotifySeen || bComboWindowOpen)
 	{
 		return;
 	}
@@ -413,7 +413,7 @@ void UIFPlayerCombatComponent::HandleFallbackComboWindow()
 
 bool UIFPlayerCombatComponent::TryBufferedAdvance()
 {
-	if (!bAttackBuffered || bIsSpinAttacking || CurrentStepIndex == INDEX_NONE)
+	if (!bAttackBuffered || bIsLeapSlamming || CurrentStepIndex == INDEX_NONE)
 	{
 		return false;
 	}
@@ -456,23 +456,23 @@ void UIFPlayerCombatComponent::GatherRequiredAssetPaths(TArray<FSoftObjectPath>&
 	{
 		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitSound.ToSoftObjectPath());
 	}
-	if (!LoadedCombatData->SpinAttack.Montage.IsNull())
+	if (!LoadedCombatData->LeapSlam.Montage.IsNull())
 	{
-		OutAssetPaths.Add(LoadedCombatData->SpinAttack.Montage.ToSoftObjectPath());
+		OutAssetPaths.Add(LoadedCombatData->LeapSlam.Montage.ToSoftObjectPath());
 	}
-	if (!LoadedCombatData->SpinAttack.HitVFX.IsNull())
+	if (!LoadedCombatData->LeapSlam.HitVFX.IsNull())
 	{
-		OutAssetPaths.Add(LoadedCombatData->SpinAttack.HitVFX.ToSoftObjectPath());
+		OutAssetPaths.Add(LoadedCombatData->LeapSlam.HitVFX.ToSoftObjectPath());
 	}
-	if (!LoadedCombatData->SpinAttack.HitSound.IsNull())
+	if (!LoadedCombatData->LeapSlam.HitSound.IsNull())
 	{
-		OutAssetPaths.Add(LoadedCombatData->SpinAttack.HitSound.ToSoftObjectPath());
+		OutAssetPaths.Add(LoadedCombatData->LeapSlam.HitSound.ToSoftObjectPath());
 	}
 }
 
 const FIFMeleeAttackStep* UIFPlayerCombatComponent::GetCurrentStep() const
 {
-	if (bIsSpinAttacking && IsValid(LoadedCombatData))
+	if (bIsLeapSlamming && IsValid(LoadedCombatData))
 	{
 		return &LeapSlamAttackStep;
 	}
@@ -482,9 +482,9 @@ const FIFMeleeAttackStep* UIFPlayerCombatComponent::GetCurrentStep() const
 
 void UIFPlayerCombatComponent::HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (bIsSpinAttacking)
+	if (bIsLeapSlamming)
 	{
-		bIsSpinAttacking = false;
+		bIsLeapSlamming = false;
 		FinishCombo();
 		TryResumeBlock();
 		return;
@@ -510,7 +510,7 @@ void UIFPlayerCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, ACo
 	const bool bCanHitReact = (CurrentState == EIFCombatState::Idle)
 		|| (CurrentState == EIFCombatState::Blocking)
 		|| (CurrentState == EIFCombatState::HitReact)
-		|| (CurrentState == EIFCombatState::Attacking && !bIsSpinAttacking);
+		|| (CurrentState == EIFCombatState::Attacking && !bIsLeapSlamming);
 
 	if (!bCanHitReact)
 	{
@@ -589,7 +589,7 @@ void UIFPlayerCombatComponent::HandleOwnerDeath()
 
 	bBlockInputHeld = false;
 	bAttackBuffered = false;
-	bIsSpinAttacking = false;
+	bIsLeapSlamming = false;
 	bIsExecutingGuardAttack = false;
 	ClearComboWindowState();
 	Super::HandleOwnerDeath();
@@ -604,7 +604,7 @@ void UIFPlayerCombatComponent::HandleOwnerRevived()
 
 	bBlockInputHeld = false;
 	bAttackBuffered = false;
-	bIsSpinAttacking = false;
+	bIsLeapSlamming = false;
 	bIsExecutingGuardAttack = false;
 	ClearComboWindowState();
 	Super::HandleOwnerRevived();
