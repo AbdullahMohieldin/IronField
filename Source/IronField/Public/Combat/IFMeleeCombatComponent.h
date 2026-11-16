@@ -50,7 +50,7 @@ protected:
 	bool PlayStep(int32 StepIndex);
 	bool PlayGuardAttack();
 	int32 GetNextStepIndex() const;
-	const FIFMeleeAttackStep* GetCurrentStep() const;
+	virtual const FIFMeleeAttackStep* GetCurrentStep() const;
 	UAnimMontage* GetCurrentMontage() const { return CurrentMontage; }
 
 	// Player subclass snaps aim and arms the combo window here; enemies need neither.

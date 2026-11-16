@@ -24,7 +24,7 @@ namespace
 		return Cast<UIFMeleeCombatComponent>(Character->GetCombatComponent());
 	}
 
-	int32 GetNotifyInstanceID(const FAnimNotifyEventReference& EventReference)
+	int32 GetAttackCollisionNotifyInstanceID(const FAnimNotifyEventReference& EventReference)
 	{
 		const UE::Anim::FAnimNotifyMontageInstanceContext* Context =
 			EventReference.GetContextData<UE::Anim::FAnimNotifyMontageInstanceContext>();
@@ -35,7 +35,7 @@ namespace
 void UIFAnimNotifyState_AttackCollision::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, float, const FAnimNotifyEventReference& EventReference)
 {
 	UIFMeleeCombatComponent* const Combat = ResolveMeleeCombat(MeshComp);
-	if (Combat && GetNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
+	if (Combat && GetAttackCollisionNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->OpenHitWindow();
 	}
@@ -44,7 +44,7 @@ void UIFAnimNotifyState_AttackCollision::NotifyBegin(USkeletalMeshComponent* Mes
 void UIFAnimNotifyState_AttackCollision::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
 	UIFMeleeCombatComponent* const Combat = ResolveMeleeCombat(MeshComp);
-	if (Combat && GetNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
+	if (Combat && GetAttackCollisionNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->UpdateHitWindow(FrameDeltaTime);
 	}
@@ -53,7 +53,7 @@ void UIFAnimNotifyState_AttackCollision::NotifyTick(USkeletalMeshComponent* Mesh
 void UIFAnimNotifyState_AttackCollision::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, const FAnimNotifyEventReference& EventReference)
 {
 	UIFMeleeCombatComponent* const Combat = ResolveMeleeCombat(MeshComp);
-	if (Combat && GetNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
+	if (Combat && GetAttackCollisionNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->CloseHitWindow();
 	}

@@ -123,6 +123,14 @@ void UIFMeleeCombatComponent::HandleCombatDataLoaded()
 	{
 		AssetPaths.Add(LoadedCombatData->SpinAttack.Montage.ToSoftObjectPath());
 	}
+	if (!LoadedCombatData->SpinAttack.HitVFX.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->SpinAttack.HitVFX.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->SpinAttack.HitSound.IsNull())
+	{
+		AssetPaths.Add(LoadedCombatData->SpinAttack.HitSound.ToSoftObjectPath());
+	}
 	if (!LoadedCombatData->DirectionalHitReacts.HitReactFront.IsNull())
 	{
 		AssetPaths.Add(LoadedCombatData->DirectionalHitReacts.HitReactFront.ToSoftObjectPath());

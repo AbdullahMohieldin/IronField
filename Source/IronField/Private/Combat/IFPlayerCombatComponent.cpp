@@ -10,7 +10,6 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/DamageType.h"
 #include "Kismet/GameplayStatics.h"
-#include "Kismet/KismetSystemLibrary.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Sound/SoundBase.h"
@@ -191,7 +190,6 @@ void UIFPlayerCombatComponent::TriggerGuardBreak()
 	CloseHitWindow();
 	CurrentStepIndex = INDEX_NONE;
 	bIsSpinAttacking = false;
-	bIsExecutingLeapSlam = false;
 	bIsExecutingGuardAttack = false;
 
 	SetCombatState(EIFCombatState::Stunned);
@@ -236,9 +234,9 @@ void UIFPlayerCombatComponent::HandleGuardBreakEnded()
 bool UIFPlayerCombatComponent::RequestSpinAttack()
 {
 	AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
-	if (!IsValid(Player) || Player->IsDead() || Player->IsGettingUp())
+	if (!IsValid(Player) || Player->IsDead() || Player->IsGettingUp() || IsStunned() || IsInHitReact())
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin ignored: owner invalid, dead, or getting up."));
+		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin ignored: owner invalid, dead, getting up, stunned, or in hit react."));
 		return false;
 	}
 
@@ -263,14 +261,9 @@ bool UIFPlayerCombatComponent::RequestSpinAttack()
 		return false;
 	}
 
-	if (IsValid(Stamina) && !Stamina->TryConsumeStamina(SpinConfig.StaminaCost))
+	if (IsValid(Stamina) && !Stamina->HasStamina(SpinConfig.StaminaCost))
 	{
 		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin ignored: stamina below cost %.0f."), SpinConfig.StaminaCost);
-		return false;
-	}
-
-	if (!IsValid(Player) || Player->IsDead() || Player->IsGettingUp() || GetCombatState() != CurrentState)
-	{
 		return false;
 	}
 
@@ -281,20 +274,8 @@ bool UIFPlayerCombatComponent::RequestSpinAttack()
 		return false;
 	}
 
-	bAttackBuffered = false;
-	ClearComboWindowState();
+	const EIFCombatState StartingState = GetCombatState();
 	CloseHitWindow();
-	CurrentStepIndex = INDEX_NONE;
-
-	if (const AController* const Controller = Player->GetController())
-	{
-		FRotator AimRotation = Player->GetActorRotation();
-		AimRotation.Yaw = Controller->GetControlRotation().Yaw;
-		Player->SetActorRotation(AimRotation);
-	}
-
-	NextSpinAttackAllowedTime = World->GetTimeSeconds() + SpinConfig.CooldownSeconds;
-	SpinHitActors.Reset();
 
 	if (!PlayAttackMontage(SpinMontage))
 	{
@@ -303,88 +284,50 @@ bool UIFPlayerCombatComponent::RequestSpinAttack()
 	}
 
 	const int32 StartedInstanceID = CurrentMontageInstanceID;
+
+	if (IsValid(Stamina))
+	{
+		Stamina->TryConsumeStamina(SpinConfig.StaminaCost);
+	}
+
+	if (CurrentMontageInstanceID != StartedInstanceID || GetCombatState() != StartingState)
+	{
+		return false;
+	}
+
+	NextSpinAttackAllowedTime = World->GetTimeSeconds() + SpinConfig.CooldownSeconds;
+
+	if (const AController* const Controller = Player->GetController())
+	{
+		FRotator AimRotation = Player->GetActorRotation();
+		AimRotation.Yaw = Controller->GetControlRotation().Yaw;
+		Player->SetActorRotation(AimRotation);
+	}
+
+	bAttackBuffered = false;
+	ClearComboWindowState();
+	CurrentStepIndex = INDEX_NONE;
+	bIsExecutingGuardAttack = false;
+
+	LeapSlamAttackStep.Montage = SpinConfig.Montage;
+	LeapSlamAttackStep.Damage = SpinConfig.Damage;
+	LeapSlamAttackStep.StaminaCost = SpinConfig.StaminaCost;
+	LeapSlamAttackStep.HitRadius = SpinConfig.LeapSlamTraceRadius;
+	LeapSlamAttackStep.HitStartSocket = SpinConfig.HitStartSocket;
+	LeapSlamAttackStep.HitEndSocket = SpinConfig.HitEndSocket;
+	LeapSlamAttackStep.TraceSampleCount = SpinConfig.TraceSampleCount;
+	LeapSlamAttackStep.HitVFX = SpinConfig.HitVFX;
+	LeapSlamAttackStep.HitSound = SpinConfig.HitSound;
+
 	bIsSpinAttacking = true;
-	bIsExecutingLeapSlam = true;
 	SetCombatState(EIFCombatState::Attacking);
 	if (CurrentMontageInstanceID != StartedInstanceID || !IsAttacking())
 	{
 		return false;
 	}
+
 	UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin attack started."));
 	return true;
-}
-
-void UIFPlayerCombatComponent::ExecuteSpinAttackHit()
-{
-	if (!IsValid(LoadedCombatData))
-	{
-		return;
-	}
-
-	const FIFSpinAttackConfig& SpinConfig = LoadedCombatData->SpinAttack;
-	AActor* const OwnerActor = GetOwner();
-	if (!IsValid(OwnerActor))
-	{
-		return;
-	}
-
-	TArray<AActor*> OverlappingActors;
-	TArray<AActor*> ActorsToIgnore;
-	ActorsToIgnore.Add(OwnerActor);
-	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
-	ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_Pawn));
-
-	UKismetSystemLibrary::SphereOverlapActors(
-		this,
-		OwnerActor->GetActorLocation(),
-		SpinConfig.Radius,
-		ObjectTypes,
-		AActor::StaticClass(),
-		ActorsToIgnore,
-		OverlappingActors
-	);
-
-	AController* InstigatorController = nullptr;
-	if (const APawn* const OwnerPawn = Cast<APawn>(OwnerActor))
-	{
-		InstigatorController = OwnerPawn->GetController();
-	}
-
-	UWorld* const World = GetWorld();
-
-	for (AActor* const Target : OverlappingActors)
-	{
-		if (!IsValid(Target) || Target == OwnerActor || SpinHitActors.Contains(Target))
-		{
-			continue;
-		}
-
-		if (!IFTeamUtils::AreHostile(OwnerActor, Target))
-		{
-			continue;
-		}
-
-		SpinHitActors.Add(Target);
-
-		const FVector TargetLocation = Target->GetActorLocation();
-		UGameplayStatics::ApplyDamage(
-			Target,
-			SpinConfig.Damage,
-			InstigatorController,
-			OwnerActor,
-			UDamageType::StaticClass()
-		);
-
-		if (IsValid(World) && IsValid(SpinConfig.HitVFX))
-		{
-			UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, SpinConfig.HitVFX, TargetLocation);
-		}
-
-		if (IsValid(SpinConfig.HitSound))
-		{
-			UGameplayStatics::PlaySoundAtLocation(this, SpinConfig.HitSound, TargetLocation);
-		}
-	}
 }
 
 float UIFPlayerCombatComponent::GetSpinAttackCooldownRemaining() const
@@ -484,12 +427,21 @@ bool UIFPlayerCombatComponent::TryBufferedAdvance()
 	return false;
 }
 
+const FIFMeleeAttackStep* UIFPlayerCombatComponent::GetCurrentStep() const
+{
+	if (bIsSpinAttacking && IsValid(LoadedCombatData))
+	{
+		return &LeapSlamAttackStep;
+	}
+
+	return Super::GetCurrentStep();
+}
+
 void UIFPlayerCombatComponent::HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
 {
 	if (bIsSpinAttacking)
 	{
 		bIsSpinAttacking = false;
-		bIsExecutingLeapSlam = false;
 		FinishCombo();
 		TryResumeBlock();
 		return;
@@ -515,7 +467,7 @@ void UIFPlayerCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, ACo
 	const bool bCanHitReact = (CurrentState == EIFCombatState::Idle)
 		|| (CurrentState == EIFCombatState::Blocking)
 		|| (CurrentState == EIFCombatState::HitReact)
-		|| (CurrentState == EIFCombatState::Attacking && !bIsExecutingLeapSlam);
+		|| (CurrentState == EIFCombatState::Attacking && !bIsSpinAttacking);
 
 	if (!bCanHitReact)
 	{
@@ -595,7 +547,6 @@ void UIFPlayerCombatComponent::HandleOwnerDeath()
 	bBlockInputHeld = false;
 	bAttackBuffered = false;
 	bIsSpinAttacking = false;
-	bIsExecutingLeapSlam = false;
 	bIsExecutingGuardAttack = false;
 	ClearComboWindowState();
 	Super::HandleOwnerDeath();
@@ -611,7 +562,6 @@ void UIFPlayerCombatComponent::HandleOwnerRevived()
 	bBlockInputHeld = false;
 	bAttackBuffered = false;
 	bIsSpinAttacking = false;
-	bIsExecutingLeapSlam = false;
 	bIsExecutingGuardAttack = false;
 	ClearComboWindowState();
 	Super::HandleOwnerRevived();

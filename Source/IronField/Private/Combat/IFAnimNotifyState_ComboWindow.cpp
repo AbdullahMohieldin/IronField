@@ -24,7 +24,7 @@ namespace
 		return Cast<UIFPlayerCombatComponent>(Character->GetCombatComponent());
 	}
 
-	int32 GetNotifyInstanceID(const FAnimNotifyEventReference& EventReference)
+	int32 GetComboWindowNotifyInstanceID(const FAnimNotifyEventReference& EventReference)
 	{
 		const UE::Anim::FAnimNotifyMontageInstanceContext* Context =
 			EventReference.GetContextData<UE::Anim::FAnimNotifyMontageInstanceContext>();
@@ -35,7 +35,7 @@ namespace
 void UIFAnimNotifyState_ComboWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, float, const FAnimNotifyEventReference& EventReference)
 {
 	UIFPlayerCombatComponent* const Combat = ResolvePlayerCombat(MeshComp);
-	if (Combat && GetNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
+	if (Combat && GetComboWindowNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->OpenComboWindow();
 	}
@@ -44,7 +44,7 @@ void UIFAnimNotifyState_ComboWindow::NotifyBegin(USkeletalMeshComponent* MeshCom
 void UIFAnimNotifyState_ComboWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, const FAnimNotifyEventReference& EventReference)
 {
 	UIFPlayerCombatComponent* const Combat = ResolvePlayerCombat(MeshComp);
-	if (Combat && GetNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
+	if (Combat && GetComboWindowNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->CloseComboWindow();
 	}

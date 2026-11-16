@@ -22,9 +22,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat")
 	bool RequestSpinAttack();
 
-	UFUNCTION(BlueprintCallable, Category = "IronField|Combat")
-	void ExecuteSpinAttackHit();
-
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
 	float GetSpinAttackCooldownRemaining() const;
 
@@ -39,6 +36,7 @@ public:
 
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	virtual const FIFMeleeAttackStep* GetCurrentStep() const override;
 	virtual void HandleStepStarted() override;
 	virtual bool TryBufferedAdvance() override;
 	virtual void HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted) override;
@@ -59,11 +57,11 @@ private:
 	bool bComboWindowOpen = false;
 	bool bComboWindowNotifySeen = false;
 	bool bIsSpinAttacking = false;
-	bool bIsExecutingLeapSlam = false;
 
 	float NextSpinAttackAllowedTime = 0.f;
 
-	TSet<TWeakObjectPtr<AActor>> SpinHitActors;
+	UPROPERTY(Transient)
+	FIFMeleeAttackStep LeapSlamAttackStep;
 
 	FTimerHandle FallbackComboWindowHandle;
 	FTimerHandle GuardBreakTimerHandle;

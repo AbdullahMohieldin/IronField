@@ -100,13 +100,22 @@ struct FIFSpinAttackConfig
 	float CooldownSeconds = 4.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "0.0"))
-	float Radius = 260.f;
+	float LeapSlamTraceRadius = 50.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin")
-	TObjectPtr<UNiagaraSystem> HitVFX = nullptr;
+	FName HitStartSocket = TEXT("FX_Sword_Bottom");
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin")
-	TObjectPtr<USoundBase> HitSound = nullptr;
+	FName HitEndSocket = TEXT("FX_Sword_Top");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Spin", meta = (ClampMin = "1", ClampMax = "16"))
+	int32 TraceSampleCount = 4;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
+	TSoftObjectPtr<UNiagaraSystem> HitVFX;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
+	TSoftObjectPtr<USoundBase> HitSound;
 };
 
 USTRUCT(BlueprintType)
