@@ -35,11 +35,6 @@ void UIFMeleeCombatComponent::BeginPlay()
 		Stamina = GetOwner()->FindComponentByClass<UIFStaminaComponent>();
 	}
 
-	if (IsValid(CachedAnimInstance))
-	{
-		CachedAnimInstance->OnMontageBlendingOut.AddUniqueDynamic(this, &UIFMeleeCombatComponent::HandleMontageBlendingOut);
-	}
-
 	if (!CombatData.IsNull())
 	{
 		DataLoadHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(
@@ -51,10 +46,7 @@ void UIFMeleeCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	bCombatReady = false;
 
-	if (IsValid(CachedAnimInstance))
-	{
-		CachedAnimInstance->OnMontageBlendingOut.RemoveDynamic(this, &UIFMeleeCombatComponent::HandleMontageBlendingOut);
-	}
+	InvalidateMontageExecution();
 
 	if (DataLoadHandle.IsValid())
 	{
@@ -243,6 +235,58 @@ const FIFMeleeAttackStep* UIFMeleeCombatComponent::GetCurrentStep() const
 	return &LoadedCombatData->ComboSteps[CurrentStepIndex];
 }
 
+bool UIFMeleeCombatComponent::PlayAttackMontage(UAnimMontage* Montage)
+{
+	if (!bCombatReady || !IsValid(CachedAnimInstance) || !IsValid(Montage)
+		|| !OwnerCharacter.IsValid() || OwnerCharacter->IsDead()
+		|| (!IsIdle() && !IsAttacking() && !IsBlocking()))
+	{
+		return false;
+	}
+
+	UAnimMontage* const OutgoingMontage = CurrentMontage;
+	const int32 OutgoingInstanceID = CurrentMontageInstanceID;
+	const EIFCombatState StartingState = GetCombatState();
+	InvalidateMontageExecution();
+
+	const float PlayLength = CachedAnimInstance->Montage_Play(Montage, 1.f);
+	FAnimMontageInstance* const Instance = PlayLength > 0.f && IsValid(CachedAnimInstance)
+		? CachedAnimInstance->GetActiveInstanceForMontage(Montage) : nullptr;
+
+	if (!bCombatReady || !OwnerCharacter.IsValid() || OwnerCharacter->IsDead()
+		|| GetCombatState() != StartingState || CurrentMontageInstanceID != INDEX_NONE)
+	{
+		return false;
+	}
+
+	if (!Instance)
+	{
+		FAnimMontageInstance* const OutgoingInstance = IsValid(CachedAnimInstance) && IsValid(OutgoingMontage)
+			? CachedAnimInstance->GetActiveInstanceForMontage(OutgoingMontage) : nullptr;
+		if (OutgoingInstance && OutgoingInstance->GetInstanceID() == OutgoingInstanceID)
+		{
+			CachedAnimInstance->Montage_Stop(0.1f, OutgoingMontage);
+		}
+		if (IsAttacking() && CurrentMontageInstanceID == INDEX_NONE)
+		{
+			FinishCombo();
+		}
+		return false;
+	}
+
+	CurrentMontage = Montage;
+	CurrentMontageInstanceID = Instance->GetInstanceID();
+	Instance->OnMontageBlendingOutStarted.BindUObject(
+		this, &UIFMeleeCombatComponent::HandleOwnedMontageBlendingOut, CurrentMontageInstanceID);
+	return true;
+}
+
+void UIFMeleeCombatComponent::InvalidateMontageExecution()
+{
+	CurrentMontageInstanceID = INDEX_NONE;
+	CurrentMontage = nullptr;
+}
+
 bool UIFMeleeCombatComponent::PlayStep(int32 StepIndex)
 {
 	if (!bCombatReady || !IsValid(LoadedCombatData) || !LoadedCombatData->ComboSteps.IsValidIndex(StepIndex))
@@ -262,32 +306,36 @@ bool UIFMeleeCombatComponent::PlayStep(int32 StepIndex)
 		return false;
 	}
 
+	const EIFCombatState StartingState = GetCombatState();
 	CloseHitWindow();
 	if (UWorld* const World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ComboResetTimerHandle);
 	}
 
-	// Point at the incoming montage before playing so the outgoing step's BlendingOut
-	// (fired by the intentional interruption) fails the identity guard below.
-	UAnimMontage* const PreviousMontage = CurrentMontage;
-	CurrentMontage = Montage;
-
-	const float PlayLength = CachedAnimInstance->Montage_Play(Montage, 1.f);
-	if (PlayLength <= 0.f)
+	if (!PlayAttackMontage(Montage))
 	{
-		CurrentMontage = PreviousMontage;
 		return false;
 	}
+	const int32 StartedInstanceID = CurrentMontageInstanceID;
 
 	if (IsValid(Stamina))
 	{
 		Stamina->TryConsumeStamina(Step.StaminaCost);
 	}
 
+	if (CurrentMontageInstanceID != StartedInstanceID || GetCombatState() != StartingState)
+	{
+		return false;
+	}
+
 	bIsExecutingGuardAttack = false;
 	CurrentStepIndex = StepIndex;
 	SetCombatState(EIFCombatState::Attacking);
+	if (CurrentMontageInstanceID != StartedInstanceID || !IsAttacking())
+	{
+		return false;
+	}
 	HandleStepStarted();
 	return true;
 }
@@ -311,45 +359,54 @@ bool UIFMeleeCombatComponent::PlayGuardAttack()
 		return false;
 	}
 
+	const EIFCombatState StartingState = GetCombatState();
 	CloseHitWindow();
 	if (UWorld* const World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ComboResetTimerHandle);
 	}
 
-	UAnimMontage* const PreviousMontage = CurrentMontage;
-	CurrentMontage = Montage;
-
-	const float PlayLength = CachedAnimInstance->Montage_Play(Montage, 1.f);
-	if (PlayLength <= 0.f)
+	if (!PlayAttackMontage(Montage))
 	{
-		CurrentMontage = PreviousMontage;
 		return false;
 	}
+	const int32 StartedInstanceID = CurrentMontageInstanceID;
 
 	if (IsValid(Stamina))
 	{
 		Stamina->TryConsumeStamina(GuardStep.StaminaCost);
 	}
 
+	if (CurrentMontageInstanceID != StartedInstanceID || GetCombatState() != StartingState)
+	{
+		return false;
+	}
+
 	bIsExecutingGuardAttack = true;
 	CurrentStepIndex = INDEX_NONE;
 	SetCombatState(EIFCombatState::Attacking);
+	if (CurrentMontageInstanceID != StartedInstanceID || !IsAttacking())
+	{
+		return false;
+	}
 	HandleStepStarted();
 	return true;
 }
 
-void UIFMeleeCombatComponent::HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
+void UIFMeleeCombatComponent::HandleOwnedMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, int32 InstanceID)
 {
-	if (!IsValid(Montage) || Montage != CurrentMontage)
-	{
-		return;
-	}
-	if (GetCombatState() == EIFCombatState::Dead)
+	// Queued callbacks retain the ID of the execution that produced them.
+	if (InstanceID == INDEX_NONE || InstanceID != CurrentMontageInstanceID
+		|| Montage != CurrentMontage || !IsAttacking())
 	{
 		return;
 	}
 
+	HandleMontageBlendingOut(Montage, bInterrupted);
+}
+
+void UIFMeleeCombatComponent::HandleMontageBlendingOut(UAnimMontage*, bool bInterrupted)
+{
 	if (bIsExecutingGuardAttack)
 	{
 		bIsExecutingGuardAttack = false;
@@ -357,17 +414,21 @@ void UIFMeleeCombatComponent::HandleMontageBlendingOut(UAnimMontage* Montage, bo
 		return;
 	}
 
+	const int32 FinishingInstanceID = CurrentMontageInstanceID;
 	if (!bInterrupted && TryBufferedAdvance())
 	{
 		return;
 	}
 
-	FinishCombo();
+	if (CurrentMontageInstanceID == FinishingInstanceID)
+	{
+		FinishCombo();
+	}
 }
 
 void UIFMeleeCombatComponent::FinishCombo()
 {
-	CurrentMontage = nullptr;
+	InvalidateMontageExecution();
 	CurrentStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
 	CloseHitWindow();
@@ -401,9 +462,7 @@ void UIFMeleeCombatComponent::HandleComboReset()
 
 void UIFMeleeCombatComponent::HandleOwnerDeath()
 {
-	// The base character stops montages right after this call; invalidating first keeps
-	// that BlendingOut from touching combat state.
-	CurrentMontage = nullptr;
+	InvalidateMontageExecution();
 	CurrentStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
 	CloseHitWindow();
@@ -418,6 +477,7 @@ void UIFMeleeCombatComponent::HandleOwnerDeath()
 
 void UIFMeleeCombatComponent::HandleOwnerRevived()
 {
+	InvalidateMontageExecution();
 	CurrentStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
 	Super::HandleOwnerRevived();
@@ -596,12 +656,11 @@ void UIFMeleeCombatComponent::ProcessHit(AActor* Target, const FVector& HitLocat
 
 void UIFMeleeCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator)
 {
-	if (IsAttacking())
+	const bool bWasAttacking = IsAttacking();
+	if (bWasAttacking)
 	{
-		if (IsValid(CachedAnimInstance) && IsValid(CurrentMontage))
-		{
-			CachedAnimInstance->Montage_Stop(0.1f, CurrentMontage);
-		}
+		UAnimMontage* const OutgoingMontage = CurrentMontage;
+		InvalidateMontageExecution();
 		CloseHitWindow();
 		CurrentStepIndex = INDEX_NONE;
 		bIsExecutingGuardAttack = false;
@@ -609,7 +668,15 @@ void UIFMeleeCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, ACon
 		{
 			World->GetTimerManager().ClearTimer(ComboResetTimerHandle);
 		}
+		if (IsValid(CachedAnimInstance) && IsValid(OutgoingMontage))
+		{
+			CachedAnimInstance->Montage_Stop(0.1f, OutgoingMontage);
+		}
 	}
 
 	Super::PlayDirectionalHitReact(DamageCauser, EventInstigator);
+	if (bWasAttacking && IsAttacking() && CurrentMontageInstanceID == INDEX_NONE)
+	{
+		FinishCombo();
+	}
 }

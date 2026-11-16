@@ -43,6 +43,8 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "IronField|Combat")
 	bool bDrawDebugHitWindow = false;
 
+	bool PlayAttackMontage(UAnimMontage* Montage);
+	void InvalidateMontageExecution();
 	bool PlayStep(int32 StepIndex);
 	bool PlayGuardAttack();
 	int32 GetNextStepIndex() const;
@@ -55,7 +57,6 @@ protected:
 	// Last-chance buffer consumption at natural montage end; base has no buffer.
 	virtual bool TryBufferedAdvance() { return false; }
 
-	UFUNCTION()
 	virtual void HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
 
 	void FinishCombo();
@@ -69,10 +70,12 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UIFStaminaComponent> Stamina;
 
+	int32 CurrentMontageInstanceID = INDEX_NONE;
 	int32 CurrentStepIndex = INDEX_NONE;
 	bool bIsExecutingGuardAttack = false;
 
 private:
+	void HandleOwnedMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, int32 InstanceID);
 	void HandleCombatDataLoaded();
 	void HandleStepAssetsLoaded();
 	bool AreRequiredAssetsLoaded() const;

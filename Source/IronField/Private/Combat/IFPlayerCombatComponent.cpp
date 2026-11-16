@@ -184,6 +184,7 @@ bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor
 
 void UIFPlayerCombatComponent::TriggerGuardBreak()
 {
+	InvalidateMontageExecution();
 	bBlockInputHeld = false;
 	bAttackBuffered = false;
 	ClearComboWindowState();
@@ -199,7 +200,7 @@ void UIFPlayerCombatComponent::TriggerGuardBreak()
 	float Duration = 0.f;
 	if (IsValid(GuardBreakMontage) && IsValid(CachedAnimInstance))
 	{
-		Duration = CachedAnimInstance->Montage_Play(GuardBreakMontage, 1.f);
+		Duration = CachedAnimInstance->Montage_Play(GuardBreakMontage, 1.f, EMontagePlayReturnType::Duration);
 	}
 
 	if (Duration <= 0.f)
@@ -268,6 +269,11 @@ bool UIFPlayerCombatComponent::RequestSpinAttack()
 		return false;
 	}
 
+	if (!IsValid(Player) || Player->IsDead() || Player->IsGettingUp() || GetCombatState() != CurrentState)
+	{
+		return false;
+	}
+
 	UAnimMontage* const SpinMontage = SpinConfig.Montage.Get();
 	if (!IsValid(SpinMontage) || !IsValid(CachedAnimInstance))
 	{
@@ -290,19 +296,20 @@ bool UIFPlayerCombatComponent::RequestSpinAttack()
 	NextSpinAttackAllowedTime = World->GetTimeSeconds() + SpinConfig.CooldownSeconds;
 	SpinHitActors.Reset();
 
-	CurrentMontage = SpinMontage;
-	const float PlayLength = CachedAnimInstance->Montage_Play(SpinMontage, 1.f);
-	if (PlayLength <= 0.f)
+	if (!PlayAttackMontage(SpinMontage))
 	{
-		CurrentMontage = nullptr;
-		SetCombatState(EIFCombatState::Idle);
 		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin aborted: montage playback failed."));
 		return false;
 	}
 
+	const int32 StartedInstanceID = CurrentMontageInstanceID;
 	bIsSpinAttacking = true;
 	bIsExecutingLeapSlam = true;
 	SetCombatState(EIFCombatState::Attacking);
+	if (CurrentMontageInstanceID != StartedInstanceID || !IsAttacking())
+	{
+		return false;
+	}
 	UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Spin attack started."));
 	return true;
 }
@@ -479,18 +486,7 @@ bool UIFPlayerCombatComponent::TryBufferedAdvance()
 
 void UIFPlayerCombatComponent::HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (GetCombatState() == EIFCombatState::Stunned)
-	{
-		HandleGuardBreakEnded();
-		return;
-	}
-
-	if (IsValid(LoadedCombatData) && Montage == LoadedCombatData->ShieldBlock.DeflectMontage.Get())
-	{
-		return;
-	}
-
-	if (bIsSpinAttacking && Montage == (LoadedCombatData ? LoadedCombatData->SpinAttack.Montage.Get() : nullptr))
+	if (bIsSpinAttacking)
 	{
 		bIsSpinAttacking = false;
 		bIsExecutingLeapSlam = false;
@@ -528,18 +524,15 @@ void UIFPlayerCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, ACo
 
 	if (CurrentState == EIFCombatState::Attacking)
 	{
-		if (IsValid(CachedAnimInstance) && IsValid(CurrentMontage))
-		{
-			CachedAnimInstance->Montage_Stop(0.1f, CurrentMontage);
-		}
-		CloseHitWindow();
 		bAttackBuffered = false;
-		CurrentStepIndex = INDEX_NONE;
-		bIsExecutingGuardAttack = false;
 		ClearComboWindowState();
 	}
 
 	Super::PlayDirectionalHitReact(DamageCauser, EventInstigator);
+	if (IsIdle())
+	{
+		TryResumeBlock();
+	}
 }
 
 void UIFPlayerCombatComponent::OnHitReactFinished()
