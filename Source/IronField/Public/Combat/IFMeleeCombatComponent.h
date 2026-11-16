@@ -75,12 +75,15 @@ protected:
 private:
 	void HandleCombatDataLoaded();
 	void HandleStepAssetsLoaded();
+	bool AreRequiredAssetsLoaded() const;
 	void StartComboResetTimer();
 	void HandleComboReset();
 	void BuildSamplePoints(TArray<FVector>& OutPoints) const;
 	void ProcessHit(AActor* Target, const FVector& HitLocation);
 
 	TSharedPtr<FStreamableHandle> DataLoadHandle;
+
+	// Owns residency for soft-referenced combat assets until EndPlay.
 	TSharedPtr<FStreamableHandle> StepAssetsLoadHandle;
 
 	bool bCombatReady = false;

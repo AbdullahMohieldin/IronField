@@ -49,6 +49,8 @@ void UIFMeleeCombatComponent::BeginPlay()
 
 void UIFMeleeCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	bCombatReady = false;
+
 	if (IsValid(CachedAnimInstance))
 	{
 		CachedAnimInstance->OnMontageBlendingOut.RemoveDynamic(this, &UIFMeleeCombatComponent::HandleMontageBlendingOut);
@@ -77,9 +79,9 @@ void UIFMeleeCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void UIFMeleeCombatComponent::HandleCombatDataLoaded()
 {
+	LoadedCombatData = CombatData.Get();
 	DataLoadHandle.Reset();
 
-	LoadedCombatData = CombatData.Get();
 	if (!IsValid(LoadedCombatData))
 	{
 		UE_LOG(LogIronField, Warning, TEXT("[IF-Combat] %s: combat data failed to load."), *GetNameSafe(GetOwner()));
@@ -148,7 +150,7 @@ void UIFMeleeCombatComponent::HandleCombatDataLoaded()
 
 	if (AssetPaths.IsEmpty())
 	{
-		bCombatReady = true;
+		HandleStepAssetsLoaded();
 		return;
 	}
 
@@ -158,8 +160,42 @@ void UIFMeleeCombatComponent::HandleCombatDataLoaded()
 
 void UIFMeleeCombatComponent::HandleStepAssetsLoaded()
 {
-	StepAssetsLoadHandle.Reset();
-	bCombatReady = true;
+	bCombatReady = AreRequiredAssetsLoaded();
+	if (!bCombatReady)
+	{
+		UE_LOG(LogIronField, Warning, TEXT("[IF-Combat] %s: combat unavailable; combo is empty or a required montage is missing."), *GetNameSafe(GetOwner()));
+	}
+
+	if (StepAssetsLoadHandle.IsValid())
+	{
+		TArray<FSoftObjectPath> RequestedAssets;
+		StepAssetsLoadHandle->GetRequestedAssets(RequestedAssets);
+		for (const FSoftObjectPath& AssetPath : RequestedAssets)
+		{
+			if (!IsValid(AssetPath.ResolveObject()))
+			{
+				UE_LOG(LogIronField, Warning, TEXT("[IF-Combat] %s: combat asset failed to load: %s."), *GetNameSafe(GetOwner()), *AssetPath.ToString());
+			}
+		}
+	}
+}
+
+bool UIFMeleeCombatComponent::AreRequiredAssetsLoaded() const
+{
+	if (!IsValid(LoadedCombatData) || LoadedCombatData->ComboSteps.IsEmpty())
+	{
+		return false;
+	}
+
+	for (const FIFMeleeAttackStep& Step : LoadedCombatData->ComboSteps)
+	{
+		if (!IsValid(Step.Montage.Get()))
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 bool UIFMeleeCombatComponent::TryStartAttack()
