@@ -1,5 +1,7 @@
 #include "Combat/IFAnimNotifyState_ComboWindow.h"
 
+#include "Animation/ActiveMontageInstanceScope.h"
+#include "Animation/AnimNotifyQueue.h"
 #include "Character/IFBaseCharacter.h"
 #include "Combat/IFPlayerCombatComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -21,19 +23,28 @@ namespace
 
 		return Cast<UIFPlayerCombatComponent>(Character->GetCombatComponent());
 	}
+
+	int32 GetNotifyInstanceID(const FAnimNotifyEventReference& EventReference)
+	{
+		const UE::Anim::FAnimNotifyMontageInstanceContext* Context =
+			EventReference.GetContextData<UE::Anim::FAnimNotifyMontageInstanceContext>();
+		return Context ? Context->MontageInstanceID : INDEX_NONE;
+	}
 }
 
-void UIFAnimNotifyState_ComboWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, float, const FAnimNotifyEventReference&)
+void UIFAnimNotifyState_ComboWindow::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, float, const FAnimNotifyEventReference& EventReference)
 {
-	if (UIFPlayerCombatComponent* const Combat = ResolvePlayerCombat(MeshComp))
+	UIFPlayerCombatComponent* const Combat = ResolvePlayerCombat(MeshComp);
+	if (Combat && GetNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->OpenComboWindow();
 	}
 }
 
-void UIFAnimNotifyState_ComboWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, const FAnimNotifyEventReference&)
+void UIFAnimNotifyState_ComboWindow::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, const FAnimNotifyEventReference& EventReference)
 {
-	if (UIFPlayerCombatComponent* const Combat = ResolvePlayerCombat(MeshComp))
+	UIFPlayerCombatComponent* const Combat = ResolvePlayerCombat(MeshComp);
+	if (Combat && GetNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->CloseComboWindow();
 	}

@@ -24,6 +24,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
 	bool IsCombatReady() const { return bCombatReady; }
 
+	int32 GetCurrentMontageInstanceID() const { return CurrentMontageInstanceID; }
+
 	void OpenHitWindow();
 	void UpdateHitWindow(float DeltaTime);
 	void CloseHitWindow();
