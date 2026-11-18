@@ -11,11 +11,4 @@ enum class EIFGameResult : uint8
 	Defeat
 };
 
-UENUM(BlueprintType)
-enum class EIFRunMode : uint8
-{
-	Normal,
-	Unlimited
-};
-
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGameResultChanged, EIFGameResult, NewResult);

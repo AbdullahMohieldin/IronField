@@ -73,7 +73,6 @@ void AIFPlayerCharacter::BeginPlay()
 
 void AIFPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	ClearReviveTimers();
 	StopSprint();
 
 	if (IsValid(StaminaComponent))
@@ -277,7 +276,7 @@ void AIFPlayerCharacter::BindInputActions()
 
 void AIFPlayerCharacter::Move(const FInputActionValue& Value)
 {
-	if (!IsValid(Controller) || IsDead() || bIsGettingUp)
+	if (!IsValid(Controller) || IsDead())
 	{
 		return;
 	}
@@ -319,7 +318,7 @@ void AIFPlayerCharacter::Look(const FInputActionValue& Value)
 
 void AIFPlayerCharacter::Jump()
 {
-	if (IsDead() || bIsGettingUp)
+	if (IsDead())
 	{
 		return;
 	}
@@ -387,7 +386,7 @@ void AIFPlayerCharacter::HandleCombatStateChanged(EIFCombatState, EIFCombatState
 	UpdateMovementSpeed();
 	UpdateSprintState();
 
-	if (!IsDead() && !bIsGettingUp)
+	if (!IsDead())
 	{
 		UpdateRotationMode();
 	}
@@ -398,7 +397,7 @@ void AIFPlayerCharacter::UpdateSprintState()
 	bool bShouldSprint = false;
 
 	const UIFCombatComponent* const Combat = GetCombatComponent();
-	if (bSprintRequested && !IsDead() && !bIsGettingUp && HasSprintInput()
+	if (bSprintRequested && !IsDead() && HasSprintInput()
 		&& IsValid(Combat) && Combat->IsIdle() && IsValid(StaminaComponent))
 	{
 		bShouldSprint = bIsSprinting
@@ -494,73 +493,27 @@ void AIFPlayerCharacter::OnDeathStarted()
 	UpdateSprintState();
 
 	bUseControllerRotationYaw = false;
-	StartReviveTimer();
 }
 
-void AIFPlayerCharacter::ClearReviveTimers()
+void AIFPlayerCharacter::RespawnAtCastle(const FVector& SpawnLocation, const FRotator& SpawnRotation)
 {
-	if (UWorld* const World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(ReviveTimerHandle);
-		World->GetTimerManager().ClearTimer(GetUpFallbackTimerHandle);
-	}
-}
+	SetActorLocationAndRotation(SpawnLocation, SpawnRotation, false, nullptr, ETeleportType::TeleportPhysics);
 
-void AIFPlayerCharacter::StartReviveTimer()
-{
-	if (UWorld* const World = GetWorld())
-	{
-		World->GetTimerManager().SetTimer(ReviveTimerHandle, this, &AIFPlayerCharacter::AttemptRevive, ReviveDelaySeconds, false);
-	}
-}
+	RestoreAliveState();
 
-void AIFPlayerCharacter::AttemptRevive()
-{
-	UIFHealthComponent* const Health = GetHealthComponent();
-	UIFCombatComponent* const Combat = GetCombatComponent();
-	if (!IsValid(Health) || !IsValid(Combat))
+	if (UIFHealthComponent* const Health = GetHealthComponent())
 	{
-		return;
+		Health->Revive();
 	}
 
-	Health->Revive();
-	Health->SetInvincible(true);
 	if (IsValid(StaminaComponent))
 	{
 		StaminaComponent->ResetStamina();
 	}
-	Combat->HandleOwnerRevived();
-	RestoreAliveState();
 
-	bIsGettingUp = true;
-
-	// The AnimBP calls NotifyGetUpFinished; this timer prevents a permanent lockout if that call is missing.
-	if (UWorld* const World = GetWorld())
+	if (UIFCombatComponent* const Combat = GetCombatComponent())
 	{
-		World->GetTimerManager().SetTimer(GetUpFallbackTimerHandle, this, &AIFPlayerCharacter::NotifyGetUpFinished, GetUpDuration, false);
-	}
-}
-
-void AIFPlayerCharacter::NotifyGetUpFinished()
-{
-	if (UWorld* const World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(GetUpFallbackTimerHandle);
-	}
-
-	if (bIsGettingUp)
-	{
-		CompleteRevive();
-	}
-}
-
-void AIFPlayerCharacter::CompleteRevive()
-{
-	bIsGettingUp = false;
-
-	if (UIFHealthComponent* const Health = GetHealthComponent())
-	{
-		Health->SetInvincible(false);
+		Combat->HandleOwnerRevived();
 	}
 
 	UpdateRotationMode();

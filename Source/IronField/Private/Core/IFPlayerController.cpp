@@ -250,13 +250,7 @@ void AIFPlayerController::RestartMatch()
 
 void AIFPlayerController::ReturnToMainMenu()
 {
-	bIsGameOver = false;
-	UGameplayStatics::SetGamePaused(this, false);
-	UIFGameInstance* const GameInstance = Cast<UIFGameInstance>(GetGameInstance());
-	if (IsValid(GameInstance))
-	{
-		UGameplayStatics::OpenLevel(this, GameInstance->MainMenuLevelName);
-	}
+	RestartMatch();
 }
 
 void AIFPlayerController::ApplyGameplayInputMode()

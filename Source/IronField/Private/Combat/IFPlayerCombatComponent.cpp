@@ -19,7 +19,7 @@
 void UIFPlayerCombatComponent::RequestAttack()
 {
 	const AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
-	if (!IsValid(Player) || Player->IsDead() || Player->IsGettingUp() || IsStunned() || IsInHitReact())
+	if (!IsValid(Player) || Player->IsDead() || IsStunned() || IsInHitReact())
 	{
 		return;
 	}
@@ -70,7 +70,7 @@ void UIFPlayerCombatComponent::StartBlock()
 	bBlockInputHeld = true;
 
 	const AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
-	if (!IsValid(Player) || Player->IsDead() || Player->IsGettingUp() || !IsIdle())
+	if (!IsValid(Player) || Player->IsDead() || !IsIdle())
 	{
 		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] StartBlock ignored (state=%d)."), static_cast<int32>(GetCombatState()));
 		return;
@@ -234,9 +234,9 @@ void UIFPlayerCombatComponent::HandleGuardBreakEnded()
 bool UIFPlayerCombatComponent::RequestLeapSlam()
 {
 	AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
-	if (!IsValid(Player) || Player->IsDead() || Player->IsGettingUp() || IsStunned() || IsInHitReact())
+	if (!IsValid(Player) || Player->IsDead() || IsStunned() || IsInHitReact())
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: owner invalid, dead, getting up, stunned, or in hit react."));
+		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: owner invalid, dead, stunned, or in hit react."));
 		return false;
 	}
 
@@ -542,7 +542,7 @@ void UIFPlayerCombatComponent::OnHitReactFinished()
 void UIFPlayerCombatComponent::TryResumeBlock()
 {
 	const AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
-	if (!IsValid(Player) || Player->IsDead() || Player->IsGettingUp() || !IsIdle())
+	if (!IsValid(Player) || Player->IsDead() || !IsIdle())
 	{
 		return;
 	}

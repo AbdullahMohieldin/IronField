@@ -28,12 +28,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Player|Movement")
 	bool IsSprinting() const { return bIsSprinting; }
 
-	UFUNCTION(BlueprintPure, Category = "IronField|Player|State")
-	bool IsGettingUp() const { return bIsGettingUp; }
-
-	// Called by the get-up montage notify; the fallback timer calls it too.
-	UFUNCTION(BlueprintCallable, Category = "IronField|Player|State")
-	void NotifyGetUpFinished();
+	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Respawn")
+	void RespawnAtCastle(const FVector& SpawnLocation, const FRotator& SpawnRotation);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Combat")
 	void StartBlock();
@@ -115,12 +111,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Stamina", meta = (ClampMin = "0.0"))
 	float MinimumStaminaToStartSprint = 20.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Gameplay", meta = (ClampMin = "0.0"))
-	float ReviveDelaySeconds = 4.f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Gameplay", meta = (ClampMin = "0.0"))
-	float GetUpDuration = 1.2f;
-
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Player|Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -139,13 +129,7 @@ private:
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Player|Movement")
 	FVector2D CachedMovementInput = FVector2D::ZeroVector;
 
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Player|State", meta = (AllowPrivateAccess = "true"))
-	bool bIsGettingUp = false;
-
 	TSharedPtr<FStreamableHandle> InputAssetsLoadHandle;
-
-	FTimerHandle ReviveTimerHandle;
-	FTimerHandle GetUpFallbackTimerHandle;
 
 	void Move(const FInputActionValue& Value);
 	void StopMoving();
@@ -172,8 +156,4 @@ private:
 	bool HasSprintInput() const;
 	float CalculateDesiredMovementSpeed() const;
 
-	void ClearReviveTimers();
-	void StartReviveTimer();
-	void AttemptRevive();
-	void CompleteRevive();
 };
