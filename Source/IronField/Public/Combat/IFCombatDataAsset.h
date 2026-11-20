@@ -7,6 +7,7 @@
 
 class UAnimMontage;
 class UNiagaraSystem;
+class UParticleSystem;
 class USoundBase;
 
 USTRUCT(BlueprintType)
@@ -22,6 +23,9 @@ struct FIFMeleeAttackStep
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat", meta = (ClampMin = "0.0"))
 	float StaminaCost = 10.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat")
+	bool bCausesHeavyStagger = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Hit")
 	FName HitStartSocket = NAME_None;
@@ -44,6 +48,12 @@ struct FIFMeleeAttackStep
 	TSoftObjectPtr<UNiagaraSystem> HitVFX;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
+	TSoftObjectPtr<UParticleSystem> HitCascadeVFX;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback", meta = (ClampMin = "0.0", ClampMax = "0.15"))
+	float HitstopSeconds = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
 	TSoftObjectPtr<USoundBase> HitSound;
 };
 
@@ -56,6 +66,8 @@ struct FIFShieldBlockConfig
 	{
 		GuardAttack.Damage = 22.f;
 		GuardAttack.StaminaCost = 12.f;
+		GuardAttack.bCausesHeavyStagger = true;
+		GuardAttack.HitstopSeconds = 0.03f;
 		GuardAttack.HitStartSocket = TEXT("FX_Sword_Bottom");
 		GuardAttack.HitEndSocket = TEXT("FX_Sword_Top");
 		GuardAttack.HitRadius = 18.f;
@@ -111,8 +123,17 @@ struct FIFLeapSlamConfig
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "1", ClampMax = "16"))
 	int32 TraceSampleCount = 4;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam")
+	bool bCausesHeavyStagger = true;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
 	TSoftObjectPtr<UNiagaraSystem> HitVFX;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
+	TSoftObjectPtr<UParticleSystem> HitCascadeVFX;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback", meta = (ClampMin = "0.0", ClampMax = "0.15"))
+	float HitstopSeconds = 0.04f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
 	TSoftObjectPtr<USoundBase> HitSound;
@@ -148,6 +169,33 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat", meta = (ClampMin = "0.0"))
 	float ComboResetSeconds = 0.8f;
+
+	// Indexed by completed chain count: [0] = chance of a 2nd swing after the 1st,
+	// [1] = 3rd after 2nd, and so on. Empty disables AI combo chaining.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|AI")
+	TArray<float> AIComboContinuationChances;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|AI", meta = (ClampMin = "0.0"))
+	float AIComboBreatherSeconds = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|AI")
+	bool bRandomizeAIComboOpener = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|AI", meta = (ClampMin = "0.0"))
+	float MaxStaminaWaitSeconds = 3.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact", meta = (ClampMin = "0.0"))
+	float HitReactCooldownSeconds = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact", meta = (ClampMin = "0.0"))
+	float AdditiveFlinchCooldownSeconds = 0.25f;
+
+	// False grants attack poise: hits still deal damage but never interrupt the swing.
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact")
+	bool bAllowHitReactDuringAttack = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|VFX")
+	TSoftObjectPtr<UParticleSystem> BlockCascadeVFX;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Combat")
 	FIFShieldBlockConfig ShieldBlock;

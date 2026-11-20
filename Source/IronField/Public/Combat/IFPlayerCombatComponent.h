@@ -29,7 +29,7 @@ public:
 	float GetLeapSlamCooldownRemaining() const;
 
 	virtual bool TryBlockIncomingDamage(float DamageAmount, AActor* DamageCauser, AController* EventInstigator) override;
-	virtual void PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator) override;
+	virtual void PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator, bool bIsHeavyStagger = false) override;
 
 	void OpenComboWindow();
 	void CloseComboWindow();

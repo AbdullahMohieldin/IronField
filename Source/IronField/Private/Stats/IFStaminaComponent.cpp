@@ -74,13 +74,40 @@ void UIFStaminaComponent::InitializeStamina(float NewMaxStamina)
 	ResetStamina();
 }
 
+void UIFStaminaComponent::ConfigureStaminaDefaults(float InMaxStamina, float InRegenRate, float InRegenDelay)
+{
+	MaxStamina = FMath::Max(1.f, InMaxStamina);
+	CurrentStamina = MaxStamina;
+	StaminaRegenRate = FMath::Max(0.f, InRegenRate);
+	StaminaRegenDelay = FMath::Max(0.f, InRegenDelay);
+}
+
 void UIFStaminaComponent::ResetStamina()
 {
 	ContinuousDrainRate = 0.f;
+	RegenRateMultiplier = 1.f;
 	CurrentStamina = MaxStamina;
 	TimeSinceLastDrain = StaminaRegenDelay;
 	SetComponentTickEnabled(false);
 	OnStaminaChanged.Broadcast(GetStaminaPercent());
+}
+
+void UIFStaminaComponent::SetRegenRateMultiplier(float InMultiplier)
+{
+	const float ClampedMultiplier = FMath::Max(0.f, InMultiplier);
+	if (FMath::IsNearlyEqual(RegenRateMultiplier, ClampedMultiplier))
+	{
+		return;
+	}
+
+	RegenRateMultiplier = ClampedMultiplier;
+	UpdateTickEnabled();
+}
+
+void UIFStaminaComponent::ResetRegenDelay()
+{
+	TimeSinceLastDrain = 0.f;
+	UpdateTickEnabled();
 }
 
 float UIFStaminaComponent::GetStaminaPercent() const
@@ -90,7 +117,7 @@ float UIFStaminaComponent::GetStaminaPercent() const
 
 bool UIFStaminaComponent::CanRegenerate() const
 {
-	return CurrentStamina < MaxStamina && StaminaRegenRate > 0.f;
+	return CurrentStamina < MaxStamina && StaminaRegenRate > 0.f && RegenRateMultiplier > 0.f;
 }
 
 void UIFStaminaComponent::DrainStamina(float DeltaTime)
@@ -106,13 +133,19 @@ void UIFStaminaComponent::DrainStamina(float DeltaTime)
 
 void UIFStaminaComponent::RegenerateStamina(float DeltaTime)
 {
+	if (RegenRateMultiplier <= 0.f || StaminaRegenRate <= 0.f)
+	{
+		UpdateTickEnabled();
+		return;
+	}
+
 	TimeSinceLastDrain += DeltaTime;
 	if (TimeSinceLastDrain < StaminaRegenDelay)
 	{
 		return;
 	}
 
-	SetStaminaClamped(CurrentStamina + StaminaRegenRate * DeltaTime);
+	SetStaminaClamped(CurrentStamina + (StaminaRegenRate * RegenRateMultiplier) * DeltaTime);
 
 	if (CurrentStamina >= MaxStamina)
 	{

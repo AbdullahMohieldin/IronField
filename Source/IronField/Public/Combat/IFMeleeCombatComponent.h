@@ -12,6 +12,24 @@ class UAnimMontage;
 class UIFStaminaComponent;
 struct FStreamableHandle;
 
+struct FIFPlannedAICombo
+{
+	bool bHasPlan = false;
+	int32 OpenerStepIndex = 0;
+	int32 PlannedHitCount = 1;
+	int32 ExecutedHits = 0;
+	float RequiredStamina = 0.f;
+
+	void Reset()
+	{
+		bHasPlan = false;
+		OpenerStepIndex = 0;
+		PlannedHitCount = 1;
+		ExecutedHits = 0;
+		RequiredStamina = 0.f;
+	}
+};
+
 UCLASS(ClassGroup = (IronField), meta = (BlueprintSpawnableComponent))
 class IRONFIELD_API UIFMeleeCombatComponent : public UIFCombatComponent
 {
@@ -20,6 +38,19 @@ class IRONFIELD_API UIFMeleeCombatComponent : public UIFCombatComponent
 public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat")
 	bool TryStartAttack();
+
+	// AI-only entry points; player input goes through TryStartAttack and the buffer.
+	bool TryStartAIAttack();
+	bool TryContinueAICombo(int32 CompletedChainIndex);
+	float GetAIComboBreatherSeconds() const;
+
+	void EnsureAIComboPlan();
+	bool HasEnoughStaminaForPlannedCombo() const;
+	bool TryExecuteNextPlannedAIStep();
+	bool HasRemainingPlannedAISteps() const;
+	void ClearAIComboPlan();
+	float GetAIMaxStaminaWaitSeconds() const;
+	int32 GetPlannedAIExecutedHits() const { return PlannedAICombo.ExecutedHits; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
 	bool IsCombatReady() const { return bCombatReady; }
@@ -30,7 +61,7 @@ public:
 	void UpdateHitWindow(float DeltaTime);
 	void CloseHitWindow();
 
-	virtual void PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator) override;
+	virtual void PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator, bool bIsHeavyStagger = false) override;
 
 	virtual void HandleOwnerDeath() override;
 	virtual void HandleOwnerRevived() override;
@@ -40,9 +71,13 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	virtual void GatherRequiredAssetPaths(TArray<FSoftObjectPath>& OutAssetPaths) const;
+	virtual void HandleCombatStateTransition(EIFCombatState PreviousState, EIFCombatState NewState) override;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat")
 	TSoftObjectPtr<UIFCombatDataAsset> CombatData;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat|Stamina", meta = (ClampMin = "0.0"))
+	float BlockingStaminaRegenMultiplier = 0.2f;
 
 	UPROPERTY(EditAnywhere, Category = "IronField|Combat")
 	bool bDrawDebugHitWindow = false;
@@ -76,6 +111,7 @@ protected:
 
 	int32 CurrentMontageInstanceID = INDEX_NONE;
 	int32 CurrentStepIndex = INDEX_NONE;
+	int32 LastFinishedStepIndex = INDEX_NONE;
 	bool bIsExecutingGuardAttack = false;
 
 private:
@@ -87,6 +123,7 @@ private:
 	void HandleComboReset();
 	void BuildSamplePoints(TArray<FVector>& OutPoints) const;
 	void ProcessHit(AActor* Target, const FVector& HitLocation);
+	void TriggerAdditiveFlinch(AActor* DamageCauser, AController* EventInstigator);
 
 	TSharedPtr<FStreamableHandle> DataLoadHandle;
 
@@ -96,8 +133,13 @@ private:
 	bool bCombatReady = false;
 	bool bHitWindowOpen = false;
 
+	float NextHitReactAllowedTime = 0.f;
+	float NextAdditiveFlinchAllowedTime = 0.f;
+
 	TSet<TWeakObjectPtr<AActor>> HitActorsThisWindow;
 	TArray<FVector> PreviousSamplePoints;
+
+	FIFPlannedAICombo PlannedAICombo;
 
 	FTimerHandle ComboResetTimerHandle;
 };

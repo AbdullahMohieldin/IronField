@@ -13,9 +13,12 @@ public class IronField : ModuleRules
 			"InputCore",
 			"EnhancedInput",
 			"UMG",
+			"Slate",
+			"SlateCore",
 			"AIModule",
-			"Niagara",
-			"SlateCore"
+			"NavigationSystem",
+			"GameplayTasks",
+			"Niagara"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {

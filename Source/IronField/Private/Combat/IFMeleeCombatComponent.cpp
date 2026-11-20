@@ -17,6 +17,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "Particles/ParticleSystem.h"
 #include "Sound/SoundBase.h"
 #include "Stats/IFStaminaComponent.h"
 #include "TimerManager.h"
@@ -45,6 +46,7 @@ void UIFMeleeCombatComponent::BeginPlay()
 void UIFMeleeCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	bCombatReady = false;
+	PlannedAICombo.Reset();
 
 	InvalidateMontageExecution();
 
@@ -86,10 +88,19 @@ void UIFMeleeCombatComponent::GatherRequiredAssetPaths(TArray<FSoftObjectPath>& 
 		{
 			OutAssetPaths.Add(Step.HitVFX.ToSoftObjectPath());
 		}
+		if (!Step.HitCascadeVFX.IsNull())
+		{
+			OutAssetPaths.Add(Step.HitCascadeVFX.ToSoftObjectPath());
+		}
 		if (!Step.HitSound.IsNull())
 		{
 			OutAssetPaths.Add(Step.HitSound.ToSoftObjectPath());
 		}
+	}
+
+	if (!LoadedCombatData->BlockCascadeVFX.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->BlockCascadeVFX.ToSoftObjectPath());
 	}
 
 	if (!LoadedCombatData->DirectionalHitReacts.HitReactFront.IsNull())
@@ -188,6 +199,136 @@ bool UIFMeleeCombatComponent::TryStartAttack()
 	}
 
 	return PlayStep(GetNextStepIndex());
+}
+
+bool UIFMeleeCombatComponent::TryStartAIAttack()
+{
+	if (!bCombatReady || !IsValid(LoadedCombatData) || LoadedCombatData->ComboSteps.IsEmpty())
+	{
+		return false;
+	}
+	if (!IsIdle())
+	{
+		return false;
+	}
+
+	const int32 StepIndex = LoadedCombatData->bRandomizeAIComboOpener
+		? FMath::RandRange(0, LoadedCombatData->ComboSteps.Num() - 1)
+		: GetNextStepIndex();
+	return PlayStep(StepIndex);
+}
+
+bool UIFMeleeCombatComponent::TryContinueAICombo(int32 CompletedChainIndex)
+{
+	if (!bCombatReady || !IsValid(LoadedCombatData) || !IsIdle() || LastFinishedStepIndex == INDEX_NONE)
+	{
+		return false;
+	}
+
+	// Indexed by chain position, not step index, so decay holds with a random opener.
+	const TArray<float>& Chances = LoadedCombatData->AIComboContinuationChances;
+	if (!Chances.IsValidIndex(CompletedChainIndex) || FMath::FRand() >= Chances[CompletedChainIndex])
+	{
+		return false;
+	}
+
+	const int32 NextIndex = (LastFinishedStepIndex + 1) % LoadedCombatData->ComboSteps.Num();
+	return PlayStep(NextIndex);
+}
+
+float UIFMeleeCombatComponent::GetAIComboBreatherSeconds() const
+{
+	return IsValid(LoadedCombatData) ? LoadedCombatData->AIComboBreatherSeconds : 0.f;
+}
+
+void UIFMeleeCombatComponent::EnsureAIComboPlan()
+{
+	if (PlannedAICombo.bHasPlan || !bCombatReady || !IsValid(LoadedCombatData) || LoadedCombatData->ComboSteps.IsEmpty())
+	{
+		return;
+	}
+
+	const int32 StepCount = LoadedCombatData->ComboSteps.Num();
+	PlannedAICombo.Reset();
+	PlannedAICombo.bHasPlan = true;
+	PlannedAICombo.OpenerStepIndex = LoadedCombatData->bRandomizeAIComboOpener
+		? FMath::RandRange(0, StepCount - 1)
+		: 0;
+	PlannedAICombo.PlannedHitCount = 1;
+	PlannedAICombo.ExecutedHits = 0;
+
+	const TArray<float>& Chances = LoadedCombatData->AIComboContinuationChances;
+	for (int32 ChainIndex = 0; ChainIndex < Chances.Num() && PlannedAICombo.PlannedHitCount < StepCount; ++ChainIndex)
+	{
+		const float Chance = Chances[ChainIndex];
+		if (Chance > 0.f && (Chance >= 1.f || FMath::FRand() < Chance))
+		{
+			++PlannedAICombo.PlannedHitCount;
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	float TotalStamina = 0.f;
+	for (int32 Offset = 0; Offset < PlannedAICombo.PlannedHitCount; ++Offset)
+	{
+		const int32 StepIndex = (PlannedAICombo.OpenerStepIndex + Offset) % StepCount;
+		TotalStamina += FMath::Max(0.f, LoadedCombatData->ComboSteps[StepIndex].StaminaCost);
+	}
+
+	if (IsValid(Stamina))
+	{
+		TotalStamina = FMath::Min(TotalStamina, Stamina->GetMaxStamina());
+	}
+	PlannedAICombo.RequiredStamina = TotalStamina;
+}
+
+bool UIFMeleeCombatComponent::HasEnoughStaminaForPlannedCombo() const
+{
+	if (!IsValid(Stamina))
+	{
+		return true;
+	}
+	if (!PlannedAICombo.bHasPlan)
+	{
+		return false;
+	}
+	return Stamina->GetCurrentStamina() + KINDA_SMALL_NUMBER >= PlannedAICombo.RequiredStamina;
+}
+
+bool UIFMeleeCombatComponent::TryExecuteNextPlannedAIStep()
+{
+	if (!bCombatReady || !IsValid(LoadedCombatData) || LoadedCombatData->ComboSteps.IsEmpty()
+		|| !PlannedAICombo.bHasPlan || PlannedAICombo.ExecutedHits >= PlannedAICombo.PlannedHitCount || !IsIdle())
+	{
+		return false;
+	}
+
+	const int32 StepIndex = (PlannedAICombo.OpenerStepIndex + PlannedAICombo.ExecutedHits) % LoadedCombatData->ComboSteps.Num();
+	if (PlayStep(StepIndex))
+	{
+		++PlannedAICombo.ExecutedHits;
+		return true;
+	}
+
+	return false;
+}
+
+bool UIFMeleeCombatComponent::HasRemainingPlannedAISteps() const
+{
+	return PlannedAICombo.bHasPlan && PlannedAICombo.ExecutedHits < PlannedAICombo.PlannedHitCount;
+}
+
+void UIFMeleeCombatComponent::ClearAIComboPlan()
+{
+	PlannedAICombo.Reset();
+}
+
+float UIFMeleeCombatComponent::GetAIMaxStaminaWaitSeconds() const
+{
+	return IsValid(LoadedCombatData) ? LoadedCombatData->MaxStaminaWaitSeconds : 3.5f;
 }
 
 int32 UIFMeleeCombatComponent::GetNextStepIndex() const
@@ -414,6 +555,7 @@ void UIFMeleeCombatComponent::HandleMontageBlendingOut(UAnimMontage*, bool bInte
 
 void UIFMeleeCombatComponent::FinishCombo()
 {
+	LastFinishedStepIndex = CurrentStepIndex;
 	InvalidateMontageExecution();
 	CurrentStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
@@ -448,8 +590,10 @@ void UIFMeleeCombatComponent::HandleComboReset()
 
 void UIFMeleeCombatComponent::HandleOwnerDeath()
 {
+	PlannedAICombo.Reset();
 	InvalidateMontageExecution();
 	CurrentStepIndex = INDEX_NONE;
+	LastFinishedStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
 	CloseHitWindow();
 
@@ -463,10 +607,48 @@ void UIFMeleeCombatComponent::HandleOwnerDeath()
 
 void UIFMeleeCombatComponent::HandleOwnerRevived()
 {
+	PlannedAICombo.Reset();
 	InvalidateMontageExecution();
 	CurrentStepIndex = INDEX_NONE;
+	LastFinishedStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
+	NextHitReactAllowedTime = 0.f;
+	NextAdditiveFlinchAllowedTime = 0.f;
 	Super::HandleOwnerRevived();
+}
+
+void UIFMeleeCombatComponent::HandleCombatStateTransition(EIFCombatState PreviousState, EIFCombatState NewState)
+{
+	if (!IsValid(Stamina))
+	{
+		return;
+	}
+
+	if (PreviousState == EIFCombatState::Attacking && NewState != EIFCombatState::Attacking)
+	{
+		Stamina->ResetRegenDelay();
+	}
+
+	switch (NewState)
+	{
+	case EIFCombatState::Attacking:
+	case EIFCombatState::Dead:
+		Stamina->SetRegenRateMultiplier(0.f);
+		break;
+
+	case EIFCombatState::Blocking:
+		Stamina->SetRegenRateMultiplier(BlockingStaminaRegenMultiplier);
+		break;
+
+	case EIFCombatState::Stunned:
+		Stamina->ResetRegenDelay();
+		Stamina->SetRegenRateMultiplier(1.f);
+		break;
+
+	default:
+		Stamina->SetRegenRateMultiplier(1.f);
+		break;
+	}
 }
 
 void UIFMeleeCombatComponent::OpenHitWindow()
@@ -628,20 +810,77 @@ void UIFMeleeCombatComponent::ProcessHit(AActor* Target, const FVector& HitLocat
 	{
 		InstigatorController = OwnerPawn->GetController();
 	}
-	UGameplayStatics::ApplyDamage(Target, Step->Damage, InstigatorController, GetOwner(), UDamageType::StaticClass());
+	const TSubclassOf<UDamageType> DamageTypeClass = Step->bCausesHeavyStagger
+		? TSubclassOf<UDamageType>(UIFHeavyMeleeDamageType::StaticClass())
+		: TSubclassOf<UDamageType>(UDamageType::StaticClass());
+	const float AppliedDamage = UGameplayStatics::ApplyDamage(
+		Target, Step->Damage, InstigatorController, GetOwner(), DamageTypeClass);
 
-	if (UNiagaraSystem* const HitVFX = Step->HitVFX.Get())
+	if (AppliedDamage > 0.f)
 	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, HitVFX, HitLocation);
-	}
-	if (USoundBase* const HitSound = Step->HitSound.Get())
-	{
-		UGameplayStatics::PlaySoundAtLocation(GetOwner(), HitSound, HitLocation);
+		const FRotator HitRotation = (HitLocation - GetOwner()->GetActorLocation()).GetSafeNormal().Rotation();
+		if (UNiagaraSystem* const HitVFX = Step->HitVFX.Get())
+		{
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(World, HitVFX, HitLocation, HitRotation);
+		}
+		else if (UParticleSystem* const HitCascadeVFX = Step->HitCascadeVFX.Get())
+		{
+			UGameplayStatics::SpawnEmitterAtLocation(World, HitCascadeVFX, HitLocation, HitRotation, true);
+		}
+
+		if (USoundBase* const HitSound = Step->HitSound.Get())
+		{
+			UGameplayStatics::PlaySoundAtLocation(GetOwner(), HitSound, HitLocation);
+		}
+
+		if (Step->HitstopSeconds > 0.f)
+		{
+			if (OwnerCharacter.IsValid() && OwnerCharacter->IsAlive())
+			{
+				OwnerCharacter->ApplyLocalHitstop(Step->HitstopSeconds);
+			}
+			if (AIFBaseCharacter* const TargetCharacter = Cast<AIFBaseCharacter>(Target);
+				IsValid(TargetCharacter) && TargetCharacter->IsAlive())
+			{
+				TargetCharacter->ApplyLocalHitstop(Step->HitstopSeconds);
+			}
+		}
 	}
 }
 
-void UIFMeleeCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator)
+void UIFMeleeCombatComponent::TriggerAdditiveFlinch(AActor* DamageCauser, AController* EventInstigator)
 {
+	const UWorld* const World = GetWorld();
+	const float Now = IsValid(World) ? World->GetTimeSeconds() : 0.f;
+	if (IsValid(World) && Now < NextAdditiveFlinchAllowedTime)
+	{
+		return;
+	}
+
+	Super::PlayDirectionalHitReact(DamageCauser, EventInstigator, false);
+
+	const float Cooldown = IsValid(LoadedCombatData) ? LoadedCombatData->AdditiveFlinchCooldownSeconds : 0.25f;
+	if (IsValid(World) && Cooldown > 0.f)
+	{
+		NextAdditiveFlinchAllowedTime = Now + Cooldown;
+	}
+}
+
+void UIFMeleeCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator, bool bIsHeavyStagger)
+{
+	if (!bIsHeavyStagger)
+	{
+		TriggerAdditiveFlinch(DamageCauser, EventInstigator);
+		return;
+	}
+
+	const UWorld* const World = GetWorld();
+	if (IsValid(LoadedCombatData) && IsValid(World) && World->GetTimeSeconds() < NextHitReactAllowedTime)
+	{
+		TriggerAdditiveFlinch(DamageCauser, EventInstigator);
+		return;
+	}
+
 	const bool bWasAttacking = IsAttacking();
 	if (bWasAttacking)
 	{
@@ -650,9 +889,9 @@ void UIFMeleeCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, ACon
 		CloseHitWindow();
 		CurrentStepIndex = INDEX_NONE;
 		bIsExecutingGuardAttack = false;
-		if (UWorld* const World = GetWorld())
+		if (UWorld* const MutableWorld = GetWorld())
 		{
-			World->GetTimerManager().ClearTimer(ComboResetTimerHandle);
+			MutableWorld->GetTimerManager().ClearTimer(ComboResetTimerHandle);
 		}
 		if (IsValid(CachedAnimInstance) && IsValid(OutgoingMontage))
 		{
@@ -660,9 +899,14 @@ void UIFMeleeCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, ACon
 		}
 	}
 
-	Super::PlayDirectionalHitReact(DamageCauser, EventInstigator);
+	Super::PlayDirectionalHitReact(DamageCauser, EventInstigator, true);
 	if (bWasAttacking && IsAttacking() && CurrentMontageInstanceID == INDEX_NONE)
 	{
 		FinishCombo();
+	}
+
+	if (IsInHitReact() && IsValid(LoadedCombatData) && LoadedCombatData->HitReactCooldownSeconds > 0.f && IsValid(World))
+	{
+		NextHitReactAllowedTime = World->GetTimeSeconds() + LoadedCombatData->HitReactCooldownSeconds;
 	}
 }

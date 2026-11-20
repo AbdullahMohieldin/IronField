@@ -5,8 +5,10 @@
 #include "GameFramework/PlayerController.h"
 #include "IFPlayerController.generated.h"
 
+class APawn;
 class UInputAction;
 class UUserWidget;
+class UIFVitalBarsWidget;
 struct FStreamableHandle;
 
 UCLASS()
@@ -35,7 +37,11 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type Reason) override;
+	virtual void OnPossess(APawn* InPawn) override;
 	virtual void SetupInputComponent() override;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|UI")
+	TSubclassOf<UIFVitalBarsWidget> PlayerHUDWidgetClass;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|UI")
 	TSoftClassPtr<UUserWidget> HUDWidgetClass;
@@ -51,6 +57,9 @@ protected:
 
 private:
 	UPROPERTY(Transient)
+	TObjectPtr<UIFVitalBarsWidget> PlayerHUDWidget;
+
+	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> HUDWidget;
 
 	UPROPERTY(Transient)
@@ -64,6 +73,7 @@ private:
 	TSharedPtr<FStreamableHandle> PauseActionLoadHandle;
 
 	void HandleHUDClassLoaded();
+	void EnsurePlayerHUDCreatedAndBound(APawn* InPawn);
 	void HandleMenuWidgetsPreloaded();
 	void HandlePauseActionLoaded();
 	void BindPauseAction();

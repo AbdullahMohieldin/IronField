@@ -33,6 +33,7 @@ void UIFCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		World->GetTimerManager().ClearTimer(HitReactTimerHandle);
 	}
+	ActiveFlinchMontage.Reset();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -41,7 +42,7 @@ bool UIFCombatComponent::TryBlockIncomingDamage(float, AActor*, AController*)
 	return false;
 }
 
-void UIFCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator)
+void UIFCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator, bool bIsHeavyStagger)
 {
 	if (CombatState == EIFCombatState::Dead || IsStunned())
 	{
@@ -70,6 +71,31 @@ void UIFCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AControll
 		return;
 	}
 
+	UAnimMontage* const MontageToPlay = ResolveDirectionalHitReactMontage(DamageCauser, EventInstigator);
+	if (!IsValid(MontageToPlay))
+	{
+		return;
+	}
+
+	if (!bIsHeavyStagger)
+	{
+		PlayAdditiveFlinchMontage(MontageToPlay);
+		return;
+	}
+
+	ActiveFlinchMontage.Reset();
+	SetCombatState(EIFCombatState::HitReact);
+	const float Duration = CachedAnimInstance->Montage_Play(MontageToPlay, 1.f);
+	const float FallbackDuration = (Duration > 0.f) ? Duration : 0.5f;
+
+	if (UWorld* const World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(HitReactTimerHandle, this, &UIFCombatComponent::OnHitReactFinished, FallbackDuration, false);
+	}
+}
+
+UAnimMontage* UIFCombatComponent::ResolveDirectionalHitReactMontage(AActor* DamageCauser, AController* EventInstigator)
+{
 	const AActor* Attacker = DamageCauser;
 	if (!IsValid(Attacker) && IsValid(EventInstigator))
 	{
@@ -108,23 +134,55 @@ void UIFCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AControll
 		SelectedSoftMontage = (RightDot >= 0.f) ? DirectionalHitReacts.HitReactRight : DirectionalHitReacts.HitReactLeft;
 	}
 
-	UAnimMontage* MontageToPlay = SelectedSoftMontage.LoadSynchronous();
+	UAnimMontage* MontageToPlay = SelectedSoftMontage.Get();
+	if (!IsValid(MontageToPlay) && !SelectedSoftMontage.IsNull())
+	{
+		MontageToPlay = SelectedSoftMontage.LoadSynchronous();
+	}
+
 	if (!IsValid(MontageToPlay))
 	{
-		MontageToPlay = DirectionalHitReacts.HitReactFront.LoadSynchronous();
-	}
-
-	if (IsValid(MontageToPlay))
-	{
-		SetCombatState(EIFCombatState::HitReact);
-		const float Duration = CachedAnimInstance->Montage_Play(MontageToPlay, 1.f);
-		const float FallbackDuration = (Duration > 0.f) ? Duration : 0.5f;
-
-		if (UWorld* const World = GetWorld())
+		MontageToPlay = DirectionalHitReacts.HitReactFront.Get();
+		if (!IsValid(MontageToPlay) && !DirectionalHitReacts.HitReactFront.IsNull())
 		{
-			World->GetTimerManager().SetTimer(HitReactTimerHandle, this, &UIFCombatComponent::OnHitReactFinished, FallbackDuration, false);
+			MontageToPlay = DirectionalHitReacts.HitReactFront.LoadSynchronous();
 		}
 	}
+
+	return MontageToPlay;
+}
+
+bool UIFCombatComponent::PlayAdditiveFlinchMontage(UAnimMontage* MontageToPlay)
+{
+	if (!IsValid(CachedAnimInstance) || !IsValid(MontageToPlay))
+	{
+		return false;
+	}
+
+	if (UAnimMontage* const PreviousFlinch = ActiveFlinchMontage.Get())
+	{
+		if (CachedAnimInstance->Montage_IsPlaying(PreviousFlinch))
+		{
+			CachedAnimInstance->Montage_Stop(0.05f, PreviousFlinch);
+		}
+	}
+
+	// bStopAllMontages = false keeps active swings/blocks running uninterrupted.
+	const float PlayLength = CachedAnimInstance->Montage_Play(
+		MontageToPlay,
+		1.f,
+		EMontagePlayReturnType::MontageLength,
+		0.f,
+		false);
+
+	if (PlayLength > 0.f)
+	{
+		ActiveFlinchMontage = MontageToPlay;
+		return true;
+	}
+
+	ActiveFlinchMontage.Reset();
+	return false;
 }
 
 void UIFCombatComponent::OnHitReactFinished()
@@ -146,6 +204,7 @@ void UIFCombatComponent::HandleOwnerDeath()
 	{
 		World->GetTimerManager().ClearTimer(HitReactTimerHandle);
 	}
+	ActiveFlinchMontage.Reset();
 	SetCombatState(EIFCombatState::Dead);
 }
 
@@ -155,6 +214,7 @@ void UIFCombatComponent::HandleOwnerRevived()
 	{
 		World->GetTimerManager().ClearTimer(HitReactTimerHandle);
 	}
+	ActiveFlinchMontage.Reset();
 	SetCombatState(EIFCombatState::Idle);
 }
 
@@ -167,5 +227,6 @@ void UIFCombatComponent::SetCombatState(EIFCombatState NewState)
 
 	const EIFCombatState PreviousState = CombatState;
 	CombatState = NewState;
+	HandleCombatStateTransition(PreviousState, NewState);
 	OnCombatStateChanged.Broadcast(PreviousState, NewState);
 }

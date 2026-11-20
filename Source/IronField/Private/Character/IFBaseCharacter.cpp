@@ -2,11 +2,16 @@
 
 #include "Animation/AnimInstance.h"
 #include "Combat/IFCombatComponent.h"
+#include "Combat/IFCombatTypes.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Core/IFLog.h"
+#include "Engine/DamageEvents.h"
+#include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
 #include "Stats/IFHealthComponent.h"
+#include "TimerManager.h"
 
 const FName AIFBaseCharacter::CombatComponentName(TEXT("Combat"));
 
@@ -63,6 +68,8 @@ void AIFBaseCharacter::BeginPlay()
 
 void AIFBaseCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	ClearLocalHitstop();
+
 	if (IsValid(HealthComponent))
 	{
 		HealthComponent->OnDeath.RemoveAll(this);
@@ -92,6 +99,15 @@ float AIFBaseCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const
 		return 0.f;
 	}
 
+	if (IsValid(DamageCauser) && IFTeamUtils::AreFriendly(this, DamageCauser))
+	{
+		return 0.f;
+	}
+	if (IsValid(EventInstigator) && IFTeamUtils::AreFriendly(this, EventInstigator->GetPawn()))
+	{
+		return 0.f;
+	}
+
 	if (IsValid(CombatComponent) && CombatComponent->TryBlockIncomingDamage(DamageAmount, DamageCauser, EventInstigator))
 	{
 		return 0.f;
@@ -102,13 +118,50 @@ float AIFBaseCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const
 		return 0.f;
 	}
 
+	const AActor* Attacker = DamageCauser;
+	if (!IsValid(Attacker) && IsValid(EventInstigator))
+	{
+		Attacker = EventInstigator->GetPawn();
+	}
+
+	FVector PushDir = -GetActorForwardVector();
+	if (IsValid(Attacker) && Attacker != this)
+	{
+		FVector Delta = GetActorLocation() - Attacker->GetActorLocation();
+		Delta.Z = 0.f;
+		if (Delta.Normalize())
+		{
+			PushDir = Delta;
+		}
+		else
+		{
+			PushDir.Z = 0.f;
+			if (!PushDir.Normalize())
+			{
+				PushDir = FVector::ForwardVector;
+			}
+		}
+	}
+	else
+	{
+		PushDir.Z = 0.f;
+		if (!PushDir.Normalize())
+		{
+			PushDir = FVector::ForwardVector;
+		}
+	}
+	LastDamageDirection = PushDir;
+
+	const bool bIsHeavyStagger = DamageEvent.DamageTypeClass != nullptr
+		&& DamageEvent.DamageTypeClass->IsChildOf(UIFHeavyMeleeDamageType::StaticClass());
+
 	const float PrevHealth = HealthComponent->GetCurrentHealth();
 	Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 	const float ActualDamage = PrevHealth - HealthComponent->GetCurrentHealth();
 
 	if (ActualDamage > 0.f && IsAlive() && IsValid(CombatComponent))
 	{
-		CombatComponent->PlayDirectionalHitReact(DamageCauser, EventInstigator);
+		CombatComponent->PlayDirectionalHitReact(DamageCauser, EventInstigator, bIsHeavyStagger);
 	}
 
 	return ActualDamage;
@@ -121,6 +174,8 @@ void AIFBaseCharacter::HandleDeath(AActor*)
 		return;
 	}
 	bHasDied = true;
+
+	ClearLocalHitstop();
 
 	UE_LOG(LogIronField, Log, TEXT("[IF-Death] %s died."), *GetName());
 
@@ -186,6 +241,8 @@ void AIFBaseCharacter::DisableCollisionForDeath()
 void AIFBaseCharacter::RestoreAliveState()
 {
 	bHasDied = false;
+	ClearLocalHitstop();
+	LastDamageDirection = FVector::ZeroVector;
 
 	if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
 	{
@@ -209,5 +266,37 @@ void AIFBaseCharacter::RestoreAliveState()
 		Movement->FindFloor(GetActorLocation(), Movement->CurrentFloor, false);
 		Movement->bOrientRotationToMovement = bSavedOrientRotationToMovement;
 		Movement->bUseControllerDesiredRotation = bSavedUseControllerDesiredRotation;
+	}
+}
+
+void AIFBaseCharacter::ApplyLocalHitstop(float DurationSeconds, float TimeDilation)
+{
+	if (DurationSeconds <= 0.f || !IsAlive())
+	{
+		return;
+	}
+
+	UWorld* const World = GetWorld();
+	if (!IsValid(World))
+	{
+		return;
+	}
+
+	CustomTimeDilation = FMath::Clamp(TimeDilation, 0.01f, 1.f);
+	bInLocalHitstop = true;
+	World->GetTimerManager().SetTimer(HitstopTimerHandle, this, &AIFBaseCharacter::ClearLocalHitstop, DurationSeconds, false);
+}
+
+void AIFBaseCharacter::ClearLocalHitstop()
+{
+	if (UWorld* const World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(HitstopTimerHandle);
+	}
+
+	if (bInLocalHitstop)
+	{
+		bInLocalHitstop = false;
+		CustomTimeDilation = 1.f;
 	}
 }

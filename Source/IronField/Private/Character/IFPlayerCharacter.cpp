@@ -25,6 +25,7 @@ AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializ
 	PrimaryActorTick.bCanEverTick = false;
 
 	StaminaComponent = CreateDefaultSubobject<UIFStaminaComponent>(TEXT("Stamina"));
+	StaminaComponent->ConfigureStaminaDefaults(100.f, 15.f, 1.45f);
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);

@@ -12,6 +12,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "Particles/ParticleSystem.h"
 #include "Sound/SoundBase.h"
 #include "Stats/IFStaminaComponent.h"
 #include "TimerManager.h"
@@ -155,7 +156,16 @@ bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor
 	const float StaminaDrain = DamageAmount * BlockConfig.BlockStaminaCostMultiplier;
 	const float CurrentStaminaVal = IsValid(Stamina) ? Stamina->GetCurrentStamina() : 0.f;
 
-	if (CurrentStaminaVal > StaminaDrain)
+	if (UParticleSystem* const BlockVFX = LoadedCombatData->BlockCascadeVFX.Get())
+	{
+		if (UWorld* const World = GetWorld())
+		{
+			const FVector BlockLocation = Player->GetActorLocation() + ToAttacker2D * 55.f + FVector(0.f, 0.f, 35.f);
+			UGameplayStatics::SpawnEmitterAtLocation(World, BlockVFX, BlockLocation, ToAttacker2D.Rotation(), true);
+		}
+	}
+
+	if (CurrentStaminaVal >= StaminaDrain)
 	{
 		if (IsValid(Stamina))
 		{
@@ -184,7 +194,6 @@ bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor
 void UIFPlayerCombatComponent::TriggerGuardBreak()
 {
 	InvalidateMontageExecution();
-	bBlockInputHeld = false;
 	bAttackBuffered = false;
 	ClearComboWindowState();
 	CloseHitWindow();
@@ -228,6 +237,7 @@ void UIFPlayerCombatComponent::HandleGuardBreakEnded()
 	if (GetCombatState() == EIFCombatState::Stunned)
 	{
 		SetCombatState(EIFCombatState::Idle);
+		TryResumeBlock();
 	}
 }
 
@@ -312,11 +322,14 @@ bool UIFPlayerCombatComponent::RequestLeapSlam()
 	LeapSlamAttackStep.Montage = LeapSlamConfig.Montage;
 	LeapSlamAttackStep.Damage = LeapSlamConfig.Damage;
 	LeapSlamAttackStep.StaminaCost = LeapSlamConfig.StaminaCost;
+	LeapSlamAttackStep.bCausesHeavyStagger = LeapSlamConfig.bCausesHeavyStagger;
 	LeapSlamAttackStep.HitRadius = LeapSlamConfig.LeapSlamTraceRadius;
 	LeapSlamAttackStep.HitStartSocket = LeapSlamConfig.HitStartSocket;
 	LeapSlamAttackStep.HitEndSocket = LeapSlamConfig.HitEndSocket;
 	LeapSlamAttackStep.TraceSampleCount = LeapSlamConfig.TraceSampleCount;
 	LeapSlamAttackStep.HitVFX = LeapSlamConfig.HitVFX;
+	LeapSlamAttackStep.HitCascadeVFX = LeapSlamConfig.HitCascadeVFX;
+	LeapSlamAttackStep.HitstopSeconds = LeapSlamConfig.HitstopSeconds;
 	LeapSlamAttackStep.HitSound = LeapSlamConfig.HitSound;
 
 	bIsLeapSlamming = true;
@@ -452,6 +465,10 @@ void UIFPlayerCombatComponent::GatherRequiredAssetPaths(TArray<FSoftObjectPath>&
 	{
 		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitVFX.ToSoftObjectPath());
 	}
+	if (!LoadedCombatData->ShieldBlock.GuardAttack.HitCascadeVFX.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitCascadeVFX.ToSoftObjectPath());
+	}
 	if (!LoadedCombatData->ShieldBlock.GuardAttack.HitSound.IsNull())
 	{
 		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitSound.ToSoftObjectPath());
@@ -463,6 +480,10 @@ void UIFPlayerCombatComponent::GatherRequiredAssetPaths(TArray<FSoftObjectPath>&
 	if (!LoadedCombatData->LeapSlam.HitVFX.IsNull())
 	{
 		OutAssetPaths.Add(LoadedCombatData->LeapSlam.HitVFX.ToSoftObjectPath());
+	}
+	if (!LoadedCombatData->LeapSlam.HitCascadeVFX.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->LeapSlam.HitCascadeVFX.ToSoftObjectPath());
 	}
 	if (!LoadedCombatData->LeapSlam.HitSound.IsNull())
 	{
@@ -498,11 +519,17 @@ void UIFPlayerCombatComponent::HandleMontageBlendingOut(UAnimMontage* Montage, b
 	}
 }
 
-void UIFPlayerCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator)
+void UIFPlayerCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator, bool bIsHeavyStagger)
 {
 	const AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
 	if (!IsValid(Player) || Player->IsDead() || IsStunned())
 	{
+		return;
+	}
+
+	if (!bIsHeavyStagger || (GetCombatState() == EIFCombatState::Attacking && bIsLeapSlamming))
+	{
+		Super::PlayDirectionalHitReact(DamageCauser, EventInstigator, false);
 		return;
 	}
 
@@ -517,13 +544,14 @@ void UIFPlayerCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, ACo
 		return;
 	}
 
-	if (CurrentState == EIFCombatState::Attacking)
+	Super::PlayDirectionalHitReact(DamageCauser, EventInstigator, true);
+
+	if (!IsAttacking())
 	{
 		bAttackBuffered = false;
 		ClearComboWindowState();
 	}
 
-	Super::PlayDirectionalHitReact(DamageCauser, EventInstigator);
 	if (IsIdle())
 	{
 		TryResumeBlock();

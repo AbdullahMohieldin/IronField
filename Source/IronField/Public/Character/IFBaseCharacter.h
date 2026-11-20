@@ -37,6 +37,16 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Character|State")
 	bool IsAlive() const { return !IsDead(); }
 
+	/** Returns the cached horizontal push direction from the most recent incoming damage source. */
+	UFUNCTION(BlueprintPure, Category = "IronField|Character|Combat")
+	FVector GetLastDamageDirection() const { return LastDamageDirection; }
+
+	/** Temporarily slows actor-local time dilation for crisp impact feel without altering global world time. */
+	void ApplyLocalHitstop(float DurationSeconds, float TimeDilation = 0.05f);
+
+	/** Restores actor-local time dilation to 1.0 and cancels any pending hitstop timer. */
+	void ClearLocalHitstop();
+
 	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
 
 	// IGenericTeamAgentInterface
@@ -58,6 +68,11 @@ protected:
 
 	virtual void OnDeathStarted() {}
 
+	// Bound to UIFHealthComponent::OnDeath. Soldiers override this to tear down AI after
+	// the shared death work (movement stop, collision, broadcast) has run.
+	UFUNCTION()
+	virtual void HandleDeath(AActor* DeadActor);
+
 	// Restores collision, movement, and the death gate so the character can live (and die) again.
 	void RestoreAliveState();
 
@@ -67,9 +82,6 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Character|Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UIFCombatComponent> CombatComponent;
-
-	UFUNCTION()
-	void HandleDeath(AActor* DeadActor);
 
 	void StopMovementForDeath();
 	void DisableCollisionForDeath();
@@ -87,4 +99,8 @@ private:
 	bool bMeshAffectsNavigation = false;
 	bool bSavedOrientRotationToMovement = false;
 	bool bSavedUseControllerDesiredRotation = false;
+
+	FVector LastDamageDirection = FVector::ZeroVector;
+	FTimerHandle HitstopTimerHandle;
+	bool bInLocalHitstop = false;
 };

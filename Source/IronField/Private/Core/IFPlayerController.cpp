@@ -1,6 +1,7 @@
 #include "Core/IFPlayerController.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Character/IFPlayerCharacter.h"
 #include "Core/IFGameInstance.h"
 #include "Core/IFLog.h"
 #include "Engine/AssetManager.h"
@@ -9,12 +10,18 @@
 #include "InputAction.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include "UI/IFVitalBarsWidget.h"
 
 void AIFPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
 	ApplyGameplayInputMode();
+
+	if (APawn* const CurrentPawn = GetPawn())
+	{
+		EnsurePlayerHUDCreatedAndBound(CurrentPawn);
+	}
 
 	FStreamableManager& Streamable = UAssetManager::GetStreamableManager();
 
@@ -62,6 +69,13 @@ void AIFPlayerController::EndPlay(const EEndPlayReason::Type Reason)
 		PauseActionLoadHandle.Reset();
 	}
 
+	if (IsValid(PlayerHUDWidget))
+	{
+		PlayerHUDWidget->UnbindVitalComponents();
+		PlayerHUDWidget->RemoveFromParent();
+		PlayerHUDWidget = nullptr;
+	}
+
 	if (IsValid(HUDWidget))
 	{
 		HUDWidget->RemoveFromParent();
@@ -77,6 +91,37 @@ void AIFPlayerController::EndPlay(const EEndPlayReason::Type Reason)
 	}
 
 	Super::EndPlay(Reason);
+}
+
+void AIFPlayerController::OnPossess(APawn* InPawn)
+{
+	Super::OnPossess(InPawn);
+	EnsurePlayerHUDCreatedAndBound(InPawn);
+}
+
+void AIFPlayerController::EnsurePlayerHUDCreatedAndBound(APawn* InPawn)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!IsValid(PlayerHUDWidget) && PlayerHUDWidgetClass)
+	{
+		PlayerHUDWidget = CreateWidget<UIFVitalBarsWidget>(this, PlayerHUDWidgetClass);
+		if (IsValid(PlayerHUDWidget))
+		{
+			PlayerHUDWidget->AddToViewport();
+		}
+	}
+
+	if (IsValid(PlayerHUDWidget))
+	{
+		if (const AIFPlayerCharacter* const PlayerChar = Cast<AIFPlayerCharacter>(InPawn))
+		{
+			PlayerHUDWidget->BindToVitalComponents(PlayerChar->GetHealthComponent(), PlayerChar->GetStaminaComponent());
+		}
+	}
 }
 
 void AIFPlayerController::SetupInputComponent()

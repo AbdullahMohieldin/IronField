@@ -8,6 +8,7 @@
 
 class AIFBaseCharacter;
 class UAnimInstance;
+class UAnimMontage;
 
 UCLASS(ClassGroup = (IronField), meta = (BlueprintSpawnableComponent))
 class IRONFIELD_API UIFCombatComponent : public UActorComponent
@@ -42,7 +43,7 @@ public:
 	bool IsStunned() const { return CombatState == EIFCombatState::Stunned; }
 
 	virtual bool TryBlockIncomingDamage(float DamageAmount, AActor* DamageCauser, AController* EventInstigator);
-	virtual void PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator);
+	virtual void PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator, bool bIsHeavyStagger = false);
 
 	virtual void HandleOwnerDeath();
 	virtual void HandleOwnerRevived();
@@ -52,12 +53,17 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	void SetCombatState(EIFCombatState NewState);
+	virtual void HandleCombatStateTransition(EIFCombatState PreviousState, EIFCombatState NewState) {}
 	virtual void OnHitReactFinished();
+
+	UAnimMontage* ResolveDirectionalHitReactMontage(AActor* DamageCauser, AController* EventInstigator);
+	bool PlayAdditiveFlinchMontage(UAnimMontage* MontageToPlay);
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimInstance> CachedAnimInstance;
 
 	TWeakObjectPtr<AIFBaseCharacter> OwnerCharacter;
+	TWeakObjectPtr<UAnimMontage> ActiveFlinchMontage;
 
 	FTimerHandle HitReactTimerHandle;
 
