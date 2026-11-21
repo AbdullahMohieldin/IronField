@@ -4,6 +4,7 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Combat/IFCombatComponent.h"
 #include "Combat/IFPlayerCombatComponent.h"
+#include "Core/IFPlayerController.h"
 #include "Engine/AssetManager.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/StreamableManager.h"
@@ -17,6 +18,7 @@
 #include "InputMappingContext.h"
 #include "Stats/IFHealthComponent.h"
 #include "Stats/IFStaminaComponent.h"
+#include "Tactical/IFTacticalCommandComponent.h"
 #include "TimerManager.h"
 
 AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializer)
@@ -97,6 +99,7 @@ void AIFPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		RemoveDefaultMappingContext();
 	}
+	bIsInTacticalStandby = false;
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -118,6 +121,7 @@ void AIFPlayerCharacter::PossessedBy(AController* NewController)
 void AIFPlayerCharacter::UnPossessed()
 {
 	// The controller is still valid here; the base clears it and destroys the input component.
+	bIsInTacticalStandby = false;
 	RemoveDefaultMappingContext();
 
 	if (InputAssetsLoadHandle.IsValid())
@@ -183,7 +187,10 @@ void AIFPlayerCharacter::HandleInputAssetsLoaded()
 		return;
 	}
 
-	AddDefaultMappingContext();
+	if (!bIsInTacticalStandby)
+	{
+		AddDefaultMappingContext();
+	}
 	BindInputActions();
 }
 
@@ -275,9 +282,63 @@ void AIFPlayerCharacter::BindInputActions()
 	}
 }
 
+void AIFPlayerCharacter::EnterTacticalStandby()
+{
+	if (bIsInTacticalStandby)
+	{
+		return;
+	}
+
+	bIsInTacticalStandby = true;
+	RemoveDefaultMappingContext();
+
+	CachedMovementInput = FVector2D::ZeroVector;
+	bSprintRequested = false;
+	StopJumping();
+	UpdateSprintState();
+	UpdateMovementSpeed();
+
+	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
+	{
+		if (Movement->IsFalling())
+		{
+			Movement->Velocity.X = 0.f;
+			Movement->Velocity.Y = 0.f;
+		}
+		else
+		{
+			Movement->StopMovementImmediately();
+		}
+	}
+
+	if (UIFPlayerCombatComponent* const PlayerCombat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
+	{
+		PlayerCombat->CancelPendingInputsForTacticalMode();
+	}
+}
+
+void AIFPlayerCharacter::ExitTacticalStandby()
+{
+	if (!bIsInTacticalStandby)
+	{
+		return;
+	}
+
+	bIsInTacticalStandby = false;
+
+	if (!IsDead() && IsValid(GetController()))
+	{
+		AddDefaultMappingContext();
+	}
+
+	UpdateRotationMode();
+	UpdateSprintState();
+	UpdateMovementSpeed();
+}
+
 void AIFPlayerCharacter::Move(const FInputActionValue& Value)
 {
-	if (!IsValid(Controller) || IsDead())
+	if (!IsValid(Controller) || IsDead() || bIsInTacticalStandby)
 	{
 		return;
 	}
@@ -319,7 +380,7 @@ void AIFPlayerCharacter::Look(const FInputActionValue& Value)
 
 void AIFPlayerCharacter::Jump()
 {
-	if (IsDead())
+	if (IsDead() || bIsInTacticalStandby)
 	{
 		return;
 	}
@@ -335,6 +396,11 @@ void AIFPlayerCharacter::Jump()
 
 void AIFPlayerCharacter::StartSprint()
 {
+	if (bIsInTacticalStandby)
+	{
+		return;
+	}
+
 	bSprintRequested = true;
 	UpdateSprintState();
 }
@@ -347,6 +413,11 @@ void AIFPlayerCharacter::StopSprint()
 
 void AIFPlayerCharacter::Attack()
 {
+	if (bIsInTacticalStandby)
+	{
+		return;
+	}
+
 	if (UIFPlayerCombatComponent* const Combat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
 	{
 		Combat->RequestAttack();
@@ -355,6 +426,11 @@ void AIFPlayerCharacter::Attack()
 
 void AIFPlayerCharacter::StartBlock()
 {
+	if (bIsInTacticalStandby)
+	{
+		return;
+	}
+
 	if (UIFPlayerCombatComponent* const Combat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
 	{
 		Combat->StartBlock();
@@ -371,6 +447,11 @@ void AIFPlayerCharacter::StopBlock()
 
 void AIFPlayerCharacter::RequestLeapSlam()
 {
+	if (bIsInTacticalStandby)
+	{
+		return;
+	}
+
 	if (UIFPlayerCombatComponent* const Combat = Cast<UIFPlayerCombatComponent>(GetCombatComponent()))
 	{
 		Combat->RequestLeapSlam();
@@ -492,6 +573,14 @@ void AIFPlayerCharacter::OnDeathStarted()
 	bSprintRequested = false;
 	CachedMovementInput = FVector2D::ZeroVector;
 	UpdateSprintState();
+
+	if (AIFPlayerController* const PC = Cast<AIFPlayerController>(GetController()))
+	{
+		if (UIFTacticalCommandComponent* const Tactical = PC->GetTacticalCommandComponent())
+		{
+			Tactical->ExitTacticalMode(true);
+		}
+	}
 
 	bUseControllerRotationYaw = false;
 }

@@ -13,7 +13,7 @@ namespace
 		const AIFSoldierCharacter* const Soldier = Controller.GetSoldier();
 		if (IsValid(Soldier) && IsValid(GoalActor) && GoalActor == Controller.GetCurrentTarget())
 		{
-			return FMath::Max(25.f, Soldier->GetEffectiveAttackRange(GoalActor) * 0.78f);
+			return Soldier->GetEffectiveAttackRange(GoalActor);
 		}
 		return Controller.GetMoveGoalAcceptanceRadius();
 	}
@@ -40,6 +40,8 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 	Memory.TrackedGoalActor = GoalActor;
 	Memory.bTrackedActorGoal = IsValid(GoalActor);
 	Memory.TrackedGoalLocation = GoalLocation;
+	Memory.LastProgressLocation = IsValid(Controller.GetPawn()) ? Controller.GetPawn()->GetActorLocation() : FVector::ZeroVector;
+	Memory.StallElapsedSeconds = 0.f;
 
 	FAIMoveRequest MoveReq;
 	if (IsValid(GoalActor))
@@ -78,7 +80,9 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::ExecuteTask(UBehaviorTreeComponent& O
 	Memory->Controller.Reset();
 	Memory->TrackedGoalActor.Reset();
 	Memory->TrackedGoalLocation = FVector::ZeroVector;
+	Memory->LastProgressLocation = FVector::ZeroVector;
 	Memory->ElapsedSeconds = 0.f;
+	Memory->StallElapsedSeconds = 0.f;
 	Memory->bTrackedActorGoal = false;
 
 	AIFSoldierAIController* const Controller = Cast<AIFSoldierAIController>(OwnerComp.GetAIOwner());
@@ -157,18 +161,46 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		? CurrentGoalActor->GetActorLocation()
 		: CurrentGoalLocation;
 
+	const FVector PawnLocation = Controller->GetPawn()->GetActorLocation();
 	const float Radius = ComputeAcceptanceRadius(*Controller, CurrentGoalActor);
-	const float DistSq2D = FVector::DistSquared2D(Controller->GetPawn()->GetActorLocation(), GoalLocation);
+	const float DistSq2D = FVector::DistSquared2D(PawnLocation, GoalLocation);
 	if (DistSq2D <= FMath::Square(Radius))
 	{
 		FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
 		return;
 	}
 
+	if (!IsValid(CurrentGoalActor))
+	{
+		if (FVector::DistSquared2D(PawnLocation, Memory->LastProgressLocation) >= FMath::Square(MinStallProgressDistance))
+		{
+			Memory->LastProgressLocation = PawnLocation;
+			Memory->StallElapsedSeconds = 0.f;
+		}
+		else
+		{
+			Memory->StallElapsedSeconds += DeltaSeconds;
+			if (Memory->StallElapsedSeconds >= StallTimeoutSeconds)
+			{
+				Controller->StopMovement();
+				Controller->NotifyMoveOrderBlockedOrStalled();
+				FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
+				return;
+			}
+		}
+	}
+
 	// A request that has already gone Idle without reaching the goal ended early
-	// (blocked, partial path or goal unreachable). Let the tree retry after its Wait.
+	// (blocked, partial path or goal unreachable). Commit reachable spot for location orders.
 	if (Controller->GetMoveStatus() == EPathFollowingStatus::Idle)
 	{
+		if (!IsValid(CurrentGoalActor))
+		{
+			Controller->NotifyMoveOrderBlockedOrStalled();
+			FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
+			return;
+		}
+
 		const EBTNodeResult::Type Result = (DistSq2D <= FMath::Square(Radius + 5.f))
 			? EBTNodeResult::Succeeded
 			: EBTNodeResult::Failed;
@@ -186,5 +218,11 @@ void UIFBTTask_SoldierMove::OnTaskFinished(UBehaviorTreeComponent& OwnerComp, ui
 		// Always stop, including on success: the attack task starts immediately after
 		// and residual velocity would make the soldier slide through its wind-up.
 		Controller->StopMovement();
+
+		// Immediately evaluate arrival so formation orders transition to Anchor Idle & facing on this exact frame.
+		if (TaskResult == EBTNodeResult::Succeeded)
+		{
+			Controller->RefreshDecision();
+		}
 	}
 }

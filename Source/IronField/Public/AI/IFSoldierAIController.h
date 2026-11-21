@@ -40,7 +40,7 @@ public:
 	// --- Part 08 order API (semantics: MoveToLocation/AttackTarget/FollowActor/HoldPosition).
 	//     Names are prefixed because AAIController already reflects MoveToLocation.
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Orders")
-	bool IssueMoveToLocation(const FVector& Location, float AcceptanceRadius = 75.f);
+	bool IssueMoveToLocation(const FVector& Location, float AcceptanceRadius = 20.f, float DesiredFacingYaw = 0.f, bool bUseFacingYaw = false);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Orders")
 	bool IssueAttackTarget(AActor* Target);
@@ -78,6 +78,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|State")
 	void RefreshDecision();
 
+	void NotifyMoveOrderBlockedOrStalled();
+
 	AIFSoldierCharacter* GetSoldier() const;
 
 	// IGenericTeamAgentInterface — perception filters on the listener's attitude.
@@ -110,7 +112,51 @@ protected:
 
 	// Hysteresis on the autonomous engagement radius; prevents border flicker.
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "1.0"))
-	float LeashHysteresisMultiplier = 1.25f;
+	float LeashHysteresisMultiplier = 1.15f;
+
+	// Extra distance beyond FollowDistance before an escorting soldier breaks to catch up.
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "0.0"))
+	float FollowResumeBuffer = 100.f;
+
+	// Max extra distance beyond FollowDistance allowed while defending Greystone before breaking off.
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "0.0"))
+	float FollowLeashBreakBuffer = 450.f;
+
+	// Cooldown between autonomous target switches to prevent ping-ponging in dense melee.
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "0.0"))
+	float TargetSwitchCooldownSeconds = 1.0f;
+
+	// Candidate must be closer than this fraction of CurrentTarget's distance to break target stickiness.
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+	float TargetSwitchDistanceRatio = 0.65f;
+
+	// Distance from the soldier within which a closer threat or recent attacker can interrupt CurrentTarget.
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "50.0"))
+	float TargetSwitchInterceptRadius = 280.f;
+
+	// Recency window during which a melee damage instigator can pull aggro from a distant target.
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "0.0"))
+	float DamageRetaliationWindowSeconds = 2.0f;
+
+	// Move-order en-route combat interrupt settings (temporary pause, resumes MoveToLocation once clear).
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "0.0"))
+	float MoveOrderDisengageGraceSeconds = 0.75f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "50.0"))
+	float MoveOrderRetaliationRadius = 280.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "50.0"))
+	float MoveOrderInterceptRadius = 185.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "100.0"))
+	float AttackOrderClusterRadius = 450.f;
+
+	// Distance from anchor that triggers walking back to post, and tight arrival tolerance for HoldPosition.
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "10.0"))
+	float AnchorReturnTriggerDistance = 45.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "10.0"))
+	float AnchorReturnAcceptanceRadius = 20.f;
 
 private:
 	void RequestBehaviorTree();
@@ -119,9 +165,12 @@ private:
 	void ApplyPendingTreeRestart();
 
 	void SetCurrentAction(EIFSoldierAction NewAction);
+	void GatherValidCombatCandidates(TArray<AActor*>& OutCandidates) const;
 	AActor* AcquireBestTarget() const;
+	AActor* AcquireMoveOrderInterruptTarget() const;
 	bool IsTargetValidForCombat(AActor* Target) const;
 	float GetEngageRadius() const;
+	float GetMaxFollowLeashDistance() const;
 	void UpdateMoveGoalForAction();
 	void PruneKnownHostiles();
 	void ClearMoveGoal();
@@ -140,6 +189,9 @@ private:
 
 	TMap<TWeakObjectPtr<AActor>, float> KnownHostiles;
 	TWeakObjectPtr<AActor> CurrentTarget;
+	TWeakObjectPtr<AActor> RecentDamageInstigator;
+	float RecentDamageTime = -1000.f;
+	float LastTargetSwitchTime = -1000.f;
 	FIFSoldierOrder CurrentOrder;
 
 	TWeakObjectPtr<AActor> MoveGoalActor;

@@ -13,7 +13,9 @@ struct FBTTask_SoldierMoveMemory
 	TWeakObjectPtr<AIFSoldierAIController> Controller;
 	TWeakObjectPtr<AActor> TrackedGoalActor;
 	FVector TrackedGoalLocation = FVector::ZeroVector;
+	FVector LastProgressLocation = FVector::ZeroVector;
 	float ElapsedSeconds = 0.f;
+	float StallElapsedSeconds = 0.f;
 	bool bTrackedActorGoal = false;
 };
 
@@ -39,6 +41,12 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "1.0"))
 	float MaxMoveSeconds = 20.f;
+
+	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0.3"))
+	float StallTimeoutSeconds = 1.85f;
+
+	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "5.0"))
+	float MinStallProgressDistance = 25.f;
 
 private:
 	// Issues one request for the controller's current goal and records what was requested.

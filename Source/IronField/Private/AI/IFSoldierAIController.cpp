@@ -28,10 +28,10 @@ AIFSoldierAIController::AIFSoldierAIController(const FObjectInitializer& ObjectI
 	SetPerceptionComponent(*Perception);
 
 	SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
-	SightConfig->SightRadius = 1400.f;
-	SightConfig->LoseSightRadius = 1800.f;
+	SightConfig->SightRadius = 900.f;
+	SightConfig->LoseSightRadius = 1150.f;
 	SightConfig->PeripheralVisionAngleDegrees = 75.f;
-	SightConfig->AutoSuccessRangeFromLastSeenLocation = 300.f;
+	SightConfig->AutoSuccessRangeFromLastSeenLocation = 150.f;
 	SightConfig->SetMaxAge(4.f);
 	SightConfig->DetectionByAffiliation.bDetectEnemies = true;
 	SightConfig->DetectionByAffiliation.bDetectNeutrals = false;
@@ -80,6 +80,9 @@ void AIFSoldierAIController::OnPossess(APawn* InPawn)
 	CurrentAction = EIFSoldierAction::None;
 	DecisionSerial = 0;
 	CurrentTarget.Reset();
+	RecentDamageInstigator.Reset();
+	RecentDamageTime = -1000.f;
+	LastTargetSwitchTime = -1000.f;
 	CurrentOrder.Reset();
 	KnownHostiles.Reset();
 	ClearMoveGoal();
@@ -100,6 +103,9 @@ void AIFSoldierAIController::OnUnPossess()
 	BoundHealthComponent.Reset();
 
 	CurrentTarget.Reset();
+	RecentDamageInstigator.Reset();
+	RecentDamageTime = -1000.f;
+	LastTargetSwitchTime = -1000.f;
 	KnownHostiles.Reset();
 	ClearMoveGoal();
 
@@ -210,6 +216,16 @@ void AIFSoldierAIController::RefreshDecision()
 
 	PruneKnownHostiles();
 
+	AActor* const PreviousTarget = CurrentTarget.Get();
+	const float Now = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
+	auto RecordTargetSwitchIfChanged = [this, PreviousTarget, Now](AActor* NewTarget)
+	{
+		if (IsValid(NewTarget) && NewTarget != PreviousTarget)
+		{
+			LastTargetSwitchTime = Now;
+		}
+	};
+
 	// ---- 1. Explicit orders (ignore the leash) ---------------------------
 	// A completed or impossible order resets itself and breaks out of the switch
 	// so Priority 2 evaluates the new situation in the same call.
@@ -219,38 +235,120 @@ void AIFSoldierAIController::RefreshDecision()
 		{
 		case EIFSoldierOrderType::MoveToLocation:
 		{
-			CurrentTarget.Reset();
 			const float Radius = FMath::Max(CurrentOrder.Radius, 10.f);
 			if (FVector::DistSquared2D(Soldier->GetActorLocation(), CurrentOrder.Location) > FMath::Square(Radius))
 			{
+				// Engage blocking or attacking enemies en route while keeping CurrentOrder intact so march resumes once clear.
+				if (AActor* const InterruptTarget = AcquireMoveOrderInterruptTarget())
+				{
+					CurrentTarget = InterruptTarget;
+					RecordTargetSwitchIfChanged(InterruptTarget);
+					UpdateMoveGoalForAction();
+					Soldier->CancelAnchorFacingAlignment();
+					Soldier->SetStationaryFormationRVO(false);
+					SetCurrentAction(EIFSoldierAction::AttackTarget);
+					return;
+				}
+
+				CurrentTarget.Reset();
 				bHasMoveGoal = true;
 				MoveGoalActor.Reset();
 				MoveGoalLocation = CurrentOrder.Location;
 				MoveGoalAcceptanceRadius = Radius;
+				Soldier->CancelAnchorFacingAlignment();
+				Soldier->SetStationaryFormationRVO(false);
 				SetCurrentAction(EIFSoldierAction::MoveTo);
 				return;
 			}
 
 			// Arrived: the destination becomes the new post; combat is Priority 2's job.
 			Soldier->SetAnchorLocation(CurrentOrder.Location, /*bRefreshControllerDecision*/ false);
+			if (CurrentOrder.bHasFacingYaw)
+			{
+				Soldier->SetAnchorFacingYaw(CurrentOrder.FacingYaw);
+			}
+			else
+			{
+				Soldier->ClearAnchorFacing();
+			}
 			CurrentOrder.Reset();
 			break;
 		}
 
 		case EIFSoldierOrderType::AttackTarget:
 		{
-			AActor* const Ordered = CurrentOrder.TargetActor.Get();
+			AActor* Ordered = CurrentOrder.TargetActor.Get();
 			if (!IsTargetValidForCombat(Ordered))
 			{
-				// Target gone: drop the order and let Priority 2 pick the next threat now.
+				// Target gone: anchor near current ground so Priority 2 fights remaining surrounding enemies instead of retreating home.
+				Soldier->SetAnchorLocation(Soldier->GetActorLocation(), /*bRefreshControllerDecision*/ false);
+				Soldier->ClearAnchorFacing();
 				CurrentOrder.Reset();
 				CurrentTarget.Reset();
 				break;
 			}
 
+			// En-route intercept & anti-dogpile peel: before reaching Ordered, allow switching to a closer threatening hostile.
+			const float OrderedDist = FVector::Dist2D(Soldier->GetActorLocation(), Ordered->GetActorLocation());
+			const float OrderedInReachDist = Soldier->GetMaxMeleeEngagementRange(Ordered);
+			if (OrderedDist > OrderedInReachDist && (Now - LastTargetSwitchTime) >= TargetSwitchCooldownSeconds)
+			{
+				AActor* BetterTarget = nullptr;
+				if (AActor* const Attacker = RecentDamageInstigator.Get())
+				{
+					if ((Now - RecentDamageTime) <= DamageRetaliationWindowSeconds && IsTargetValidForCombat(Attacker)
+						&& Attacker != Ordered
+						&& FVector::DistSquared2D(Soldier->GetActorLocation(), Attacker->GetActorLocation())
+							<= FMath::Square(FMath::Max(TargetSwitchInterceptRadius, 50.f)))
+					{
+						BetterTarget = Attacker;
+					}
+				}
+
+				if (!IsValid(BetterTarget))
+				{
+					TArray<AActor*> Candidates;
+					GatherValidCombatCandidates(Candidates);
+					const FVector OrderedLoc = Ordered->GetActorLocation();
+					const float ClusterRadiusSq = FMath::Square(FMath::Max(AttackOrderClusterRadius, 100.f));
+					float BestCandidateDist = OrderedDist * FMath::Clamp(TargetSwitchDistanceRatio, 0.1f, 1.0f);
+
+					for (AActor* const Candidate : Candidates)
+					{
+						if (Candidate == Ordered)
+						{
+							continue;
+						}
+
+						const FVector CandidateLoc = Candidate->GetActorLocation();
+						const float DistToSelf = FVector::Dist2D(Soldier->GetActorLocation(), CandidateLoc);
+						const float ImmediateInterceptDist = Soldier->GetMaxMeleeEngagementRange(Candidate);
+						const bool bInCluster = FVector::DistSquared2D(OrderedLoc, CandidateLoc) <= ClusterRadiusSq;
+						const bool bBlocksPath = (DistToSelf <= ImmediateInterceptDist);
+
+						if ((bBlocksPath || bInCluster) && DistToSelf < BestCandidateDist)
+						{
+							BestCandidateDist = DistToSelf;
+							BetterTarget = Candidate;
+						}
+					}
+				}
+
+				if (IsValid(BetterTarget))
+				{
+					CurrentOrder.TargetActor = BetterTarget;
+					Ordered = BetterTarget;
+				}
+			}
+
+			Soldier->SetAnchorLocation(Ordered->GetActorLocation(), /*bRefreshControllerDecision*/ false);
+			Soldier->ClearAnchorFacing();
 			CurrentTarget = Ordered;
-			KnownHostiles.Add(Ordered, GetWorld()->GetTimeSeconds());
+			RecordTargetSwitchIfChanged(Ordered);
+			KnownHostiles.Add(Ordered, Now);
 			UpdateMoveGoalForAction();
+			Soldier->CancelAnchorFacingAlignment();
+			Soldier->SetStationaryFormationRVO(false);
 			SetCurrentAction(EIFSoldierAction::AttackTarget);
 			return;
 		}
@@ -258,17 +356,53 @@ void AIFSoldierAIController::RefreshDecision()
 		case EIFSoldierOrderType::FollowActor:
 		{
 			AActor* const Followed = CurrentOrder.TargetActor.Get();
-			if (!IsValid(Followed))
+			const AIFBaseCharacter* const FollowedCharacter = Cast<AIFBaseCharacter>(Followed);
+			if (!IsValid(Followed) || (IsValid(FollowedCharacter) && FollowedCharacter->IsDead()))
 			{
 				CurrentOrder.Reset();
 				CurrentTarget.Reset();
 				break;
 			}
 
-			CurrentTarget.Reset();
 			const float FollowDistance = FMath::Max(CurrentOrder.Radius, 50.f);
-			if (FVector::DistSquared2D(Soldier->GetActorLocation(), Followed->GetActorLocation())
-				> FMath::Square(FollowDistance))
+			const float ResumeDistance = FollowDistance + FollowResumeBuffer;
+			const float LeashBreakDistance = GetMaxFollowLeashDistance();
+			const float DistToFollowedSq = FVector::DistSquared2D(Soldier->GetActorLocation(), Followed->GetActorLocation());
+
+			if (DistToFollowedSq > FMath::Square(LeashBreakDistance))
+			{
+				CurrentTarget.Reset();
+				bHasMoveGoal = true;
+				MoveGoalActor = Followed;
+				MoveGoalAcceptanceRadius = FollowDistance;
+				Soldier->CancelAnchorFacingAlignment();
+				Soldier->SetStationaryFormationRVO(false);
+				SetCurrentAction(EIFSoldierAction::FollowActor);
+				return;
+			}
+
+			const bool bWasCatchingUp = (CurrentAction == EIFSoldierAction::FollowActor) && bHasMoveGoal;
+			const float CatchUpThreshold = bWasCatchingUp ? FollowDistance : ResumeDistance;
+			const bool bInEscortBand = (DistToFollowedSq <= FMath::Square(CatchUpThreshold))
+				|| (CurrentAction == EIFSoldierAction::Defend && DistToFollowedSq <= FMath::Square(LeashBreakDistance));
+
+			if (bInEscortBand)
+			{
+				AActor* const EscortTarget = AcquireBestTarget();
+				if (IsValid(EscortTarget))
+				{
+					CurrentTarget = EscortTarget;
+					RecordTargetSwitchIfChanged(EscortTarget);
+					UpdateMoveGoalForAction();
+					Soldier->CancelAnchorFacingAlignment();
+					Soldier->SetStationaryFormationRVO(false);
+					SetCurrentAction(EIFSoldierAction::Defend);
+					return;
+				}
+			}
+
+			CurrentTarget.Reset();
+			if (DistToFollowedSq > FMath::Square(CatchUpThreshold))
 			{
 				bHasMoveGoal = true;
 				MoveGoalActor = Followed;
@@ -278,6 +412,8 @@ void AIFSoldierAIController::RefreshDecision()
 			{
 				ClearMoveGoal();
 			}
+			Soldier->CancelAnchorFacingAlignment();
+			Soldier->SetStationaryFormationRVO(!bHasMoveGoal);
 			SetCurrentAction(EIFSoldierAction::FollowActor);
 			return;
 		}
@@ -309,7 +445,10 @@ void AIFSoldierAIController::RefreshDecision()
 
 		if (IsValid(CurrentTarget.Get()))
 		{
+			RecordTargetSwitchIfChanged(CurrentTarget.Get());
 			UpdateMoveGoalForAction();
+			Soldier->CancelAnchorFacingAlignment();
+			Soldier->SetStationaryFormationRVO(false);
 			SetCurrentAction(Soldier->IsLeashedToAnchor()
 				? EIFSoldierAction::Defend
 				: EIFSoldierAction::AttackTarget);
@@ -351,6 +490,8 @@ void AIFSoldierAIController::RefreshDecision()
 			MoveGoalActor = AdvanceActor;
 			MoveGoalLocation = GoalLocation;
 			MoveGoalAcceptanceRadius = FMath::Max(StopDistance * 0.5f, 50.f);
+			Soldier->CancelAnchorFacingAlignment();
+			Soldier->SetStationaryFormationRVO(false);
 			SetCurrentAction(EIFSoldierAction::Advance);
 			return;
 		}
@@ -358,17 +499,23 @@ void AIFSoldierAIController::RefreshDecision()
 
 	// ---- 4. Return to post / idle ---------------------------------------
 	ClearMoveGoal();
+	const float ReturnTriggerDist = FMath::Max(AnchorReturnTriggerDistance, 15.f);
+	const float ReturnAcceptance = FMath::Max(AnchorReturnAcceptanceRadius, 10.f);
 	if (Soldier->IsLeashedToAnchor()
-		&& FVector::DistSquared2D(Soldier->GetActorLocation(), Soldier->GetAnchorLocation()) > FMath::Square(125.f))
+		&& FVector::DistSquared2D(Soldier->GetActorLocation(), Soldier->GetAnchorLocation()) > FMath::Square(ReturnTriggerDist))
 	{
 		bHasMoveGoal = true;
 		MoveGoalActor.Reset();
 		MoveGoalLocation = Soldier->GetAnchorLocation();
-		MoveGoalAcceptanceRadius = 75.f;
+		MoveGoalAcceptanceRadius = ReturnAcceptance;
+		Soldier->CancelAnchorFacingAlignment();
+		Soldier->SetStationaryFormationRVO(false);
 		SetCurrentAction(EIFSoldierAction::HoldPosition);
 		return;
 	}
 
+	Soldier->SetStationaryFormationRVO(true);
+	Soldier->BeginAnchorFacingAlignment();
 	SetCurrentAction(EIFSoldierAction::Idle);
 }
 
@@ -412,6 +559,117 @@ void AIFSoldierAIController::ApplyPendingTreeRestart()
 // Targeting
 // ---------------------------------------------------------------------------
 
+void AIFSoldierAIController::GatherValidCombatCandidates(TArray<AActor*>& OutCandidates) const
+{
+	OutCandidates.Reset();
+
+	if (IsValid(Perception))
+	{
+		Perception->GetCurrentlyPerceivedActors(UAISense_Sight::StaticClass(), OutCandidates);
+	}
+
+	const float Now = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
+	for (const TPair<TWeakObjectPtr<AActor>, float>& Pair : KnownHostiles)
+	{
+		AActor* const KnownActor = Pair.Key.Get();
+		if (IsValid(KnownActor) && (Now - Pair.Value) <= TargetMemorySeconds)
+		{
+			OutCandidates.AddUnique(KnownActor);
+		}
+	}
+
+	if (AActor* const Attacker = RecentDamageInstigator.Get())
+	{
+		if ((Now - RecentDamageTime) <= DamageRetaliationWindowSeconds)
+		{
+			OutCandidates.AddUnique(Attacker);
+		}
+	}
+
+	OutCandidates.RemoveAll([this](AActor* Candidate)
+	{
+		return !IsTargetValidForCombat(Candidate);
+	});
+}
+
+AActor* AIFSoldierAIController::AcquireMoveOrderInterruptTarget() const
+{
+	const AIFSoldierCharacter* const Soldier = GetSoldier();
+	if (!IsValid(Soldier))
+	{
+		return nullptr;
+	}
+
+	const float Now = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
+	const FVector SoldierLoc = Soldier->GetActorLocation();
+	const FVector ToGoal = (CurrentOrder.Location - SoldierLoc).GetSafeNormal2D();
+	const bool bInDisengageGrace = (Now - CurrentOrder.IssuedTime) < MoveOrderDisengageGraceSeconds;
+
+	TArray<AActor*> Candidates;
+	GatherValidCombatCandidates(Candidates);
+	if (Candidates.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	const float RetaliationRadius = FMath::Max(MoveOrderRetaliationRadius, 50.f);
+	if (!bInDisengageGrace)
+	{
+		if (AActor* const Attacker = RecentDamageInstigator.Get())
+		{
+			if ((Now - RecentDamageTime) <= DamageRetaliationWindowSeconds
+				&& IsTargetValidForCombat(Attacker)
+				&& FVector::DistSquared2D(SoldierLoc, Attacker->GetActorLocation()) <= FMath::Square(RetaliationRadius))
+			{
+				return Attacker;
+			}
+		}
+
+		// Keep fighting an already-engaged interrupt target until dead or outside hysteresis band.
+		if (AActor* const Existing = CurrentTarget.Get())
+		{
+			if (CurrentAction == EIFSoldierAction::AttackTarget
+				&& IsTargetValidForCombat(Existing)
+				&& FVector::DistSquared2D(SoldierLoc, Existing->GetActorLocation()) <= FMath::Square(RetaliationRadius * 1.15f))
+			{
+				return Existing;
+			}
+		}
+	}
+
+	AActor* BestBlockingHostile = nullptr;
+	float BestDistSq = TNumericLimits<float>::Max();
+	for (AActor* const Candidate : Candidates)
+	{
+		const FVector CandidateLoc = Candidate->GetActorLocation();
+		const float DistSq = FVector::DistSquared2D(SoldierLoc, CandidateLoc);
+		const float EffectiveRange = Soldier->GetEffectiveAttackRange(Candidate);
+
+		bool bShouldInterrupt = false;
+		if (bInDisengageGrace)
+		{
+			// During fresh retreat grace window, only stop for an enemy physically body-blocking the path ahead.
+			const float BodyBlockRadius = EffectiveRange * 0.90f;
+			const FVector ToEnemy = (CandidateLoc - SoldierLoc).GetSafeNormal2D();
+			bShouldInterrupt = (DistSq <= FMath::Square(BodyBlockRadius))
+				&& (ToGoal.IsNearlyZero() || FVector::DotProduct(ToGoal, ToEnemy) >= 0.35f);
+		}
+		else
+		{
+			const float InterceptDist = FMath::Max(MoveOrderInterceptRadius, EffectiveRange + 35.f);
+			bShouldInterrupt = (DistSq <= FMath::Square(InterceptDist));
+		}
+
+		if (bShouldInterrupt && DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			BestBlockingHostile = Candidate;
+		}
+	}
+
+	return BestBlockingHostile;
+}
+
 AActor* AIFSoldierAIController::AcquireBestTarget() const
 {
 	const AIFSoldierCharacter* const Soldier = GetSoldier();
@@ -420,71 +678,112 @@ AActor* AIFSoldierAIController::AcquireBestTarget() const
 		return nullptr;
 	}
 
-	const float EngageRadius = GetEngageRadius();
+	const bool bIsEscortOrder = (CurrentOrder.Type == EIFSoldierOrderType::FollowActor);
+	const float EngageRadius = bIsEscortOrder
+		? FMath::Min(GetEngageRadius(), GetMaxFollowLeashDistance())
+		: GetEngageRadius();
 	const float EngageRadiusSq = FMath::Square(EngageRadius);
-	const FVector Reference = Soldier->IsLeashedToAnchor()
-		? Soldier->GetAnchorLocation()
-		: Soldier->GetActorLocation();
-	const float Now = GetWorld()->GetTimeSeconds();
+	const FVector SoldierLoc = Soldier->GetActorLocation();
+	const FVector Reference = (Soldier->IsLeashedToAnchor() || bIsEscortOrder)
+		? GetAnchorLocation()
+		: SoldierLoc;
+	const float Now = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
 
-	// Keep the current target while it is valid, hostile and inside the hysteresis ring.
+	TArray<AActor*> CandidatePool;
+	GatherValidCombatCandidates(CandidatePool);
+
+	AActor* BestOverall = nullptr;
+	float BestOverallRefDistSq = TNumericLimits<float>::Max();
+	AActor* ClosestToSoldier = nullptr;
+	float ClosestToSoldierDistSq = TNumericLimits<float>::Max();
+
+	for (AActor* const Candidate : CandidatePool)
+	{
+		const FVector CandidateLoc = Candidate->GetActorLocation();
+		const float RefDistSq = FVector::DistSquared2D(Reference, CandidateLoc);
+		if (RefDistSq > EngageRadiusSq)
+		{
+			continue;
+		}
+
+		if (RefDistSq < BestOverallRefDistSq)
+		{
+			BestOverallRefDistSq = RefDistSq;
+			BestOverall = Candidate;
+		}
+
+		const float SelfDistSq = FVector::DistSquared2D(SoldierLoc, CandidateLoc);
+		if (SelfDistSq < ClosestToSoldierDistSq)
+		{
+			ClosestToSoldierDistSq = SelfDistSq;
+			ClosestToSoldier = Candidate;
+		}
+	}
+
+	// Check whether a recent melee damage instigator is threatening this soldier within intercept range.
+	const float InterceptRadiusSq = FMath::Square(FMath::Max(TargetSwitchInterceptRadius, 50.f));
+	AActor* ValidRecentAttacker = nullptr;
+	if (AActor* const Attacker = RecentDamageInstigator.Get())
+	{
+		if ((Now - RecentDamageTime) <= DamageRetaliationWindowSeconds && IsTargetValidForCombat(Attacker))
+		{
+			const FVector AttackerLoc = Attacker->GetActorLocation();
+			if (FVector::DistSquared2D(Reference, AttackerLoc) <= EngageRadiusSq
+				&& FVector::DistSquared2D(SoldierLoc, AttackerLoc) <= InterceptRadiusSq)
+			{
+				ValidRecentAttacker = Attacker;
+			}
+		}
+	}
+
+	// Keep the current target inside its hysteresis ring unless a much closer threat or melee attacker interrupts it.
 	if (AActor* const Existing = CurrentTarget.Get())
 	{
 		if (IsTargetValidForCombat(Existing))
 		{
-			const float HysteresisSq = FMath::Square(EngageRadius * LeashHysteresisMultiplier);
+			const float HysteresisSq = bIsEscortOrder
+				? EngageRadiusSq
+				: FMath::Square(EngageRadius * LeashHysteresisMultiplier);
 			if (FVector::DistSquared2D(Reference, Existing->GetActorLocation()) <= HysteresisSq)
 			{
+				const bool bSwitchCooldownReady = (Now - LastTargetSwitchTime) >= TargetSwitchCooldownSeconds;
+				if (bSwitchCooldownReady)
+				{
+					const float ExistingSelfDist = FVector::Dist2D(SoldierLoc, Existing->GetActorLocation());
+					const float ExistingMeleeThreshold = Soldier->GetMaxMeleeEngagementRange(Existing);
+
+					// 1. Retaliate against a recent melee attacker if the current target is not already in melee reach.
+					if (IsValid(ValidRecentAttacker) && ValidRecentAttacker != Existing && ExistingSelfDist > ExistingMeleeThreshold)
+					{
+						return ValidRecentAttacker;
+					}
+
+					// 2. Break target stickiness if a much closer hostile intercepts the soldier.
+					if (IsValid(ClosestToSoldier) && ClosestToSoldier != Existing && ClosestToSoldierDistSq <= InterceptRadiusSq)
+					{
+						const float CandidateSelfDist = FMath::Sqrt(ClosestToSoldierDistSq);
+						if (CandidateSelfDist < ExistingSelfDist * TargetSwitchDistanceRatio)
+						{
+							return ClosestToSoldier;
+						}
+					}
+				}
+
 				return Existing;
 			}
 		}
 	}
 
-	AActor* Best = nullptr;
-	float BestDistSq = TNumericLimits<float>::Max();
-
-	TArray<AActor*> PerceivedActors;
-	if (IsValid(Perception))
+	if (IsValid(ValidRecentAttacker))
 	{
-		Perception->GetCurrentlyPerceivedActors(UAISense_Sight::StaticClass(), PerceivedActors);
-	}
-
-	for (AActor* const Candidate : PerceivedActors)
-	{
-		if (!IsTargetValidForCombat(Candidate))
+		if (!IsValid(ClosestToSoldier)
+			|| FVector::DistSquared2D(SoldierLoc, ValidRecentAttacker->GetActorLocation()) <= ClosestToSoldierDistSq * 1.25f)
 		{
-			continue;
-		}
-
-		const float DistSq = FVector::DistSquared2D(Reference, Candidate->GetActorLocation());
-		if (DistSq <= EngageRadiusSq && DistSq < BestDistSq)
-		{
-			BestDistSq = DistSq;
-			Best = Candidate;
+			return ValidRecentAttacker;
 		}
 	}
 
-	// Damage-sensed targets the eyes have lost, still inside target memory.
-	if (!IsValid(Best))
-	{
-		for (const TPair<TWeakObjectPtr<AActor>, float>& Pair : KnownHostiles)
-		{
-			AActor* const Candidate = Pair.Key.Get();
-			if (!IsTargetValidForCombat(Candidate) || (Now - Pair.Value) > TargetMemorySeconds)
-			{
-				continue;
-			}
-
-			const float DistSq = FVector::DistSquared2D(Reference, Candidate->GetActorLocation());
-			if (DistSq <= EngageRadiusSq && DistSq < BestDistSq)
-			{
-				BestDistSq = DistSq;
-				Best = Candidate;
-			}
-		}
-	}
-
-	return Best;
+	return BestOverall;
 }
 
 bool AIFSoldierAIController::IsTargetValidForCombat(AActor* Target) const
@@ -511,6 +810,12 @@ float AIFSoldierAIController::GetEngageRadius() const
 	return IsValid(Soldier) ? Soldier->GetAutonomousEngageRadius() : 900.f;
 }
 
+float AIFSoldierAIController::GetMaxFollowLeashDistance() const
+{
+	const float FollowDistance = FMath::Max(CurrentOrder.Radius, 50.f);
+	return FollowDistance + FMath::Max(FollowLeashBreakBuffer, FollowResumeBuffer);
+}
+
 void AIFSoldierAIController::PruneKnownHostiles()
 {
 	const float Now = GetWorld()->GetTimeSeconds();
@@ -534,11 +839,12 @@ void AIFSoldierAIController::UpdateMoveGoalForAction()
 		return;
 	}
 
-	// One distance space for movement and melee: centers, radii included once.
-	const float EffectiveRange = Soldier->GetEffectiveAttackRange(Target);
-	const float ChaseAcceptanceRadius = FMath::Max(25.f, EffectiveRange * 0.78f);
-	const bool bAlreadyChasingTarget = bHasMoveGoal && MoveGoalActor.Get() == Target;
-	const float InReachThreshold = bAlreadyChasingTarget ? ChaseAcceptanceRadius : (EffectiveRange * 0.9f);
+	// Stop chasing at StopDistance (MyCapsule + TargetCapsule + AttackRange) and hold
+	// stationary combat until target exceeds StopDistance + AttackRangeBuffer.
+	const float StopDistance = Soldier->GetEffectiveAttackRange(Target);
+	const float MaxHoldDistance = Soldier->GetMaxMeleeEngagementRange(Target);
+	const bool bActivelyChasingTarget = bHasMoveGoal && (MoveGoalActor.Get() == Target) && !Soldier->IsAttacking();
+	const float InReachThreshold = bActivelyChasingTarget ? StopDistance : MaxHoldDistance;
 	if (FVector::DistSquared2D(Soldier->GetActorLocation(), Target->GetActorLocation())
 		<= FMath::Square(InReachThreshold))
 	{
@@ -551,7 +857,7 @@ void AIFSoldierAIController::UpdateMoveGoalForAction()
 	bHasMoveGoal = true;
 	MoveGoalActor = Target;
 	MoveGoalLocation = Target->GetActorLocation();
-	MoveGoalAcceptanceRadius = ChaseAcceptanceRadius;
+	MoveGoalAcceptanceRadius = StopDistance;
 }
 
 void AIFSoldierAIController::ClearMoveGoal()
@@ -586,7 +892,10 @@ void AIFSoldierAIController::HandleOwnerDamaged(AActor* InstigatorActor, float D
 		return;
 	}
 
-	KnownHostiles.Add(InstigatorActor, GetWorld()->GetTimeSeconds());
+	const float Now = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
+	KnownHostiles.Add(InstigatorActor, Now);
+	RecentDamageInstigator = InstigatorActor;
+	RecentDamageTime = Now;
 
 	// Health applies damage directly; without this call no listener (including this one)
 	// would ever receive a UAISense_Damage stimulus.
@@ -603,6 +912,14 @@ void AIFSoldierAIController::HandleOwnerDamaged(AActor* InstigatorActor, float D
 
 FVector AIFSoldierAIController::GetAnchorLocation() const
 {
+	if (CurrentOrder.Type == EIFSoldierOrderType::FollowActor)
+	{
+		if (const AActor* const Followed = CurrentOrder.TargetActor.Get())
+		{
+			return Followed->GetActorLocation();
+		}
+	}
+
 	const AIFSoldierCharacter* const Soldier = GetSoldier();
 	return IsValid(Soldier) ? Soldier->GetAnchorLocation() : FVector::ZeroVector;
 }
@@ -611,7 +928,7 @@ FVector AIFSoldierAIController::GetAnchorLocation() const
 // Orders (Part 08 surface)
 // ---------------------------------------------------------------------------
 
-bool AIFSoldierAIController::IssueMoveToLocation(const FVector& Location, float AcceptanceRadius)
+bool AIFSoldierAIController::IssueMoveToLocation(const FVector& Location, float AcceptanceRadius, float DesiredFacingYaw, bool bUseFacingYaw)
 {
 	if (!IsValid(GetSoldier()))
 	{
@@ -622,21 +939,58 @@ bool AIFSoldierAIController::IssueMoveToLocation(const FVector& Location, float 
 	CurrentOrder.TargetActor.Reset();
 	CurrentOrder.Location = Location;
 	CurrentOrder.Radius = FMath::Max(AcceptanceRadius, 10.f);
+	CurrentOrder.FacingYaw = FRotator::NormalizeAxis(DesiredFacingYaw);
+	CurrentOrder.bHasFacingYaw = bUseFacingYaw;
+	CurrentOrder.IssuedTime = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
 	RefreshDecision();
 	return true;
 }
 
+void AIFSoldierAIController::NotifyMoveOrderBlockedOrStalled()
+{
+	AIFSoldierCharacter* const Soldier = GetSoldier();
+	if (!IsValid(Soldier) || Soldier->IsDead())
+	{
+		return;
+	}
+
+	if (CurrentOrder.Type == EIFSoldierOrderType::MoveToLocation)
+	{
+		Soldier->SetAnchorLocation(Soldier->GetActorLocation(), /*bRefreshControllerDecision*/ false);
+		if (CurrentOrder.bHasFacingYaw)
+		{
+			Soldier->SetAnchorFacingYaw(CurrentOrder.FacingYaw);
+		}
+		else
+		{
+			Soldier->ClearAnchorFacing();
+		}
+		CurrentOrder.Reset();
+		RefreshDecision();
+	}
+	else if (CurrentAction == EIFSoldierAction::HoldPosition)
+	{
+		Soldier->SetAnchorLocation(Soldier->GetActorLocation(), /*bRefreshControllerDecision*/ false);
+		RefreshDecision();
+	}
+}
+
 bool AIFSoldierAIController::IssueAttackTarget(AActor* Target)
 {
-	if (!IsValid(GetSoldier()) || !IsTargetValidForCombat(Target))
+	AIFSoldierCharacter* const Soldier = GetSoldier();
+	if (!IsValid(Soldier) || !IsTargetValidForCombat(Target))
 	{
 		return false;
 	}
 
+	Soldier->SetAnchorLocation(Target->GetActorLocation(), /*bRefreshControllerDecision*/ false);
+	Soldier->ClearAnchorFacing();
+
 	CurrentOrder.Type = EIFSoldierOrderType::AttackTarget;
 	CurrentOrder.TargetActor = Target;
 	CurrentOrder.Location = Target->GetActorLocation();
-	CurrentOrder.Radius = FMath::Max(25.f, GetSoldier()->GetEffectiveAttackRange(Target) * 0.78f);
+	CurrentOrder.Radius = Soldier->GetEffectiveAttackRange(Target);
+	CurrentOrder.IssuedTime = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
 	RefreshDecision();
 	return true;
 }

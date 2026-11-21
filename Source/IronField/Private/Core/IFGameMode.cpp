@@ -6,12 +6,14 @@
 #include "Core/IFPlayerController.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "UI/IFTacticalHUD.h"
 
 AIFGameMode::AIFGameMode()
 {
 	GameStateClass = AIFGameState::StaticClass();
 	PlayerControllerClass = AIFPlayerController::StaticClass();
 	DefaultPawnClass = AIFPlayerCharacter::StaticClass();
+	HUDClass = AIFTacticalHUD::StaticClass();
 }
 
 void AIFGameMode::BeginPlay()

@@ -49,6 +49,15 @@ struct FIFSoldierOrder
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Soldier|Order")
 	float Radius = 75.f;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Soldier|Order")
+	float FacingYaw = 0.f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Soldier|Order")
+	bool bHasFacingYaw = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Soldier|Order")
+	float IssuedTime = -1000.f;
+
 	bool IsValid() const { return Type != EIFSoldierOrderType::None; }
 
 	void Reset()
@@ -57,5 +66,8 @@ struct FIFSoldierOrder
 		TargetActor.Reset();
 		Location = FVector::ZeroVector;
 		Radius = 75.f;
+		FacingYaw = 0.f;
+		bHasFacingYaw = false;
+		IssuedTime = -1000.f;
 	}
 };

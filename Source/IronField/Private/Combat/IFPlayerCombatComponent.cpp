@@ -106,6 +106,12 @@ void UIFPlayerCombatComponent::StopBlock()
 	}
 }
 
+void UIFPlayerCombatComponent::CancelPendingInputsForTacticalMode()
+{
+	bAttackBuffered = false;
+	StopBlock();
+}
+
 bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor* DamageCauser, AController* EventInstigator)
 {
 	if (!IsBlocking())

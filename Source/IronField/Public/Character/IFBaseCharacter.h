@@ -92,13 +92,14 @@ private:
 	// Live collision state captured in BeginPlay and restored verbatim on revive.
 	FName CapsuleCollisionProfile;
 	ECollisionEnabled::Type CapsuleCollisionEnabled = ECollisionEnabled::QueryAndPhysics;
-	TEnumAsByte<ECollisionResponse> SavedCapsulePawnResponse = ECR_Block;
+	FCollisionResponseContainer SavedCapsuleResponses;
 	FName MeshCollisionProfile;
 	ECollisionEnabled::Type MeshCollisionEnabled = ECollisionEnabled::NoCollision;
 	bool bCapsuleAffectsNavigation = true;
 	bool bMeshAffectsNavigation = false;
 	bool bSavedOrientRotationToMovement = false;
 	bool bSavedUseControllerDesiredRotation = false;
+	bool bSavedUseRVOAvoidance = false;
 
 	FVector LastDamageDirection = FVector::ZeroVector;
 	FTimerHandle HitstopTimerHandle;

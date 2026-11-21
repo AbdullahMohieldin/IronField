@@ -22,6 +22,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat")
 	bool RequestLeapSlam();
 
+	UFUNCTION(BlueprintCallable, Category = "IronField|Combat")
+	void CancelPendingInputsForTacticalMode();
+
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
 	bool IsLeapSlamming() const { return bIsLeapSlamming; }
 

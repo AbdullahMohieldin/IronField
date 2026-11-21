@@ -10,7 +10,13 @@
 #include "InputAction.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include "Tactical/IFTacticalCommandComponent.h"
 #include "UI/IFVitalBarsWidget.h"
+
+AIFPlayerController::AIFPlayerController()
+{
+	TacticalCommandComponent = CreateDefaultSubobject<UIFTacticalCommandComponent>(TEXT("TacticalCommand"));
+}
 
 void AIFPlayerController::BeginPlay()
 {
@@ -144,6 +150,11 @@ void AIFPlayerController::SetupInputComponent()
 	}
 
 	BindPauseAction();
+
+	if (IsValid(TacticalCommandComponent))
+	{
+		TacticalCommandComponent->SetupControllerInput(InputComponent);
+	}
 }
 
 void AIFPlayerController::HandleHUDClassLoaded()
@@ -208,6 +219,11 @@ void AIFPlayerController::SetMatchPaused(bool bPaused)
 		return;
 	}
 
+	if (IsValid(TacticalCommandComponent))
+	{
+		TacticalCommandComponent->HandleMatchPausedChanged(bPaused);
+	}
+
 	// Pause state and input mode never depend on widget availability; the menu is optional.
 	if (bPaused)
 	{
@@ -217,7 +233,14 @@ void AIFPlayerController::SetMatchPaused(bool bPaused)
 	else
 	{
 		ClosePauseMenu();
-		ApplyGameplayInputMode();
+		if (IsValid(TacticalCommandComponent) && TacticalCommandComponent->IsTacticalModeActive())
+		{
+			ApplyTacticalInputMode();
+		}
+		else
+		{
+			ApplyGameplayInputMode();
+		}
 	}
 
 	UGameplayStatics::SetGamePaused(this, bPaused);
@@ -264,6 +287,10 @@ void AIFPlayerController::ShowGameOverScreen(EIFGameResult Result)
 	}
 
 	bIsGameOver = true;
+	if (IsValid(TacticalCommandComponent))
+	{
+		TacticalCommandComponent->ExitTacticalMode(true);
+	}
 	ClosePauseMenu();
 	ApplyUIInputMode();
 	UGameplayStatics::SetGamePaused(this, true);
@@ -288,6 +315,10 @@ void AIFPlayerController::ShowGameOverScreen(EIFGameResult Result)
 void AIFPlayerController::RestartMatch()
 {
 	bIsGameOver = false;
+	if (IsValid(TacticalCommandComponent))
+	{
+		TacticalCommandComponent->ExitTacticalMode(true);
+	}
 	UGameplayStatics::SetGamePaused(this, false);
 	const FName LevelName = FName(*UGameplayStatics::GetCurrentLevelName(this, true));
 	UGameplayStatics::OpenLevel(this, LevelName);
@@ -298,12 +329,24 @@ void AIFPlayerController::ReturnToMainMenu()
 	RestartMatch();
 }
 
-void AIFPlayerController::ApplyGameplayInputMode()
+void AIFPlayerController::ApplyGameplayInputMode(bool bFlushKeys)
 {
 	FInputModeGameOnly InputMode;
 	SetInputMode(InputMode);
 	bShowMouseCursor = false;
-	FlushPressedKeys();
+	if (bFlushKeys)
+	{
+		FlushPressedKeys();
+	}
+}
+
+void AIFPlayerController::ApplyTacticalInputMode()
+{
+	FInputModeGameAndUI InputMode;
+	InputMode.SetHideCursorDuringCapture(false);
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::LockInFullscreen);
+	SetInputMode(InputMode);
+	bShowMouseCursor = true;
 }
 
 void AIFPlayerController::ApplyPauseInputMode()

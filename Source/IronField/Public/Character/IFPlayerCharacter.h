@@ -40,6 +40,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Combat")
 	void RequestLeapSlam();
 
+	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Tactical")
+	void EnterTacticalStandby();
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Tactical")
+	void ExitTacticalStandby();
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Player|Tactical")
+	bool IsInTacticalStandby() const { return bIsInTacticalStandby; }
+
 	UFUNCTION(Exec)
 	void DebugDamage(float Amount);
 
@@ -125,6 +134,7 @@ private:
 	bool bIsSprinting = false;
 
 	bool bSprintRequested = false;
+	bool bIsInTacticalStandby = false;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Player|Movement")
 	FVector2D CachedMovementInput = FVector2D::ZeroVector;

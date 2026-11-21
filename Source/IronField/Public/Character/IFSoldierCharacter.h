@@ -2,13 +2,19 @@
 
 #include "CoreMinimal.h"
 #include "Character/IFBaseCharacter.h"
+#include "Tactical/IFTacticalTypes.h"
+#include "UObject/SoftObjectPtr.h"
 #include "IFSoldierCharacter.generated.h"
 
 class AActor;
+class AIFSoldierAIController;
 class UIFMeleeCombatComponent;
 class UIFStaminaComponent;
-class AIFSoldierAIController;
+class UMaterialInterface;
+class UStaticMesh;
+class UStaticMeshComponent;
 class UWidgetComponent;
+struct FStreamableHandle;
 
 /**
  * Base pawn for Layer 3 individual AI. Adds the melee combat slot, an AI controller,
@@ -56,15 +62,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
 	bool IsAttacking() const;
 
-	// Base reach in centimetres between capsule surfaces. Prefer GetEffectiveAttackRange
-	// for any distance test; this value alone ignores both actors' collision radii.
+	// Base standoff distance in centimetres between capsule surfaces where the soldier stops and swings.
+	// Prefer GetEffectiveAttackRange / GetMaxMeleeEngagementRange for any center-to-center distance test.
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
 	float GetAttackRange() const { return AttackRange; }
 
-	// Center-to-center reach: AttackRange plus both simple collision radii. Used by the
-	// controller's move goal and the melee task so small minions and large buildings
-	// share one distance space.
+	// Step-back deadzone (cm) beyond AttackRange before re-chasing or aborting an active melee attack.
+	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
+	float GetAttackRangeBuffer() const { return AttackRangeBuffer; }
+
+	// Center-to-center stop/swing distance: MyCapsuleRadius + TargetCapsuleRadius + AttackRange.
 	float GetEffectiveAttackRange(const AActor* Target) const;
+
+	// Center-to-center hold/rechase threshold: GetEffectiveAttackRange(Target) + AttackRangeBuffer.
+	float GetMaxMeleeEngagementRange(const AActor* Target) const;
 
 	// --- Decision tuning read by AIFSoldierAIController --------------------
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
@@ -73,6 +84,22 @@ public:
 	// Moves the post. Pass false from inside controller decisions to avoid recursion.
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|AI")
 	void SetAnchorLocation(const FVector& NewAnchorLocation, bool bRefreshControllerDecision = true);
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Formation")
+	void SetAnchorFacingYaw(float NewFacingYaw);
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Formation")
+	void ClearAnchorFacing();
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Formation")
+	bool HasAnchorFacing() const { return bHasAnchorFacing; }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Formation")
+	float GetAnchorFacingYaw() const { return AnchorFacingYaw; }
+
+	void BeginAnchorFacingAlignment();
+	void CancelAnchorFacingAlignment();
+	void SetStationaryFormationRVO(bool bStationary);
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
 	bool IsLeashedToAnchor() const { return bLeashToAnchor; }
@@ -98,6 +125,23 @@ public:
 	// Keeps perception sight aligned with actual pawn orientation without ticking the AI controller.
 	virtual void GetActorEyesViewPoint(FVector& OutLocation, FRotator& OutRotation) const override;
 
+	virtual void Tick(float DeltaSeconds) override;
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Tactical")
+	void SetTacticalSelected(bool bSelected, bool bShowRingNow = true);
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Tactical")
+	void SetSelectionRingDisplayVisible(bool bVisible);
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Tactical")
+	void SetHostileTargetHighlighted(bool bHighlighted);
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Tactical")
+	bool IsTacticalSelected() const { return bIsTacticalSelected; }
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Tactical")
+	EIFTacticalRingMode GetTacticalRingMode() const { return TacticalRingMode; }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -105,6 +149,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Combat", meta = (ClampMin = "0.0"))
 	float AttackRange = 60.f;
+
+	// Step-back deadzone (cm) beyond AttackRange before re-chasing or aborting an active melee attack.
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Combat", meta = (ClampMin = "0.0"))
+	float AttackRangeBuffer = 25.f;
 
 	// Corpses are removed after this long; 0 keeps them for the level lifetime.
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Death", meta = (ClampMin = "0.0"))
@@ -125,7 +173,7 @@ protected:
 	bool bLeashToAnchor = true;
 
 	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI", meta = (ClampMin = "0.0"))
-	float AutonomousEngageRadius = 900.f;
+	float AutonomousEngageRadius = 400.f;
 
 	// Dusk: true. The controller resolves the goal below and walks to it while idle.
 	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI")
@@ -151,6 +199,24 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Soldier|UI")
 	FLinearColor EnemyHealthBarColor = FLinearColor(0.90f, 0.18f, 0.18f, 1.0f);
 
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Tactical")
+	TSoftObjectPtr<UStaticMesh> SelectionRingMesh;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Tactical")
+	TSoftObjectPtr<UMaterialInterface> SelectionRingMaterial;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Tactical")
+	TSoftObjectPtr<UMaterialInterface> HostileTargetRingMaterial;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Tactical", meta = (ClampMin = "0.0"))
+	float SelectionRingGroundClearance = 2.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Formation", meta = (ClampMin = "1.0"))
+	float AnchorFacingTurnSpeed = 10.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Formation", meta = (ClampMin = "0.2", ClampMax = "15.0"))
+	float AnchorFacingToleranceDegrees = 1.5f;
+
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UIFMeleeCombatComponent> MeleeCombat;
@@ -161,7 +227,25 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Soldier|UI", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWidgetComponent> OverheadWidgetComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Soldier|Tactical", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UStaticMeshComponent> SelectionRingComponent;
+
+	void RequestSelectionRingAssets();
+	void HandleSelectionRingAssetsLoaded();
+	void UpdateSelectionRingTransform();
+	void RefreshTacticalRingVisual();
+
+	TSharedPtr<FStreamableHandle> SelectionRingLoadHandle;
+	EIFTacticalRingMode TacticalRingMode = EIFTacticalRingMode::None;
+	bool bIsTacticalSelected = false;
+	bool bSelectionRingDisplayEnabled = false;
+
 	FVector AnchorLocation = FVector::ZeroVector;
+	float AnchorFacingYaw = 0.f;
+	float DefaultAvoidanceWeight = 0.5f;
+	bool bHasAnchorFacing = false;
+	bool bIsAligningToAnchorFacing = false;
+	bool bStationaryFormationRVO = false;
 
 	// OnPossess (and therefore the first RefreshDecision) can run before BeginPlay,
 	// so the anchor is only authoritative once this is true.

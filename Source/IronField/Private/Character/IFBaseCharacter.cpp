@@ -44,7 +44,7 @@ void AIFBaseCharacter::BeginPlay()
 	{
 		CapsuleCollisionProfile = Capsule->GetCollisionProfileName();
 		CapsuleCollisionEnabled = Capsule->GetCollisionEnabled();
-		SavedCapsulePawnResponse = Capsule->GetCollisionResponseToChannel(ECC_Pawn);
+		SavedCapsuleResponses = Capsule->GetCollisionResponseToChannels();
 		bCapsuleAffectsNavigation = Capsule->CanEverAffectNavigation();
 	}
 	if (USkeletalMeshComponent* const MeshComp = GetMesh())
@@ -58,6 +58,7 @@ void AIFBaseCharacter::BeginPlay()
 	{
 		bSavedOrientRotationToMovement = Movement->bOrientRotationToMovement;
 		bSavedUseControllerDesiredRotation = Movement->bUseControllerDesiredRotation;
+		bSavedUseRVOAvoidance = Movement->bUseRVOAvoidance;
 	}
 
 	if (IsValid(HealthComponent))
@@ -85,8 +86,15 @@ void AIFBaseCharacter::Landed(const FHitResult& Hit)
 	// Corpses keep falling until they land, then become fully inert.
 	if (IsDead())
 	{
+		if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
+		{
+			Capsule->SetCollisionResponseToAllChannels(ECR_Ignore);
+			Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Capsule->SetCanEverAffectNavigation(false);
+		}
 		if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
 		{
+			Movement->SetAvoidanceEnabled(false);
 			Movement->DisableMovement();
 		}
 	}
@@ -208,6 +216,7 @@ void AIFBaseCharacter::StopMovementForDeath()
 		return;
 	}
 
+	Movement->SetAvoidanceEnabled(false);
 	Movement->StopMovementImmediately();
 
 	if (!Movement->IsFalling())
@@ -223,10 +232,21 @@ void AIFBaseCharacter::DisableCollisionForDeath()
 {
 	if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
 	{
-		// Keep blocking the environment so the corpse does not fall through the floor,
-		// but let other pawns walk through it.
-		Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		const UCharacterMovementComponent* const Movement = GetCharacterMovement();
+		const bool bStillFalling = IsValid(Movement) && Movement->IsFalling();
+
+		// Let falling corpses land cleanly on static floors, then Landed() disables capsule collision;
+		// grounded corpses disable capsule collision immediately so living pawns never bump them.
+		Capsule->SetCollisionResponseToAllChannels(ECR_Ignore);
 		Capsule->SetCanEverAffectNavigation(false);
+		if (bStillFalling)
+		{
+			Capsule->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+		}
+		else
+		{
+			Capsule->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
 	}
 
 	if (USkeletalMeshComponent* const MeshComp = GetMesh())
@@ -247,8 +267,8 @@ void AIFBaseCharacter::RestoreAliveState()
 	if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
 	{
 		Capsule->SetCollisionProfileName(CapsuleCollisionProfile);
+		Capsule->SetCollisionResponseToChannels(SavedCapsuleResponses);
 		Capsule->SetCollisionEnabled(CapsuleCollisionEnabled);
-		Capsule->SetCollisionResponseToChannel(ECC_Pawn, SavedCapsulePawnResponse);
 		Capsule->SetCanEverAffectNavigation(bCapsuleAffectsNavigation);
 	}
 
@@ -266,6 +286,7 @@ void AIFBaseCharacter::RestoreAliveState()
 		Movement->FindFloor(GetActorLocation(), Movement->CurrentFloor, false);
 		Movement->bOrientRotationToMovement = bSavedOrientRotationToMovement;
 		Movement->bUseControllerDesiredRotation = bSavedUseControllerDesiredRotation;
+		Movement->SetAvoidanceEnabled(bSavedUseRVOAvoidance);
 	}
 }
 

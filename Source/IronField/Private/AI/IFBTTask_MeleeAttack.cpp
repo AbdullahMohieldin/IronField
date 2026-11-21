@@ -59,9 +59,9 @@ namespace
 			return false;
 		}
 
-		const float EffectiveRange = Soldier.GetEffectiveAttackRange(Target);
+		const float MaxEngagementRange = Soldier.GetMaxMeleeEngagementRange(Target);
 		return FVector::DistSquared2D(Soldier.GetActorLocation(), Target->GetActorLocation())
-			<= FMath::Square(EffectiveRange);
+			<= FMath::Square(MaxEngagementRange);
 	}
 }
 

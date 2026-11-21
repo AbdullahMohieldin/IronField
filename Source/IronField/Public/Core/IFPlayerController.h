@@ -7,6 +7,7 @@
 
 class APawn;
 class UInputAction;
+class UIFTacticalCommandComponent;
 class UUserWidget;
 class UIFVitalBarsWidget;
 struct FStreamableHandle;
@@ -17,6 +18,11 @@ class IRONFIELD_API AIFPlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	AIFPlayerController();
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Tactical")
+	UIFTacticalCommandComponent* GetTacticalCommandComponent() const { return TacticalCommandComponent; }
+
 	UFUNCTION(BlueprintCallable, Category = "IronField|Flow")
 	void SetMatchPaused(bool bPaused);
 
@@ -30,6 +36,9 @@ public:
 	void TogglePause();
 
 	void ShowGameOverScreen(EIFGameResult Result);
+	void ApplyGameplayInputMode(bool bFlushKeys = true);
+	void ApplyTacticalInputMode();
+	bool IsGameOverActive() const;
 
 	UFUNCTION(Exec)
 	void DebugTogglePause();
@@ -79,10 +88,11 @@ private:
 	void BindPauseAction();
 	void ShowPauseMenu();
 	void ClosePauseMenu();
-	void ApplyGameplayInputMode();
 	void ApplyPauseInputMode();
 	void ApplyUIInputMode();
-	bool IsGameOverActive() const;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Tactical", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UIFTacticalCommandComponent> TacticalCommandComponent;
 
 	bool bIsGameOver = false;
 };

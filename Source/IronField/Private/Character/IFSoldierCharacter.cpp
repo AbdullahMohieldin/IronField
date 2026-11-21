@@ -7,10 +7,15 @@
 #include "Combat/IFMeleeCombatComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
 #include "Core/IFLog.h"
+#include "Engine/AssetManager.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StreamableManager.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Materials/MaterialInterface.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Stats/IFStaminaComponent.h"
 #include "TimerManager.h"
@@ -19,7 +24,8 @@
 AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UIFMeleeCombatComponent>(AIFBaseCharacter::CombatComponentName))
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	AIControllerClass = AIFSoldierAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
@@ -39,6 +45,8 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 	if (USkeletalMeshComponent* const MeshComp = GetMesh())
 	{
 		MeshComp->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+		MeshComp->SetCustomNavigableGeometry(EHasCustomNavigableGeometry::No);
+		MeshComp->SetCanEverAffectNavigation(false);
 	}
 
 	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
@@ -51,10 +59,10 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 		Movement->MaxAcceleration = 1200.f;
 		Movement->BrakingDecelerationWalking = 1200.f;
 
-		// Keep minion packs from occupying the same point on the lane.
+		// Keep minion packs from occupying the same point on the lane while allowing tight Roman squares.
 		Movement->bUseRVOAvoidance = true;
-		Movement->AvoidanceConsiderationRadius = 300.f;
-		Movement->AvoidanceWeight = 0.5f;
+		Movement->AvoidanceConsiderationRadius = 130.f;
+		Movement->AvoidanceWeight = DefaultAvoidanceWeight;
 	}
 
 	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadVitals"));
@@ -68,6 +76,18 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 	OverheadWidgetComponent->SetGenerateOverlapEvents(false);
 	OverheadWidgetComponent->SetCastShadow(false);
 	OverheadWidgetComponent->SetCanEverAffectNavigation(false);
+
+	SelectionRingComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SelectionRing"));
+	SelectionRingComponent->SetupAttachment(GetRootComponent());
+	SelectionRingComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SelectionRingComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
+	SelectionRingComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	SelectionRingComponent->SetGenerateOverlapEvents(false);
+	SelectionRingComponent->SetCanEverAffectNavigation(false);
+	SelectionRingComponent->SetCastShadow(false);
+	SelectionRingComponent->bReceivesDecals = false;
+	SelectionRingComponent->SetVisibility(false);
+	UpdateSelectionRingTransform();
 
 	SetGenericTeamId(FGenericTeamId(IFTeamIds::Enemy));
 }
@@ -97,10 +117,28 @@ void AIFSoldierCharacter::BeginPlay()
 				(GetGenericTeamId().GetId() == IFTeamIds::Player) ? AllyHealthBarColor : EnemyHealthBarColor);
 		}
 	}
+
+	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
+	{
+		DefaultAvoidanceWeight = Movement->AvoidanceWeight;
+	}
+
+	SetActorTickEnabled(false);
+
+	UpdateSelectionRingTransform();
+	RequestSelectionRingAssets();
 }
 
 void AIFSoldierCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	CancelAnchorFacingAlignment();
+
+	if (SelectionRingLoadHandle.IsValid())
+	{
+		SelectionRingLoadHandle->CancelHandle();
+		SelectionRingLoadHandle.Reset();
+	}
+
 	if (UWorld* const World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(RagdollTransitionTimerHandle);
@@ -115,10 +153,44 @@ void AIFSoldierCharacter::GetActorEyesViewPoint(FVector& OutLocation, FRotator& 
 	OutRotation = GetActorRotation();
 }
 
+void AIFSoldierCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (!bIsAligningToAnchorFacing || !bHasAnchorFacing || IsDead() || IsAttacking()
+		|| GetVelocity().SizeSquared2D() > FMath::Square(15.f))
+	{
+		CancelAnchorFacingAlignment();
+		return;
+	}
+
+	const FRotator CurrentRot = GetActorRotation();
+	const FRotator TargetRot(CurrentRot.Pitch, AnchorFacingYaw, CurrentRot.Roll);
+	const FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaSeconds, AnchorFacingTurnSpeed);
+	SetActorRotation(NewRot);
+
+	if (FMath::Abs(FRotator::NormalizeAxis(AnchorFacingYaw - NewRot.Yaw)) <= AnchorFacingToleranceDegrees)
+	{
+		SetActorRotation(TargetRot);
+		CancelAnchorFacingAlignment();
+	}
+}
+
 void AIFSoldierCharacter::HandleDeath(AActor* DeadActor)
 {
 	// Base stops movement, disables pawn collision, stops montages and broadcasts.
 	Super::HandleDeath(DeadActor);
+
+	CancelAnchorFacingAlignment();
+	bStationaryFormationRVO = false;
+	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
+	{
+		Movement->SetAvoidanceEnabled(false);
+	}
+	bIsTacticalSelected = false;
+	bSelectionRingDisplayEnabled = false;
+	TacticalRingMode = EIFTacticalRingMode::None;
+	RefreshTacticalRingVisual();
 
 	if (IsValid(OverheadWidgetComponent))
 	{
@@ -215,19 +287,25 @@ void AIFSoldierCharacter::ActivateRagdollDeath()
 		AnimInstance->Montage_Stop(0.f);
 	}
 
-	MeshComp->SetCollisionObjectType(ECC_PhysicsBody);
-	MeshComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	MeshComp->SetCollisionResponseToAllChannels(ECR_Ignore);
-	MeshComp->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
-	MeshComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
-	MeshComp->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
-	MeshComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-	MeshComp->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
-	MeshComp->SetCanEverAffectNavigation(false);
+	auto ApplyRagdollCollision = [MeshComp]()
+	{
+		MeshComp->SetCustomNavigableGeometry(EHasCustomNavigableGeometry::No);
+		MeshComp->SetCanEverAffectNavigation(false);
+		MeshComp->SetCollisionObjectType(ECC_PhysicsBody);
+		MeshComp->SetCollisionEnabled(ECollisionEnabled::PhysicsOnly);
+		MeshComp->SetCollisionResponseToAllChannels(ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+		MeshComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+	};
+
+	ApplyRagdollCollision();
 
 	MeshComp->SetSimulatePhysics(true);
 	MeshComp->SetAllBodiesSimulatePhysics(true);
 	MeshComp->SetAllBodiesPhysicsBlendWeight(1.f);
+
+	// Re-apply after enabling simulation so per-bone PhysicsAsset body instances inherit Pawn/PhysicsBody ignores.
+	ApplyRagdollCollision();
 	MeshComp->WakeAllRigidBodies();
 
 	if (RagdollDeathImpulse > 0.f)
@@ -268,11 +346,69 @@ void AIFSoldierCharacter::SetAnchorLocation(const FVector& NewAnchorLocation, bo
 	}
 }
 
+void AIFSoldierCharacter::SetAnchorFacingYaw(float NewFacingYaw)
+{
+	AnchorFacingYaw = FRotator::NormalizeAxis(NewFacingYaw);
+	bHasAnchorFacing = true;
+}
+
+void AIFSoldierCharacter::ClearAnchorFacing()
+{
+	bHasAnchorFacing = false;
+	CancelAnchorFacingAlignment();
+}
+
+void AIFSoldierCharacter::BeginAnchorFacingAlignment()
+{
+	if (!bHasAnchorFacing || IsDead() || IsAttacking() || GetVelocity().SizeSquared2D() > FMath::Square(15.f))
+	{
+		return;
+	}
+
+	const FRotator CurrentRot = GetActorRotation();
+	const float YawError = FMath::Abs(FRotator::NormalizeAxis(AnchorFacingYaw - CurrentRot.Yaw));
+	if (YawError <= AnchorFacingToleranceDegrees)
+	{
+		SetActorRotation(FRotator(CurrentRot.Pitch, AnchorFacingYaw, CurrentRot.Roll));
+		CancelAnchorFacingAlignment();
+		return;
+	}
+
+	bIsAligningToAnchorFacing = true;
+	SetActorTickEnabled(true);
+}
+
+void AIFSoldierCharacter::CancelAnchorFacingAlignment()
+{
+	bIsAligningToAnchorFacing = false;
+	SetActorTickEnabled(false);
+}
+
+void AIFSoldierCharacter::SetStationaryFormationRVO(bool bStationary)
+{
+	if (bStationaryFormationRVO == bStationary)
+	{
+		return;
+	}
+
+	bStationaryFormationRVO = bStationary;
+	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
+	{
+		Movement->AvoidanceWeight = bStationary ? 0.f : DefaultAvoidanceWeight;
+		Movement->SetAvoidanceEnabled(!bStationary);
+	}
+}
+
 float AIFSoldierCharacter::GetEffectiveAttackRange(const AActor* Target) const
 {
 	const float SelfRadius = GetSimpleCollisionRadius();
 	const float TargetRadius = IsValid(Target) ? Target->GetSimpleCollisionRadius() : 0.f;
-	return FMath::Max(AttackRange, 50.f) + SelfRadius + TargetRadius;
+	return FMath::Max(AttackRange, 0.f) + SelfRadius + TargetRadius;
+}
+
+float AIFSoldierCharacter::GetMaxMeleeEngagementRange(const AActor* Target) const
+{
+	return GetEffectiveAttackRange(Target) + FMath::Max(AttackRangeBuffer, 0.f);
 }
 
 bool AIFSoldierCharacter::TryPerformMeleeAttack()
@@ -335,4 +471,147 @@ void AIFSoldierCharacter::ClearMeleeComboPlan()
 bool AIFSoldierCharacter::IsAttacking() const
 {
 	return IsValid(MeleeCombat) && MeleeCombat->IsAttacking();
+}
+
+void AIFSoldierCharacter::SetTacticalSelected(bool bSelected, bool bShowRingNow)
+{
+	if (bSelected && GetGenericTeamId().GetId() != IFTeamIds::Player)
+	{
+		bSelected = false;
+	}
+
+	bIsTacticalSelected = bSelected && IsAlive();
+	bSelectionRingDisplayEnabled = bShowRingNow;
+
+	if (bIsTacticalSelected)
+	{
+		TacticalRingMode = EIFTacticalRingMode::SelectedAlly;
+	}
+	else if (TacticalRingMode == EIFTacticalRingMode::SelectedAlly)
+	{
+		TacticalRingMode = EIFTacticalRingMode::None;
+	}
+
+	RefreshTacticalRingVisual();
+}
+
+void AIFSoldierCharacter::SetSelectionRingDisplayVisible(bool bVisible)
+{
+	bSelectionRingDisplayEnabled = bVisible;
+	RefreshTacticalRingVisual();
+}
+
+void AIFSoldierCharacter::SetHostileTargetHighlighted(bool bHighlighted)
+{
+	if (bHighlighted && GetGenericTeamId().GetId() == IFTeamIds::Player)
+	{
+		bHighlighted = false;
+	}
+
+	if (bHighlighted && IsAlive())
+	{
+		TacticalRingMode = EIFTacticalRingMode::HostileTarget;
+	}
+	else if (TacticalRingMode == EIFTacticalRingMode::HostileTarget)
+	{
+		TacticalRingMode = EIFTacticalRingMode::None;
+	}
+
+	RefreshTacticalRingVisual();
+}
+
+void AIFSoldierCharacter::RequestSelectionRingAssets()
+{
+	TArray<FSoftObjectPath> AssetPaths;
+	if (!SelectionRingMesh.IsNull())
+	{
+		AssetPaths.AddUnique(SelectionRingMesh.ToSoftObjectPath());
+	}
+	if (!SelectionRingMaterial.IsNull())
+	{
+		AssetPaths.AddUnique(SelectionRingMaterial.ToSoftObjectPath());
+	}
+	if (!HostileTargetRingMaterial.IsNull())
+	{
+		AssetPaths.AddUnique(HostileTargetRingMaterial.ToSoftObjectPath());
+	}
+	if (AssetPaths.IsEmpty())
+	{
+		return;
+	}
+
+	SelectionRingLoadHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(
+		AssetPaths,
+		FStreamableDelegate::CreateUObject(this, &AIFSoldierCharacter::HandleSelectionRingAssetsLoaded));
+}
+
+void AIFSoldierCharacter::HandleSelectionRingAssetsLoaded()
+{
+	SelectionRingLoadHandle.Reset();
+
+	if (!IsValid(SelectionRingComponent))
+	{
+		return;
+	}
+
+	if (UStaticMesh* const RingMesh = SelectionRingMesh.Get())
+	{
+		SelectionRingComponent->SetStaticMesh(RingMesh);
+	}
+	RefreshTacticalRingVisual();
+}
+
+void AIFSoldierCharacter::RefreshTacticalRingVisual()
+{
+	if (!IsValid(SelectionRingComponent))
+	{
+		return;
+	}
+
+	if (!IsAlive() || TacticalRingMode == EIFTacticalRingMode::None)
+	{
+		SelectionRingComponent->SetVisibility(false);
+		return;
+	}
+
+	if (TacticalRingMode == EIFTacticalRingMode::SelectedAlly)
+	{
+		const bool bAllowed = (GetGenericTeamId().GetId() == IFTeamIds::Player) && bIsTacticalSelected && bSelectionRingDisplayEnabled;
+		if (bAllowed)
+		{
+			if (UMaterialInterface* const AllyMat = SelectionRingMaterial.Get())
+			{
+				SelectionRingComponent->SetMaterial(0, AllyMat);
+			}
+		}
+		SelectionRingComponent->SetVisibility(bAllowed);
+		return;
+	}
+
+	if (TacticalRingMode == EIFTacticalRingMode::HostileTarget)
+	{
+		UMaterialInterface* const HostileMat = HostileTargetRingMaterial.Get();
+		const bool bAllowed = (GetGenericTeamId().GetId() != IFTeamIds::Player) && IsValid(HostileMat);
+		if (bAllowed)
+		{
+			SelectionRingComponent->SetMaterial(0, HostileMat);
+		}
+		SelectionRingComponent->SetVisibility(bAllowed);
+	}
+}
+
+void AIFSoldierCharacter::UpdateSelectionRingTransform()
+{
+	if (!IsValid(SelectionRingComponent))
+	{
+		return;
+	}
+
+	float CapsuleHalfHeight = 88.f;
+	if (const UCapsuleComponent* const Capsule = GetCapsuleComponent())
+	{
+		CapsuleHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
+	}
+
+	SelectionRingComponent->SetRelativeLocation(FVector(0.f, 0.f, -(CapsuleHalfHeight - SelectionRingGroundClearance)));
 }
