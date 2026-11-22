@@ -108,7 +108,7 @@ protected:
 	TSoftObjectPtr<UBehaviorTree> BehaviorTreeAsset;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "0.0"))
-	float TargetMemorySeconds = 2.5f;
+	float TargetMemorySeconds = 8.0f;
 
 	// Hysteresis on the autonomous engagement radius; prevents border flicker.
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|AI", meta = (ClampMin = "1.0"))

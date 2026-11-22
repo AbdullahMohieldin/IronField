@@ -20,7 +20,26 @@ void UIFVitalBarsWidget::BindToVitalComponents(UIFHealthComponent* InHealthComp,
 	{
 		BoundStaminaComponent = InStaminaComp;
 		InStaminaComp->OnStaminaChanged.AddUniqueDynamic(this, &UIFVitalBarsWidget::HandleStaminaChanged);
+		if (IsValid(StaminaBar))
+		{
+			StaminaBar->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		if (IsValid(StaminaText))
+		{
+			StaminaText->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
 		UpdateStaminaDisplay(InStaminaComp->GetStaminaPercent());
+	}
+	else
+	{
+		if (IsValid(StaminaBar))
+		{
+			StaminaBar->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		if (IsValid(StaminaText))
+		{
+			StaminaText->SetVisibility(ESlateVisibility::Collapsed);
+		}
 	}
 }
 
@@ -34,22 +53,65 @@ void UIFVitalBarsWidget::SetHealthBarColor(const FLinearColor& Color)
 
 void UIFVitalBarsWidget::UnbindVitalComponents()
 {
+	UnsubscribeVitalDelegates();
+	BoundHealthComponent.Reset();
+	BoundStaminaComponent.Reset();
+}
+
+void UIFVitalBarsWidget::UnsubscribeVitalDelegates()
+{
 	if (UIFHealthComponent* const Health = BoundHealthComponent.Get())
 	{
 		Health->OnHealthChanged.RemoveDynamic(this, &UIFVitalBarsWidget::HandleHealthChanged);
 	}
-	BoundHealthComponent.Reset();
 
 	if (UIFStaminaComponent* const Stamina = BoundStaminaComponent.Get())
 	{
 		Stamina->OnStaminaChanged.RemoveDynamic(this, &UIFVitalBarsWidget::HandleStaminaChanged);
 	}
-	BoundStaminaComponent.Reset();
+}
+
+void UIFVitalBarsWidget::NativeConstruct()
+{
+	Super::NativeConstruct();
+
+	// Re-subscribe cleanly if a Screen-space UWidgetComponent ever removes and re-adds the widget.
+	if (UIFHealthComponent* const Health = BoundHealthComponent.Get())
+	{
+		Health->OnHealthChanged.AddUniqueDynamic(this, &UIFVitalBarsWidget::HandleHealthChanged);
+		UpdateHealthDisplay(Health->GetHealthPercent());
+	}
+
+	if (UIFStaminaComponent* const Stamina = BoundStaminaComponent.Get())
+	{
+		Stamina->OnStaminaChanged.AddUniqueDynamic(this, &UIFVitalBarsWidget::HandleStaminaChanged);
+		if (IsValid(StaminaBar))
+		{
+			StaminaBar->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		if (IsValid(StaminaText))
+		{
+			StaminaText->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		UpdateStaminaDisplay(Stamina->GetStaminaPercent());
+	}
+	else if (BoundHealthComponent.IsValid())
+	{
+		if (IsValid(StaminaBar))
+		{
+			StaminaBar->SetVisibility(ESlateVisibility::Collapsed);
+		}
+		if (IsValid(StaminaText))
+		{
+			StaminaText->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
 }
 
 void UIFVitalBarsWidget::NativeDestruct()
 {
-	UnbindVitalComponents();
+	// Keep weak component references intact so NativeConstruct can re-bind if re-added to viewport.
+	UnsubscribeVitalDelegates();
 	Super::NativeDestruct();
 }
 

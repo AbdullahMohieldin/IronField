@@ -16,6 +16,8 @@ struct FBTTask_SoldierMoveMemory
 	FVector LastProgressLocation = FVector::ZeroVector;
 	float ElapsedSeconds = 0.f;
 	float StallElapsedSeconds = 0.f;
+	int32 RepathRetryCount = 0;
+	float RepathCooldownSeconds = 0.f;
 	bool bTrackedActorGoal = false;
 };
 
@@ -47,6 +49,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "5.0"))
 	float MinStallProgressDistance = 25.f;
+
+	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0"))
+	int32 MaxDynamicRepathRetries = 3;
 
 private:
 	// Issues one request for the controller's current goal and records what was requested.

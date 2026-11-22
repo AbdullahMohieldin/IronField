@@ -793,11 +793,12 @@ void UIFMeleeCombatComponent::ProcessHit(AActor* Target, const FVector& HitLocat
 		return;
 	}
 
-	// Walls block swings: one visibility trace per new target, not per frame.
+	// Walls block swings: trace to impact point so wide structures do not self-occlude their own center.
+	const FVector LosEnd = !HitLocation.IsNearlyZero() ? HitLocation : Target->GetActorLocation();
 	FHitResult LineOfSight;
 	FCollisionQueryParams LosParams(SCENE_QUERY_STAT(IFMeleeLOS), false);
 	LosParams.AddIgnoredActor(GetOwner());
-	if (World->LineTraceSingleByChannel(LineOfSight, GetOwner()->GetActorLocation(), Target->GetActorLocation(), ECC_Visibility, LosParams)
+	if (World->LineTraceSingleByChannel(LineOfSight, GetOwner()->GetActorLocation(), LosEnd, ECC_Visibility, LosParams)
 		&& LineOfSight.GetActor() != Target)
 	{
 		return;

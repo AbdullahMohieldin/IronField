@@ -80,8 +80,20 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Camera|Movement", meta = (ClampMin = "0.0"))
 	float YawRotationSpeed = 110.f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Camera|Movement", meta = (ClampMin = "1.0"))
+	float PanAccelerationInterpSpeed = 15.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Camera|Movement", meta = (ClampMin = "1.0"))
+	float PanDecelerationInterpSpeed = 9.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Camera|Movement", meta = (ClampMin = "1.0"))
+	float YawAccelerationInterpSpeed = 14.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Camera|Movement", meta = (ClampMin = "1.0"))
+	float YawDecelerationInterpSpeed = 10.f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Camera|Bounds", meta = (ClampMin = "0.0"))
-	float MaxPanRadiusFromCommander = 5500.f;
+	float MaxPanRadiusFromCommander = 12000.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Camera|Bounds")
 	bool bUseWorldBoundsClamp = false;
@@ -117,7 +129,9 @@ private:
 	FVector ActivationOrigin = FVector::ZeroVector;
 
 	FVector2D ActivePanInput = FVector2D::ZeroVector;
+	FVector CurrentPanVelocity = FVector::ZeroVector;
 	float ActiveYawInput = 0.f;
+	float CurrentYawVelocity = 0.f;
 
 	float CurrentZoomAlpha = 0.45f;
 	float TargetZoomAlpha = 0.45f;

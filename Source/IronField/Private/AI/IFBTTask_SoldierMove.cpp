@@ -2,6 +2,7 @@
 
 #include "AI/IFSoldierAIController.h"
 #include "AITypes.h"
+#include "Castle/IFStructure.h"
 #include "Character/IFSoldierCharacter.h"
 #include "GameFramework/Pawn.h"
 #include "Navigation/PathFollowingComponent.h"
@@ -46,7 +47,19 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 	FAIMoveRequest MoveReq;
 	if (IsValid(GoalActor))
 	{
-		MoveReq.SetGoalActor(GoalActor);
+		if (const AIFStructure* const GoalStructure = Cast<AIFStructure>(GoalActor))
+		{
+			const AIFSoldierCharacter* const Soldier = Controller.GetSoldier();
+			const FVector ApproachPoint = IsValid(Soldier)
+				? Soldier->GetCombatApproachPoint(GoalStructure)
+				: GoalStructure->GetActorLocation();
+			MoveReq.SetGoalLocation(ApproachPoint);
+			MoveReq.SetProjectGoalLocation(true);
+		}
+		else
+		{
+			MoveReq.SetGoalActor(GoalActor);
+		}
 	}
 	else
 	{
@@ -83,6 +96,8 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::ExecuteTask(UBehaviorTreeComponent& O
 	Memory->LastProgressLocation = FVector::ZeroVector;
 	Memory->ElapsedSeconds = 0.f;
 	Memory->StallElapsedSeconds = 0.f;
+	Memory->RepathRetryCount = 0;
+	Memory->RepathCooldownSeconds = 0.f;
 	Memory->bTrackedActorGoal = false;
 
 	AIFSoldierAIController* const Controller = Cast<AIFSoldierAIController>(OwnerComp.GetAIOwner());
@@ -121,6 +136,7 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 	}
 
 	Memory->ElapsedSeconds += DeltaSeconds;
+	Memory->RepathCooldownSeconds = FMath::Max(0.f, Memory->RepathCooldownSeconds - DeltaSeconds);
 	if (Memory->ElapsedSeconds > MaxMoveSeconds)
 	{
 		Controller->StopMovement();
@@ -157,14 +173,13 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		return;
 	}
 
-	const FVector GoalLocation = IsValid(CurrentGoalActor)
-		? CurrentGoalActor->GetActorLocation()
-		: CurrentGoalLocation;
-
 	const FVector PawnLocation = Controller->GetPawn()->GetActorLocation();
+	const AIFSoldierCharacter* const Soldier = Controller->GetSoldier();
 	const float Radius = ComputeAcceptanceRadius(*Controller, CurrentGoalActor);
-	const float DistSq2D = FVector::DistSquared2D(PawnLocation, GoalLocation);
-	if (DistSq2D <= FMath::Square(Radius))
+	const float Dist2D = (IsValid(CurrentGoalActor) && IsValid(Soldier))
+		? Soldier->GetHorizontalDistanceToTarget(CurrentGoalActor)
+		: FVector::Dist2D(PawnLocation, CurrentGoalLocation);
+	if (Dist2D <= Radius)
 	{
 		FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
 		return;
@@ -176,6 +191,7 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		{
 			Memory->LastProgressLocation = PawnLocation;
 			Memory->StallElapsedSeconds = 0.f;
+			Memory->RepathRetryCount = 0;
 		}
 		else
 		{
@@ -191,9 +207,36 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 	}
 
 	// A request that has already gone Idle without reaching the goal ended early
-	// (blocked, partial path or goal unreachable). Commit reachable spot for location orders.
+	// (e.g., Dynamic Recast aborted during wall placement or goal was unreachable).
 	if (Controller->GetMoveStatus() == EPathFollowingStatus::Idle)
 	{
+		if (Dist2D > (Radius + 5.f) && Memory->RepathRetryCount < MaxDynamicRepathRetries)
+		{
+			if (Memory->RepathCooldownSeconds <= 0.f)
+			{
+				++Memory->RepathRetryCount;
+				Memory->RepathCooldownSeconds = 0.25f;
+				const EBTNodeResult::Type RetryResult = IssueMove(*Controller, *Memory);
+				if (RetryResult == EBTNodeResult::Succeeded)
+				{
+					FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
+					return;
+				}
+				if (RetryResult == EBTNodeResult::InProgress)
+				{
+					return;
+				}
+				if (Memory->RepathRetryCount < MaxDynamicRepathRetries)
+				{
+					return;
+				}
+			}
+			else
+			{
+				return;
+			}
+		}
+
 		if (!IsValid(CurrentGoalActor))
 		{
 			Controller->NotifyMoveOrderBlockedOrStalled();
@@ -201,7 +244,7 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 			return;
 		}
 
-		const EBTNodeResult::Type Result = (DistSq2D <= FMath::Square(Radius + 5.f))
+		const EBTNodeResult::Type Result = (Dist2D <= (Radius + 5.f))
 			? EBTNodeResult::Succeeded
 			: EBTNodeResult::Failed;
 		FinishLatentTask(OwnerComp, Result);

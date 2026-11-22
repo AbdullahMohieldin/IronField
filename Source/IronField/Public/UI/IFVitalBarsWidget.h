@@ -29,6 +29,7 @@ public:
 	void UnbindVitalComponents();
 
 protected:
+	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 
 	UPROPERTY(meta = (BindWidget))
@@ -50,6 +51,7 @@ private:
 	UFUNCTION()
 	void HandleStaminaChanged(float Percent);
 
+	void UnsubscribeVitalDelegates();
 	void UpdateHealthDisplay(float Percent);
 	void UpdateStaminaDisplay(float Percent);
 

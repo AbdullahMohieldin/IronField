@@ -18,7 +18,10 @@ public class IronField : ModuleRules
 			"AIModule",
 			"NavigationSystem",
 			"GameplayTasks",
-			"Niagara"
+			"Niagara",
+			"GeometryCollectionEngine",
+			"Chaos",
+			"FieldSystemEngine"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {
