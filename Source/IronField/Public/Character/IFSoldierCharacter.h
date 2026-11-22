@@ -71,11 +71,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
 	float GetAttackRangeBuffer() const { return AttackRangeBuffer; }
 
-	// Center-to-center stop/swing distance: MyCapsuleRadius + TargetCapsuleRadius + AttackRange.
+	// Stop/swing distance (surface-relative for AIFStructure, center-to-center for characters).
 	float GetEffectiveAttackRange(const AActor* Target) const;
 
-	// Center-to-center hold/rechase threshold: GetEffectiveAttackRange(Target) + AttackRangeBuffer.
+	// Hold/rechase threshold: GetEffectiveAttackRange(Target) + AttackRangeBuffer.
 	float GetMaxMeleeEngagementRange(const AActor* Target) const;
+
+	// Exact box-surface horizontal distance for AIFStructure targets; center-to-center 2D distance for characters.
+	float GetHorizontalDistanceToTarget(const AActor* Target) const;
+
+	// Nearest box-surface point for AIFStructure targets; actor location for characters.
+	FVector GetCombatApproachPoint(const AActor* Target) const;
 
 	// --- Decision tuning read by AIFSoldierAIController --------------------
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
@@ -99,7 +105,6 @@ public:
 
 	void BeginAnchorFacingAlignment();
 	void CancelAnchorFacingAlignment();
-	void SetStationaryFormationRVO(bool bStationary);
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
 	bool IsLeashedToAnchor() const { return bLeashToAnchor; }
@@ -234,6 +239,10 @@ private:
 	void HandleSelectionRingAssetsLoaded();
 	void UpdateSelectionRingTransform();
 	void RefreshTacticalRingVisual();
+	void UpdateOverheadWidgetVisibility();
+
+	UFUNCTION()
+	void HandleHealthChanged(float HealthPercent);
 
 	TSharedPtr<FStreamableHandle> SelectionRingLoadHandle;
 	EIFTacticalRingMode TacticalRingMode = EIFTacticalRingMode::None;
@@ -242,10 +251,8 @@ private:
 
 	FVector AnchorLocation = FVector::ZeroVector;
 	float AnchorFacingYaw = 0.f;
-	float DefaultAvoidanceWeight = 0.5f;
 	bool bHasAnchorFacing = false;
 	bool bIsAligningToAnchorFacing = false;
-	bool bStationaryFormationRVO = false;
 
 	// OnPossess (and therefore the first RefreshDecision) can run before BeginPlay,
 	// so the anchor is only authoritative once this is true.

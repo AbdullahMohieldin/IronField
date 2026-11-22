@@ -6,6 +6,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/App.h"
 
 AIFTacticalCameraRig::AIFTacticalCameraRig()
 {
@@ -43,6 +44,8 @@ void AIFTacticalCameraRig::ActivateTacticalCamera(const APawn* CommanderPawn, fl
 	bIsTacticalActive = true;
 	TrackedCommander = CommanderPawn;
 	ClearControlInputs();
+	CurrentPanVelocity = FVector::ZeroVector;
+	CurrentYawVelocity = 0.f;
 
 	CurrentZoomAlpha = FMath::Clamp(DefaultZoomAlpha, 0.f, 1.f);
 	TargetZoomAlpha = CurrentZoomAlpha;
@@ -86,6 +89,8 @@ void AIFTacticalCameraRig::DeactivateTacticalCamera(float InRampDurationSeconds)
 {
 	bIsTacticalActive = false;
 	ClearControlInputs();
+	CurrentPanVelocity = FVector::ZeroVector;
+	CurrentYawVelocity = 0.f;
 
 	if (InRampDurationSeconds <= 0.f)
 	{
@@ -110,6 +115,8 @@ void AIFTacticalCameraRig::ForceResetTimeDilation()
 {
 	bIsTacticalActive = false;
 	ClearControlInputs();
+	CurrentPanVelocity = FVector::ZeroVector;
+	CurrentYawVelocity = 0.f;
 	CurrentTimeDilation = 1.f;
 	TargetTimeDilation = 1.f;
 	TimeDilationRampRate = 0.f;
@@ -153,8 +160,8 @@ void AIFTacticalCameraRig::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	const float CurrentGlobalDilation = FMath::Max(UGameplayStatics::GetGlobalTimeDilation(this), 0.001f);
-	const float RealDeltaSeconds = FMath::Clamp(DeltaSeconds / CurrentGlobalDilation, 0.f, 0.1f);
+	// Use true engine delta so GlobalTimeDilation (0.35x) and ramp transitions never skew RTS motion.
+	const float RealDeltaSeconds = FMath::Clamp(static_cast<float>(FApp::GetDeltaTime()), 0.f, 0.05f);
 
 	UpdateTimeDilationRamp(RealDeltaSeconds);
 
@@ -173,14 +180,21 @@ void AIFTacticalCameraRig::Tick(float DeltaSeconds)
 		ApplyCameraZoomAndPitch();
 	}
 
-	if (!FMath::IsNearlyZero(ActiveYawInput))
+	const float TargetYawVel = ActiveYawInput * YawRotationSpeed;
+	const float YawInterpSpeed = FMath::IsNearlyZero(ActiveYawInput) ? YawDecelerationInterpSpeed : YawAccelerationInterpSpeed;
+	CurrentYawVelocity = FMath::FInterpTo(CurrentYawVelocity, TargetYawVel, RealDeltaSeconds, YawInterpSpeed);
+	if (!FMath::IsNearlyZero(CurrentYawVelocity, 0.05f))
 	{
 		FRotator NewRot = GetActorRotation();
-		NewRot.Yaw = FRotator::NormalizeAxis(NewRot.Yaw + ActiveYawInput * YawRotationSpeed * RealDeltaSeconds);
+		NewRot.Yaw = FRotator::NormalizeAxis(NewRot.Yaw + CurrentYawVelocity * RealDeltaSeconds);
 		SetActorRotation(NewRot);
 	}
+	else if (FMath::IsNearlyZero(ActiveYawInput))
+	{
+		CurrentYawVelocity = 0.f;
+	}
 
-	FVector NewLocation = GetActorLocation();
+	FVector TargetPanVelocity = FVector::ZeroVector;
 	if (!ActivePanInput.IsNearlyZero())
 	{
 		const FRotator YawOnly(0.f, GetActorRotation().Yaw, 0.f);
@@ -189,10 +203,17 @@ void AIFTacticalCameraRig::Tick(float DeltaSeconds)
 		const FVector Right2D = YawMatrix.GetUnitAxis(EAxis::Y);
 
 		const float PanSpeed = FMath::Lerp(MinPanSpeed, MaxPanSpeed, CurrentZoomAlpha);
-		const FVector PanDir = Forward2D * ActivePanInput.Y + Right2D * ActivePanInput.X;
-		NewLocation += PanDir * (PanSpeed * RealDeltaSeconds);
+		TargetPanVelocity = (Forward2D * ActivePanInput.Y + Right2D * ActivePanInput.X) * PanSpeed;
 	}
 
+	const float PanInterpSpeed = ActivePanInput.IsNearlyZero() ? PanDecelerationInterpSpeed : PanAccelerationInterpSpeed;
+	CurrentPanVelocity = FMath::VInterpTo(CurrentPanVelocity, TargetPanVelocity, RealDeltaSeconds, PanInterpSpeed);
+	if (ActivePanInput.IsNearlyZero() && CurrentPanVelocity.SizeSquared2D() < 1.f)
+	{
+		CurrentPanVelocity = FVector::ZeroVector;
+	}
+
+	FVector NewLocation = GetActorLocation() + CurrentPanVelocity * RealDeltaSeconds;
 	NewLocation = ClampLocationToBounds(NewLocation);
 	UpdateTerrainFollowZ(NewLocation.X, NewLocation.Y, RealDeltaSeconds);
 	NewLocation.Z = CurrentGroundZ;
@@ -254,8 +275,11 @@ void AIFTacticalCameraRig::UpdateTerrainFollowZ(float XYLocationX, float XYLocat
 		QueryParams.AddIgnoredActor(Commander);
 	}
 
+	FCollisionObjectQueryParams GroundObjectParams;
+	GroundObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+
 	FHitResult Hit;
-	if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_WorldStatic, QueryParams))
+	if (World->LineTraceSingleByObjectType(Hit, TraceStart, TraceEnd, GroundObjectParams, QueryParams))
 	{
 		if (!Hit.bStartPenetrating
 			&& Hit.bBlockingHit

@@ -1,17 +1,19 @@
 #include "AI/IFBTTask_MeleeAttack.h"
 
 #include "AI/IFSoldierAIController.h"
+#include "Castle/IFStructure.h"
 #include "Character/IFBaseCharacter.h"
 #include "Character/IFSoldierCharacter.h"
 #include "Combat/IFMeleeCombatComponent.h"
 #include "Combat/IFTeamTypes.h"
 #include "GameFramework/Actor.h"
+#include "Stats/IFHealthComponent.h"
 
 namespace
 {
 	float GetYawErrorDegrees(const AIFSoldierCharacter& Soldier, const AActor& Target)
 	{
-		FVector ToTarget = Target.GetActorLocation() - Soldier.GetActorLocation();
+		FVector ToTarget = Soldier.GetCombatApproachPoint(&Target) - Soldier.GetActorLocation();
 		ToTarget.Z = 0.f;
 		if (ToTarget.IsNearlyZero())
 		{
@@ -24,7 +26,7 @@ namespace
 
 	float FaceTargetSmooth(AIFSoldierCharacter& Soldier, const AActor& Target, float DeltaSeconds, float InterpSpeed)
 	{
-		FVector ToTarget = Target.GetActorLocation() - Soldier.GetActorLocation();
+		FVector ToTarget = Soldier.GetCombatApproachPoint(&Target) - Soldier.GetActorLocation();
 		ToTarget.Z = 0.f;
 		if (ToTarget.IsNearlyZero())
 		{
@@ -53,6 +55,20 @@ namespace
 				return false;
 			}
 		}
+		else if (const AIFStructure* const TargetStructure = Cast<AIFStructure>(Target))
+		{
+			if (!TargetStructure->IsStructureAlive())
+			{
+				return false;
+			}
+		}
+		else if (const UIFHealthComponent* const TargetHealth = Target->FindComponentByClass<UIFHealthComponent>())
+		{
+			if (TargetHealth->IsDead())
+			{
+				return false;
+			}
+		}
 
 		if (!IFTeamUtils::AreHostile(&Soldier, Target))
 		{
@@ -60,8 +76,7 @@ namespace
 		}
 
 		const float MaxEngagementRange = Soldier.GetMaxMeleeEngagementRange(Target);
-		return FVector::DistSquared2D(Soldier.GetActorLocation(), Target->GetActorLocation())
-			<= FMath::Square(MaxEngagementRange);
+		return Soldier.GetHorizontalDistanceToTarget(Target) <= MaxEngagementRange;
 	}
 }
 

@@ -4,6 +4,7 @@
 #include "AIController.h"
 #include "Animation/AnimInstance.h"
 #include "BrainComponent.h"
+#include "Castle/IFStructure.h"
 #include "Combat/IFMeleeCombatComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -17,6 +18,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "PhysicsEngine/PhysicsAsset.h"
+#include "Stats/IFHealthComponent.h"
 #include "Stats/IFStaminaComponent.h"
 #include "TimerManager.h"
 #include "UI/IFVitalBarsWidget.h"
@@ -59,10 +61,7 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 		Movement->MaxAcceleration = 1200.f;
 		Movement->BrakingDecelerationWalking = 1200.f;
 
-		// Keep minion packs from occupying the same point on the lane while allowing tight Roman squares.
-		Movement->bUseRVOAvoidance = true;
-		Movement->AvoidanceConsiderationRadius = 130.f;
-		Movement->AvoidanceWeight = DefaultAvoidanceWeight;
+		Movement->bUseRVOAvoidance = false;
 	}
 
 	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadVitals"));
@@ -107,6 +106,11 @@ void AIFSoldierCharacter::BeginPlay()
 		bHasAnchorLocation = true;
 	}
 
+	if (UIFHealthComponent* const Health = GetHealthComponent())
+	{
+		Health->OnHealthChanged.AddUniqueDynamic(this, &AIFSoldierCharacter::HandleHealthChanged);
+	}
+
 	if (IsValid(OverheadWidgetComponent) && OverheadWidgetComponent->GetWidgetClass() != nullptr)
 	{
 		OverheadWidgetComponent->InitWidget();
@@ -117,11 +121,7 @@ void AIFSoldierCharacter::BeginPlay()
 				(GetGenericTeamId().GetId() == IFTeamIds::Player) ? AllyHealthBarColor : EnemyHealthBarColor);
 		}
 	}
-
-	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
-	{
-		DefaultAvoidanceWeight = Movement->AvoidanceWeight;
-	}
+	UpdateOverheadWidgetVisibility();
 
 	SetActorTickEnabled(false);
 
@@ -132,6 +132,11 @@ void AIFSoldierCharacter::BeginPlay()
 void AIFSoldierCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	CancelAnchorFacingAlignment();
+
+	if (UIFHealthComponent* const Health = GetHealthComponent())
+	{
+		Health->OnHealthChanged.RemoveDynamic(this, &AIFSoldierCharacter::HandleHealthChanged);
+	}
 
 	if (SelectionRingLoadHandle.IsValid())
 	{
@@ -182,11 +187,6 @@ void AIFSoldierCharacter::HandleDeath(AActor* DeadActor)
 	Super::HandleDeath(DeadActor);
 
 	CancelAnchorFacingAlignment();
-	bStationaryFormationRVO = false;
-	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
-	{
-		Movement->SetAvoidanceEnabled(false);
-	}
 	bIsTacticalSelected = false;
 	bSelectionRingDisplayEnabled = false;
 	TacticalRingMode = EIFTacticalRingMode::None;
@@ -384,24 +384,15 @@ void AIFSoldierCharacter::CancelAnchorFacingAlignment()
 	SetActorTickEnabled(false);
 }
 
-void AIFSoldierCharacter::SetStationaryFormationRVO(bool bStationary)
-{
-	if (bStationaryFormationRVO == bStationary)
-	{
-		return;
-	}
-
-	bStationaryFormationRVO = bStationary;
-	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
-	{
-		Movement->AvoidanceWeight = bStationary ? 0.f : DefaultAvoidanceWeight;
-		Movement->SetAvoidanceEnabled(!bStationary);
-	}
-}
-
 float AIFSoldierCharacter::GetEffectiveAttackRange(const AActor* Target) const
 {
 	const float SelfRadius = GetSimpleCollisionRadius();
+	if (Cast<AIFStructure>(Target))
+	{
+		// Distance to structures is measured to the exact rotated box surface, so no extra target radius is added.
+		return FMath::Max(AttackRange, 0.f) + SelfRadius;
+	}
+
 	const float TargetRadius = IsValid(Target) ? Target->GetSimpleCollisionRadius() : 0.f;
 	return FMath::Max(AttackRange, 0.f) + SelfRadius + TargetRadius;
 }
@@ -409,6 +400,43 @@ float AIFSoldierCharacter::GetEffectiveAttackRange(const AActor* Target) const
 float AIFSoldierCharacter::GetMaxMeleeEngagementRange(const AActor* Target) const
 {
 	return GetEffectiveAttackRange(Target) + FMath::Max(AttackRangeBuffer, 0.f);
+}
+
+float AIFSoldierCharacter::GetHorizontalDistanceToTarget(const AActor* Target) const
+{
+	if (!IsValid(Target))
+	{
+		return TNumericLimits<float>::Max();
+	}
+
+	if (const AIFStructure* const Structure = Cast<AIFStructure>(Target))
+	{
+		return Structure->GetHorizontalSurfaceDistance(GetActorLocation());
+	}
+
+	return FVector::Dist2D(GetActorLocation(), Target->GetActorLocation());
+}
+
+FVector AIFSoldierCharacter::GetCombatApproachPoint(const AActor* Target) const
+{
+	if (!IsValid(Target))
+	{
+		return GetActorLocation();
+	}
+
+	if (const AIFStructure* const Structure = Cast<AIFStructure>(Target))
+	{
+		const FVector SurfacePoint = Structure->GetClosestSurfacePoint2D(GetActorLocation());
+		const FVector OutwardDir = (GetActorLocation() - SurfacePoint).GetSafeNormal2D();
+		if (OutwardDir.IsNearlyZero())
+		{
+			return SurfacePoint;
+		}
+		const float CapsuleRadius = IsValid(GetCapsuleComponent()) ? GetCapsuleComponent()->GetScaledCapsuleRadius() : 44.f;
+		return SurfacePoint + OutwardDir * (CapsuleRadius + 10.f);
+	}
+
+	return Target->GetActorLocation();
 }
 
 bool AIFSoldierCharacter::TryPerformMeleeAttack()
@@ -493,12 +521,14 @@ void AIFSoldierCharacter::SetTacticalSelected(bool bSelected, bool bShowRingNow)
 	}
 
 	RefreshTacticalRingVisual();
+	UpdateOverheadWidgetVisibility();
 }
 
 void AIFSoldierCharacter::SetSelectionRingDisplayVisible(bool bVisible)
 {
 	bSelectionRingDisplayEnabled = bVisible;
 	RefreshTacticalRingVisual();
+	UpdateOverheadWidgetVisibility();
 }
 
 void AIFSoldierCharacter::SetHostileTargetHighlighted(bool bHighlighted)
@@ -518,6 +548,42 @@ void AIFSoldierCharacter::SetHostileTargetHighlighted(bool bHighlighted)
 	}
 
 	RefreshTacticalRingVisual();
+	UpdateOverheadWidgetVisibility();
+}
+
+void AIFSoldierCharacter::HandleHealthChanged(float)
+{
+	UpdateOverheadWidgetVisibility();
+}
+
+void AIFSoldierCharacter::UpdateOverheadWidgetVisibility()
+{
+	if (!IsValid(OverheadWidgetComponent))
+	{
+		return;
+	}
+
+	if (!IsAlive())
+	{
+		OverheadWidgetComponent->SetVisibility(false);
+		return;
+	}
+
+	const UIFHealthComponent* const Health = GetHealthComponent();
+	const bool bDamaged = IsValid(Health)
+		&& (Health->GetCurrentHealth() < Health->GetMaxHealth() - KINDA_SMALL_NUMBER);
+	// Friendly tactical selection counts only while Tactical Mode displays rings so Action Mode stays uncluttered.
+	const bool bSelectedInTactical = bIsTacticalSelected && bSelectionRingDisplayEnabled;
+	const bool bHostileTargeted = (TacticalRingMode == EIFTacticalRingMode::HostileTarget);
+	const bool bShouldShow = bDamaged || bSelectedInTactical || bHostileTargeted;
+
+	// Toggle inner Slate visibility while keeping the Screen UWidgetComponent active so UE 5.8
+	// never triggers RemoveWidgetFromScreen -> NativeDestruct on full-HP units.
+	OverheadWidgetComponent->SetVisibility(true);
+	if (UUserWidget* const OverheadWidget = OverheadWidgetComponent->GetUserWidgetObject())
+	{
+		OverheadWidget->SetVisibility(bShouldShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
 }
 
 void AIFSoldierCharacter::RequestSelectionRingAssets()

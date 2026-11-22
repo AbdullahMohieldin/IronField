@@ -2,11 +2,14 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Castle/IFCastleTypes.h"
 #include "Tactical/IFTacticalTypes.h"
 #include "IFTacticalHUDWidget.generated.h"
 
+class AIFStructure;
 class UBorder;
 class UButton;
+class UIFStructureDataAsset;
 class UIFTacticalCommandComponent;
 class UTextBlock;
 class UWidget;
@@ -86,6 +89,47 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> CircleFormationLabel;
 
+	// --- Part 09 Contextual Build Bar (Keep, GuardTower, WallSegment) -------
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> BuildBarContainer;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> BuildKeepButton;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> BuildGuardTowerButton;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> BuildWallButton;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UBorder> BuildKeepHighlight;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UBorder> BuildGuardTowerHighlight;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UBorder> BuildWallHighlight;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> BuildPlacementStatusBorder;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> BuildPlacementStatusText;
+
+	// --- Part 09 Contextual Selected Structure Action Bar ------------------
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UWidget> StructureActionBarContainer;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> SelectedStructureNameText;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> MoveStructureButton;
+
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UButton> DemolishStructureButton;
+
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|UI", meta = (ClampMin = "0.25"))
 	float OrderToastDurationSeconds = 1.75f;
 
@@ -115,6 +159,15 @@ private:
 	void HandleFormationTypeChanged(EIFTacticalFormationType NewFormationType);
 
 	UFUNCTION()
+	void HandleBuildPlacementModeChanged(bool bIsPlacementActive, UIFStructureDataAsset* ActiveStructureData);
+
+	UFUNCTION()
+	void HandleBuildPlacementValidityChanged(bool bIsValid, EIFPlacementInvalidReason InvalidReason);
+
+	UFUNCTION()
+	void HandleSelectedStructureChanged(AIFStructure* SelectedStructure);
+
+	UFUNCTION()
 	void HandleLineFormationClicked();
 
 	UFUNCTION()
@@ -123,11 +176,34 @@ private:
 	UFUNCTION()
 	void HandleCircleFormationClicked();
 
+	UFUNCTION()
+	void HandleBuildKeepClicked();
+
+	UFUNCTION()
+	void HandleBuildGuardTowerClicked();
+
+	UFUNCTION()
+	void HandleBuildWallClicked();
+
+	UFUNCTION()
+	void HandleMoveStructureClicked();
+
+	UFUNCTION()
+	void HandleDemolishStructureClicked();
+
 	void ConfigureFormationButtons();
 	void UnbindFormationButtons();
+	void ConfigureBuildButtons();
+	void UnbindBuildButtons();
+	void ConfigureStructureActionButtons();
+	void UnbindStructureActionButtons();
 	void SelectFormationFromButton(EIFTacticalFormationType FormationType);
+	void SelectBuildStructureFromButton(EIFStructureType StructureType);
 	void UpdateSelectionState(int32 SelectedUnitCount);
+	void UpdateSelectedStructureState(AIFStructure* SelectedStructure);
 	void UpdateFormationHighlight(EIFTacticalFormationType ActiveType);
+	void UpdateBuildHighlight(bool bIsPlacementActive, const UIFStructureDataAsset* ActiveData);
+	void UpdateControlsHintText(int32 SelectedUnitCount, bool bIsPlacementActive);
 	void ShowOrderToast(EIFTacticalOrderType OrderType);
 	void HideOrderToast();
 
