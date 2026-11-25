@@ -6,7 +6,6 @@
 #include "IFPlayerController.generated.h"
 
 class APawn;
-class AActor;
 class AIFGameState;
 class UInputAction;
 class UIFBuildingComponent;
@@ -28,10 +27,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Build")
 	UIFBuildingComponent* GetBuildingComponent() const { return BuildingSystem; }
 
-	void RegisterNearbyInteractable(AActor* Interactable);
-	void UnregisterNearbyInteractable(AActor* Interactable);
-	AActor* GetNearestInteractable() const;
-	void RefreshInteractionPrompt();
+	void SetInteractionPromptText(const FText& PromptText);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Flow")
 	void SetMatchPaused(bool bPaused);
@@ -84,7 +80,6 @@ private:
 	void ShowGameOverScreen(EIFGameResult Result);
 	void ApplyPauseInputMode();
 	void ApplyUIInputMode();
-	void HandleInteractKeyPressed();
 
 	UFUNCTION()
 	void HandleMatchResultChanged(EIFGameResult NewResult);
@@ -96,7 +91,6 @@ private:
 	TObjectPtr<UIFBuildingComponent> BuildingSystem;
 
 	TWeakObjectPtr<AIFGameState> ObservedGameState;
-	TArray<TWeakObjectPtr<AActor>> NearbyInteractables;
 
 	bool bIsGameOver = false;
 };

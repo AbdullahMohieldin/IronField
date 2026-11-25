@@ -2,17 +2,13 @@
 
 #include "Castle/IFStructureDataAsset.h"
 #include "Character/IFBaseCharacter.h"
-#include "Character/IFPlayerCharacter.h"
 #include "Combat/IFTeamTypes.h"
 #include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
-#include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Core/IFLog.h"
-#include "Core/IFPlayerController.h"
-#include "Engine/World.h"
+#include "Engine/CollisionProfile.h"
 #include "GeometryCollection/GeometryCollectionObject.h"
-#include "Kismet/GameplayStatics.h"
 
 AIFGateDoor::AIFGateDoor()
 {
@@ -26,9 +22,7 @@ AIFGateDoor::AIFGateDoor()
 	LeftDoorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("LeftDoorMesh"));
 	LeftDoorMesh->SetupAttachment(LeftDoorPivot);
 	LeftDoorMesh->SetRelativeLocation(FVector(87.5f, 0.f, 0.f));
-	LeftDoorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	LeftDoorMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
-	LeftDoorMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	LeftDoorMesh->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	LeftDoorMesh->SetGenerateOverlapEvents(false);
 	LeftDoorMesh->SetCanEverAffectNavigation(false);
 
@@ -39,72 +33,27 @@ AIFGateDoor::AIFGateDoor()
 	RightDoorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RightDoorMesh"));
 	RightDoorMesh->SetupAttachment(RightDoorPivot);
 	RightDoorMesh->SetRelativeLocation(FVector(-87.5f, 0.f, 0.f));
-	RightDoorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	RightDoorMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
-	RightDoorMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	RightDoorMesh->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	RightDoorMesh->SetGenerateOverlapEvents(false);
 	RightDoorMesh->SetCanEverAffectNavigation(false);
-
-	InteractionZone = CreateDefaultSubobject<USphereComponent>(TEXT("InteractionZone"));
-	InteractionZone->SetupAttachment(BoundsCollision);
-	InteractionZone->InitSphereRadius(280.f);
-	InteractionZone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	InteractionZone->SetCollisionResponseToAllChannels(ECR_Ignore);
-	InteractionZone->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
-	InteractionZone->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
-	InteractionZone->SetGenerateOverlapEvents(true);
-	InteractionZone->SetCanEverAffectNavigation(false);
-}
-
-bool AIFGateDoor::ShouldStripPrimitiveCollision(const UPrimitiveComponent* Prim) const
-{
-	return Prim != InteractionZone;
 }
 
 void AIFGateDoor::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (IsValid(InteractionZone))
+	TInlineComponentArray<UBoxComponent*> CollisionBoxes;
+	GetComponents(CollisionBoxes);
+	for (UBoxComponent* const Box : CollisionBoxes)
 	{
-		InteractionZone->SetSphereRadius(InteractionRadiusCm);
-		InteractionZone->OnComponentBeginOverlap.AddUniqueDynamic(this, &AIFGateDoor::HandleInteractionBeginOverlap);
-		InteractionZone->OnComponentEndOverlap.AddUniqueDynamic(this, &AIFGateDoor::HandleInteractionEndOverlap);
-		InteractionZone->UpdateOverlaps();
+		if (IsValid(Box))
+		{
+			Box->SetGenerateOverlapEvents(true);
+		}
 	}
 
 	ApplyDoorLeafYaw(bIsGateOpen ? 1.f : 0.f);
 	SetStructureCollisionBlocking(!bIsGateOpen);
-
-	// Register immediately if the local player character is already inside InteractionRadiusCm at spawn.
-	if (const UWorld* const World = GetWorld())
-	{
-		if (AIFPlayerController* const PC = Cast<AIFPlayerController>(UGameplayStatics::GetPlayerController(World, 0)))
-		{
-			if (AIFPlayerCharacter* const PlayerChar = Cast<AIFPlayerCharacter>(PC->GetPawn()))
-			{
-				if (CanInteract(PlayerChar)
-					&& FVector::DistSquared(PlayerChar->GetActorLocation(), GetActorLocation()) <= FMath::Square(InteractionRadiusCm))
-				{
-					RegisteredController = PC;
-					PC->RegisterNearbyInteractable(this);
-				}
-			}
-		}
-	}
-}
-
-void AIFGateDoor::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	UnregisterFromNearbyControllers();
-
-	if (IsValid(InteractionZone))
-	{
-		InteractionZone->OnComponentBeginOverlap.RemoveDynamic(this, &AIFGateDoor::HandleInteractionBeginOverlap);
-		InteractionZone->OnComponentEndOverlap.RemoveDynamic(this, &AIFGateDoor::HandleInteractionEndOverlap);
-	}
-
-	Super::EndPlay(EndPlayReason);
 }
 
 void AIFGateDoor::SetHostGate(AIFStructure* InHostGate)
@@ -134,11 +83,6 @@ void AIFGateDoor::SetGateOpen(bool bNewOpen)
 	SetStructureCollisionBlocking(!bIsGateOpen);
 	SetActorTickEnabled(true);
 	OnGateDoorStateChanged.Broadcast(this, bIsGateOpen);
-
-	if (AIFPlayerController* const PC = RegisteredController.Get(); IsValid(PC))
-	{
-		PC->RefreshInteractionPrompt();
-	}
 }
 
 bool AIFGateDoor::CanInteract(AActor* Interactor) const
@@ -202,29 +146,6 @@ void AIFGateDoor::ApplyDoorLeafYaw(float Alpha)
 	}
 }
 
-void AIFGateDoor::OnTeamChanged(FGenericTeamId PreviousTeam, FGenericTeamId NewTeam)
-{
-	Super::OnTeamChanged(PreviousTeam, NewTeam);
-
-	if (AIFPlayerController* const PC = RegisteredController.Get(); IsValid(PC))
-	{
-		if (!CanInteract(PC->GetPawn()))
-		{
-			UnregisterFromNearbyControllers();
-		}
-		else
-		{
-			PC->RefreshInteractionPrompt();
-		}
-	}
-}
-
-void AIFGateDoor::OnStructureDeactivated()
-{
-	Super::OnStructureDeactivated();
-	UnregisterFromNearbyControllers();
-}
-
 void AIFGateDoor::GatherStructureAssetPaths(TArray<FSoftObjectPath>& OutAssetPaths) const
 {
 	Super::GatherStructureAssetPaths(OutAssetPaths);
@@ -242,7 +163,6 @@ void AIFGateDoor::GatherStructureAssetPaths(TArray<FSoftObjectPath>& OutAssetPat
 void AIFGateDoor::TriggerDestructionFeedback()
 {
 	SetActorTickEnabled(false);
-	UnregisterFromNearbyControllers();
 
 	auto CaptureLeafWorldTransform = [](const UStaticMeshComponent* LeafMesh, const FTransform& FallbackTransform) -> FTransform
 	{
@@ -315,61 +235,4 @@ void AIFGateDoor::TriggerDestructionFeedback()
 	}
 
 	SpawnDestructionVFX();
-}
-
-void AIFGateDoor::HandleInteractionBeginOverlap(
-	UPrimitiveComponent*,
-	AActor* OtherActor,
-	UPrimitiveComponent*,
-	int32,
-	bool,
-	const FHitResult&)
-{
-	if (!IsStructureAlive())
-	{
-		return;
-	}
-
-	AIFPlayerCharacter* const PlayerChar = Cast<AIFPlayerCharacter>(OtherActor);
-	if (!IsValid(PlayerChar) || !CanInteract(PlayerChar))
-	{
-		return;
-	}
-
-	if (AIFPlayerController* const PC = Cast<AIFPlayerController>(PlayerChar->GetController()))
-	{
-		RegisteredController = PC;
-		PC->RegisterNearbyInteractable(this);
-	}
-}
-
-void AIFGateDoor::HandleInteractionEndOverlap(
-	UPrimitiveComponent*,
-	AActor* OtherActor,
-	UPrimitiveComponent*,
-	int32)
-{
-	const AIFPlayerCharacter* const PlayerChar = Cast<AIFPlayerCharacter>(OtherActor);
-	if (!IsValid(PlayerChar))
-	{
-		return;
-	}
-
-	if (AIFPlayerController* const PC = Cast<AIFPlayerController>(PlayerChar->GetController()))
-	{
-		PC->UnregisterNearbyInteractable(this);
-		if (RegisteredController.Get() == PC)
-		{
-			RegisteredController.Reset();
-		}
-	}
-}
-
-void AIFGateDoor::UnregisterFromNearbyControllers()
-{
-	if (AIFPlayerController* const PC = RegisteredController.Get(); IsValid(PC))
-	{
-		PC->UnregisterNearbyInteractable(this);
-	}
-	RegisteredController.Reset();
 }

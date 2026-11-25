@@ -42,9 +42,8 @@ bool UIFStaminaComponent::TryConsumeStamina(float Amount)
 		return false;
 	}
 
-	SetStaminaClamped(CurrentStamina - Amount);
 	TimeSinceLastDrain = 0.f;
-	UpdateTickEnabled();
+	ApplyStaminaChange(CurrentStamina - Amount, false);
 	return true;
 }
 
@@ -66,12 +65,6 @@ void UIFStaminaComponent::StopContinuousDrain()
 {
 	ContinuousDrainRate = 0.f;
 	UpdateTickEnabled();
-}
-
-void UIFStaminaComponent::InitializeStamina(float NewMaxStamina)
-{
-	MaxStamina = FMath::Max(1.f, NewMaxStamina);
-	ResetStamina();
 }
 
 void UIFStaminaComponent::ConfigureStaminaDefaults(float InMaxStamina, float InRegenRate, float InRegenDelay)
@@ -122,13 +115,8 @@ bool UIFStaminaComponent::CanRegenerate() const
 
 void UIFStaminaComponent::DrainStamina(float DeltaTime)
 {
-	SetStaminaClamped(CurrentStamina - ContinuousDrainRate * DeltaTime);
 	TimeSinceLastDrain = 0.f;
-
-	if (CurrentStamina <= 0.f)
-	{
-		StopContinuousDrain();
-	}
+	ApplyStaminaChange(CurrentStamina - ContinuousDrainRate * DeltaTime, true);
 }
 
 void UIFStaminaComponent::RegenerateStamina(float DeltaTime)
@@ -145,7 +133,7 @@ void UIFStaminaComponent::RegenerateStamina(float DeltaTime)
 		return;
 	}
 
-	SetStaminaClamped(CurrentStamina + (StaminaRegenRate * RegenRateMultiplier) * DeltaTime);
+	ApplyStaminaChange(CurrentStamina + (StaminaRegenRate * RegenRateMultiplier) * DeltaTime, false);
 
 	if (CurrentStamina >= MaxStamina)
 	{
@@ -159,21 +147,24 @@ void UIFStaminaComponent::UpdateTickEnabled()
 	SetComponentTickEnabled(bNeedsTick);
 }
 
-void UIFStaminaComponent::SetStaminaClamped(float NewStamina)
+void UIFStaminaComponent::ApplyStaminaChange(float NewStamina, bool bClearDrainOnDeplete)
 {
 	const float PreviousStamina = CurrentStamina;
 	const float Clamped = FMath::Clamp(NewStamina, 0.f, MaxStamina);
-	if (!FMath::IsNearlyEqual(CurrentStamina, Clamped))
+	const bool bChanged = !FMath::IsNearlyEqual(CurrentStamina, Clamped);
+
+	CurrentStamina = Clamped;
+	if (bClearDrainOnDeplete && CurrentStamina <= 0.f)
 	{
-		CurrentStamina = Clamped;
+		ContinuousDrainRate = 0.f;
+	}
+	UpdateTickEnabled();
+
+	if (bChanged)
+	{
 		OnStaminaChanged.Broadcast(GetStaminaPercent());
 	}
 
-	BroadcastDepletedIfNeeded(PreviousStamina);
-}
-
-void UIFStaminaComponent::BroadcastDepletedIfNeeded(float PreviousStamina)
-{
 	if (PreviousStamina > 0.f && CurrentStamina <= 0.f)
 	{
 		OnStaminaDepleted.Broadcast();

@@ -4,10 +4,11 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Combat/IFCombatComponent.h"
 #include "Combat/IFPlayerCombatComponent.h"
+#include "Components/SphereComponent.h"
+#include "Core/IFGameMode.h"
+#include "Core/IFInteractable.h"
 #include "Core/IFPlayerController.h"
-#include "Engine/AssetManager.h"
 #include "Engine/LocalPlayer.h"
-#include "Engine/StreamableManager.h"
 #include "Engine/World.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -19,7 +20,6 @@
 #include "Stats/IFHealthComponent.h"
 #include "Stats/IFStaminaComponent.h"
 #include "Tactical/IFTacticalCommandComponent.h"
-#include "TimerManager.h"
 
 AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UIFPlayerCombatComponent>(AIFBaseCharacter::CombatComponentName))
@@ -28,6 +28,18 @@ AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializ
 
 	StaminaComponent = CreateDefaultSubobject<UIFStaminaComponent>(TEXT("Stamina"));
 	StaminaComponent->ConfigureStaminaDefaults(100.f, 15.f, 1.45f);
+
+	InteractionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("InteractionSphere"));
+	InteractionSphere->SetupAttachment(RootComponent);
+	InteractionSphere->InitSphereRadius(InteractionRadiusCm);
+	InteractionSphere->SetCollisionObjectType(ECC_WorldDynamic);
+	InteractionSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	InteractionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InteractionSphere->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
+	InteractionSphere->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Overlap);
+	InteractionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	InteractionSphere->SetGenerateOverlapEvents(true);
+	InteractionSphere->SetCanEverAffectNavigation(false);
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
@@ -71,12 +83,37 @@ void AIFPlayerCharacter::BeginPlay()
 		Combat->OnCombatStateChanged.AddUniqueDynamic(this, &AIFPlayerCharacter::HandleCombatStateChanged);
 	}
 
+	if (IsValid(InteractionSphere))
+	{
+		InteractionSphere->SetSphereRadius(InteractionRadiusCm);
+		InteractionSphere->OnComponentBeginOverlap.AddUniqueDynamic(this, &AIFPlayerCharacter::HandleInteractionBeginOverlap);
+		InteractionSphere->OnComponentEndOverlap.AddUniqueDynamic(this, &AIFPlayerCharacter::HandleInteractionEndOverlap);
+
+		TArray<AActor*> InitialOverlaps;
+		InteractionSphere->GetOverlappingActors(InitialOverlaps);
+		for (AActor* const Actor : InitialOverlaps)
+		{
+			if (IsValid(Actor) && Actor != this && Actor->Implements<UIFInteractable>())
+			{
+				NearbyInteractables.AddUnique(Actor);
+			}
+		}
+		RefreshInteractionPrompt();
+	}
+
 	UpdateMovementSpeed();
 }
 
 void AIFPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	StopSprint();
+	ClearNearbyInteractablesAndPrompt();
+
+	if (IsValid(InteractionSphere))
+	{
+		InteractionSphere->OnComponentBeginOverlap.RemoveDynamic(this, &AIFPlayerCharacter::HandleInteractionBeginOverlap);
+		InteractionSphere->OnComponentEndOverlap.RemoveDynamic(this, &AIFPlayerCharacter::HandleInteractionEndOverlap);
+	}
 
 	if (IsValid(StaminaComponent))
 	{
@@ -87,14 +124,7 @@ void AIFPlayerCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		Combat->OnCombatStateChanged.RemoveDynamic(this, &AIFPlayerCharacter::HandleCombatStateChanged);
 	}
 
-	if (InputAssetsLoadHandle.IsValid())
-	{
-		InputAssetsLoadHandle->CancelHandle();
-		InputAssetsLoadHandle.Reset();
-	}
-
-	// Destroyed while still possessed (level travel): UnPossessed never ran, and the
-	// mapping context lives on the LocalPlayer, which survives the travel.
+	// UnPossessed does not run on level travel, and the mapping context lives on LocalPlayer.
 	if (IsValid(GetController()))
 	{
 		RemoveDefaultMappingContext();
@@ -120,15 +150,9 @@ void AIFPlayerCharacter::PossessedBy(AController* NewController)
 
 void AIFPlayerCharacter::UnPossessed()
 {
-	// The controller is still valid here; the base clears it and destroys the input component.
 	bIsInTacticalStandby = false;
+	ClearNearbyInteractablesAndPrompt();
 	RemoveDefaultMappingContext();
-
-	if (InputAssetsLoadHandle.IsValid())
-	{
-		InputAssetsLoadHandle->CancelHandle();
-		InputAssetsLoadHandle.Reset();
-	}
 
 	Super::UnPossessed();
 }
@@ -136,56 +160,6 @@ void AIFPlayerCharacter::UnPossessed()
 void AIFPlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
-
-	RequestInputAssets();
-}
-
-void AIFPlayerCharacter::RequestInputAssets()
-{
-	TArray<FSoftObjectPath> AssetPaths;
-	if (!DefaultMappingContext.IsNull())
-	{
-		AssetPaths.Add(DefaultMappingContext.ToSoftObjectPath());
-	}
-	if (!MoveAction.IsNull())
-	{
-		AssetPaths.Add(MoveAction.ToSoftObjectPath());
-	}
-	if (!LookAction.IsNull())
-	{
-		AssetPaths.Add(LookAction.ToSoftObjectPath());
-	}
-	if (!JumpAction.IsNull())
-	{
-		AssetPaths.Add(JumpAction.ToSoftObjectPath());
-	}
-	if (!SprintAction.IsNull())
-	{
-		AssetPaths.Add(SprintAction.ToSoftObjectPath());
-	}
-	if (!AttackAction.IsNull())
-	{
-		AssetPaths.Add(AttackAction.ToSoftObjectPath());
-	}
-	if (AssetPaths.IsEmpty())
-	{
-		return;
-	}
-
-	InputAssetsLoadHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(
-		AssetPaths, FStreamableDelegate::CreateUObject(this, &AIFPlayerCharacter::HandleInputAssetsLoaded));
-}
-
-void AIFPlayerCharacter::HandleInputAssetsLoaded()
-{
-	InputAssetsLoadHandle.Reset();
-
-	// The input component only exists while possessed; a load finishing after
-	// unpossess must not re-add the context.
-	if (!IsValid(GetController()) || !IsValid(InputComponent))
-	{
-		return;
-	}
 
 	if (!bIsInTacticalStandby)
 	{
@@ -196,9 +170,8 @@ void AIFPlayerCharacter::HandleInputAssetsLoaded()
 
 void AIFPlayerCharacter::AddDefaultMappingContext()
 {
-	UInputMappingContext* const MappingContext = DefaultMappingContext.Get();
 	APlayerController* const PlayerController = Cast<APlayerController>(GetController());
-	if (!IsValid(MappingContext) || !IsValid(PlayerController))
+	if (!IsValid(DefaultMappingContext) || !IsValid(PlayerController))
 	{
 		return;
 	}
@@ -206,15 +179,14 @@ void AIFPlayerCharacter::AddDefaultMappingContext()
 	if (UEnhancedInputLocalPlayerSubsystem* const InputSubsystem =
 		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
 	{
-		InputSubsystem->AddMappingContext(MappingContext, DefaultMappingPriority);
+		InputSubsystem->AddMappingContext(DefaultMappingContext, DefaultMappingPriority);
 	}
 }
 
 void AIFPlayerCharacter::RemoveDefaultMappingContext()
 {
-	UInputMappingContext* const MappingContext = DefaultMappingContext.Get();
 	APlayerController* const PlayerController = Cast<APlayerController>(GetController());
-	if (!IsValid(MappingContext) || !IsValid(PlayerController))
+	if (!IsValid(DefaultMappingContext) || !IsValid(PlayerController))
 	{
 		return;
 	}
@@ -222,7 +194,7 @@ void AIFPlayerCharacter::RemoveDefaultMappingContext()
 	if (UEnhancedInputLocalPlayerSubsystem* const InputSubsystem =
 		ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
 	{
-		InputSubsystem->RemoveMappingContext(MappingContext);
+		InputSubsystem->RemoveMappingContext(DefaultMappingContext);
 	}
 }
 
@@ -234,39 +206,34 @@ void AIFPlayerCharacter::BindInputActions()
 		return;
 	}
 
-	UInputAction* const Move = MoveAction.Get();
-	if (IsValid(Move))
+	if (IsValid(MoveAction))
 	{
-		EnhancedInput->BindAction(Move, ETriggerEvent::Triggered, this, &AIFPlayerCharacter::Move);
-		EnhancedInput->BindAction(Move, ETriggerEvent::Completed, this, &AIFPlayerCharacter::StopMoving);
-		EnhancedInput->BindAction(Move, ETriggerEvent::Canceled, this, &AIFPlayerCharacter::StopMoving);
+		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AIFPlayerCharacter::Move);
+		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Completed, this, &AIFPlayerCharacter::StopMoving);
+		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Canceled, this, &AIFPlayerCharacter::StopMoving);
 	}
 
-	UInputAction* const Look = LookAction.Get();
-	if (IsValid(Look))
+	if (IsValid(LookAction))
 	{
-		EnhancedInput->BindAction(Look, ETriggerEvent::Triggered, this, &AIFPlayerCharacter::Look);
+		EnhancedInput->BindAction(LookAction, ETriggerEvent::Triggered, this, &AIFPlayerCharacter::Look);
 	}
 
-	UInputAction* const Jump = JumpAction.Get();
-	if (IsValid(Jump))
+	if (IsValid(JumpAction))
 	{
-		EnhancedInput->BindAction(Jump, ETriggerEvent::Started, this, &AIFPlayerCharacter::Jump);
-		EnhancedInput->BindAction(Jump, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Started, this, &AIFPlayerCharacter::Jump);
+		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
 	}
 
-	UInputAction* const Sprint = SprintAction.Get();
-	if (IsValid(Sprint))
+	if (IsValid(SprintAction))
 	{
-		EnhancedInput->BindAction(Sprint, ETriggerEvent::Started, this, &AIFPlayerCharacter::StartSprint);
-		EnhancedInput->BindAction(Sprint, ETriggerEvent::Completed, this, &AIFPlayerCharacter::StopSprint);
-		EnhancedInput->BindAction(Sprint, ETriggerEvent::Canceled, this, &AIFPlayerCharacter::StopSprint);
+		EnhancedInput->BindAction(SprintAction, ETriggerEvent::Started, this, &AIFPlayerCharacter::StartSprint);
+		EnhancedInput->BindAction(SprintAction, ETriggerEvent::Completed, this, &AIFPlayerCharacter::StopSprint);
+		EnhancedInput->BindAction(SprintAction, ETriggerEvent::Canceled, this, &AIFPlayerCharacter::StopSprint);
 	}
 
-	UInputAction* const Attack = AttackAction.Get();
-	if (IsValid(Attack))
+	if (IsValid(AttackAction))
 	{
-		EnhancedInput->BindAction(Attack, ETriggerEvent::Started, this, &AIFPlayerCharacter::Attack);
+		EnhancedInput->BindAction(AttackAction, ETriggerEvent::Started, this, &AIFPlayerCharacter::Attack);
 	}
 
 	if (IsValid(BlockAction))
@@ -279,6 +246,11 @@ void AIFPlayerCharacter::BindInputActions()
 	if (IsValid(LeapSlamAction))
 	{
 		EnhancedInput->BindAction(LeapSlamAction, ETriggerEvent::Started, this, &AIFPlayerCharacter::RequestLeapSlam);
+	}
+
+	if (IsValid(InteractAction))
+	{
+		EnhancedInput->BindAction(InteractAction, ETriggerEvent::Started, this, &AIFPlayerCharacter::HandleInteract);
 	}
 }
 
@@ -334,6 +306,7 @@ void AIFPlayerCharacter::ExitTacticalStandby()
 	UpdateRotationMode();
 	UpdateSprintState();
 	UpdateMovementSpeed();
+	RefreshInteractionPrompt();
 }
 
 void AIFPlayerCharacter::Move(const FInputActionValue& Value)
@@ -569,7 +542,6 @@ float AIFPlayerCharacter::CalculateDesiredMovementSpeed() const
 
 void AIFPlayerCharacter::OnDeathStarted()
 {
-	// Zero cached input so revive never inherits pre-death movement or sprint.
 	bSprintRequested = false;
 	CachedMovementInput = FVector2D::ZeroVector;
 	UpdateSprintState();
@@ -580,15 +552,28 @@ void AIFPlayerCharacter::OnDeathStarted()
 		{
 			Tactical->ExitTacticalMode(true);
 		}
-		PC->RefreshInteractionPrompt();
 	}
 
+	RefreshInteractionPrompt();
 	bUseControllerRotationYaw = false;
+
+	if (const UWorld* const World = GetWorld())
+	{
+		if (AIFGameMode* const GM = World->GetAuthGameMode<AIFGameMode>())
+		{
+			GM->RequestHeroRespawn(this);
+		}
+	}
 }
 
 void AIFPlayerCharacter::RespawnAtCastle(const FVector& SpawnLocation, const FRotator& SpawnRotation)
 {
 	SetActorLocationAndRotation(SpawnLocation, SpawnRotation, false, nullptr, ETeleportType::TeleportPhysics);
+
+	if (AController* const PC = GetController())
+	{
+		PC->SetControlRotation(SpawnRotation);
+	}
 
 	RestoreAliveState();
 
@@ -610,12 +595,121 @@ void AIFPlayerCharacter::RespawnAtCastle(const FVector& SpawnLocation, const FRo
 	UpdateRotationMode();
 	UpdateSprintState();
 	UpdateMovementSpeed();
+	RefreshInteractionPrompt();
+}
+
+void AIFPlayerCharacter::HandleInteractionBeginOverlap(
+	UPrimitiveComponent*,
+	AActor* OtherActor,
+	UPrimitiveComponent*,
+	int32,
+	bool,
+	const FHitResult&)
+{
+	if (!IsValid(OtherActor) || OtherActor == this || !OtherActor->Implements<UIFInteractable>())
+	{
+		return;
+	}
+
+	NearbyInteractables.AddUnique(OtherActor);
+	RefreshInteractionPrompt();
+}
+
+void AIFPlayerCharacter::HandleInteractionEndOverlap(
+	UPrimitiveComponent*,
+	AActor* OtherActor,
+	UPrimitiveComponent*,
+	int32)
+{
+	NearbyInteractables.RemoveAll([OtherActor](const TWeakObjectPtr<AActor>& Ptr)
+	{
+		return !Ptr.IsValid() || Ptr.Get() == OtherActor;
+	});
+	RefreshInteractionPrompt();
+}
+
+AActor* AIFPlayerCharacter::GetNearestInteractable() const
+{
+	if (IsDead())
+	{
+		return nullptr;
+	}
+
+	const FVector SelfLocation = GetActorLocation();
+	float BestDistSq = MAX_flt;
+	AActor* BestInteractable = nullptr;
+
+	for (const TWeakObjectPtr<AActor>& Ptr : NearbyInteractables)
+	{
+		AActor* const Actor = Ptr.Get();
+		if (!IsValid(Actor))
+		{
+			continue;
+		}
+		const IIFInteractable* const Interactable = Cast<IIFInteractable>(Actor);
+		if (Interactable == nullptr || !Interactable->CanInteract(const_cast<AIFPlayerCharacter*>(this)))
+		{
+			continue;
+		}
+
+		const float DistSq = FVector::DistSquared(SelfLocation, Actor->GetActorLocation());
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			BestInteractable = Actor;
+		}
+	}
+
+	return BestInteractable;
+}
+
+void AIFPlayerCharacter::RefreshInteractionPrompt()
+{
+	NearbyInteractables.RemoveAll([](const TWeakObjectPtr<AActor>& Ptr)
+	{
+		return !Ptr.IsValid();
+	});
+
+	AActor* const Nearest = GetNearestInteractable();
+	const FText PromptText = IsValid(Nearest)
+		? Cast<IIFInteractable>(Nearest)->GetInteractPromptText(this)
+		: FText::GetEmpty();
+
+	if (AIFPlayerController* const PC = Cast<AIFPlayerController>(GetController()))
+	{
+		PC->SetInteractionPromptText(PromptText);
+	}
+}
+
+void AIFPlayerCharacter::ClearNearbyInteractablesAndPrompt()
+{
+	NearbyInteractables.Reset();
+	if (AIFPlayerController* const PC = Cast<AIFPlayerController>(GetController()))
+	{
+		PC->SetInteractionPromptText(FText::GetEmpty());
+	}
+}
+
+void AIFPlayerCharacter::HandleInteract()
+{
+	if (IsDead() || bIsInTacticalStandby)
+	{
+		return;
+	}
+
+	if (AActor* const Nearest = GetNearestInteractable())
+	{
+		Cast<IIFInteractable>(Nearest)->Interact(this);
+		RefreshInteractionPrompt();
+	}
 }
 
 void AIFPlayerCharacter::DebugDamage(float Amount)
 {
+#if !UE_BUILD_SHIPPING
 	if (UIFHealthComponent* const Health = GetHealthComponent())
 	{
 		Health->ApplyDamage(Amount);
 	}
+#endif
 }

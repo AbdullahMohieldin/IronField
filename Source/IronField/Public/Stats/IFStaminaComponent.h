@@ -30,25 +30,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Stamina")
 	void StopContinuousDrain();
 
-	UFUNCTION(BlueprintCallable, Category = "IronField|Stamina")
-	void InitializeStamina(float NewMaxStamina);
-
-	/** Configures constructor stamina defaults for maximum capacity, regeneration rate, and delay. */
 	void ConfigureStaminaDefaults(float InMaxStamina, float InRegenRate, float InRegenDelay);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Stamina")
 	void ResetStamina();
 
-	/** Scales stamina regeneration speed (0 pauses regeneration until raised again). */
 	UFUNCTION(BlueprintCallable, Category = "IronField|Stamina")
 	void SetRegenRateMultiplier(float InMultiplier);
 
-	/** Restarts the post-action stamina regeneration delay timer. */
 	UFUNCTION(BlueprintCallable, Category = "IronField|Stamina")
 	void ResetRegenDelay();
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Stamina")
-	float GetRegenRateMultiplier() const { return RegenRateMultiplier; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Stamina")
 	float GetMaxStamina() const { return MaxStamina; }
@@ -81,8 +72,7 @@ private:
 	void DrainStamina(float DeltaTime);
 	void RegenerateStamina(float DeltaTime);
 	void UpdateTickEnabled();
-	void SetStaminaClamped(float NewStamina);
-	void BroadcastDepletedIfNeeded(float PreviousStamina);
+	void ApplyStaminaChange(float NewStamina, bool bClearDrainOnDeplete);
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Stamina", meta = (AllowPrivateAccess = "true"))
 	float CurrentStamina = 100.f;

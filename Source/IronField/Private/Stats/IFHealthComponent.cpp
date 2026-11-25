@@ -18,23 +18,17 @@ void UIFHealthComponent::BeginPlay()
 		InitializeHealth(MaxHealth);
 	}
 
-	if (AActor* const Owner = GetOwner())
+	if (AActor* const Owner = GetOwner(); IsValid(Owner))
 	{
-		if (IsValid(Owner))
-		{
-			Owner->OnTakeAnyDamage.AddUniqueDynamic(this, &UIFHealthComponent::HandleOwnerTakeAnyDamage);
-		}
+		Owner->OnTakeAnyDamage.AddUniqueDynamic(this, &UIFHealthComponent::HandleOwnerTakeAnyDamage);
 	}
 }
 
 void UIFHealthComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (AActor* const Owner = GetOwner())
+	if (AActor* const Owner = GetOwner(); IsValid(Owner))
 	{
-		if (IsValid(Owner))
-		{
-			Owner->OnTakeAnyDamage.RemoveAll(this);
-		}
+		Owner->OnTakeAnyDamage.RemoveDynamic(this, &UIFHealthComponent::HandleOwnerTakeAnyDamage);
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -50,30 +44,36 @@ void UIFHealthComponent::InitializeHealth(float NewMaxHealth)
 	OnHealthChanged.Broadcast(GetHealthPercent());
 }
 
-float UIFHealthComponent::ApplyDamage(float Amount)
+float UIFHealthComponent::ApplyDamage(float Amount, AActor* InstigatorActor)
 {
-	return ApplyDamageFromInstigator(Amount, nullptr);
-}
-
-float UIFHealthComponent::ApplyDamageFromInstigator(float Amount, AActor* InstigatorActor)
-{
-	if (bIsDead || bIsInvincible || Amount <= 0.f)
+	if (bIsDead || Amount <= 0.f)
 	{
 		return 0.f;
 	}
 
-	const float PreviousHealth = CurrentHealth;
-	SetHealthClamped(CurrentHealth - Amount);
-	const float ActualDamage = PreviousHealth - CurrentHealth;
+	const float Clamped = FMath::Clamp(CurrentHealth - Amount, 0.f, MaxHealth);
+	const float ActualDamage = CurrentHealth - Clamped;
+	const bool bHealthChanged = !FMath::IsNearlyEqual(CurrentHealth, Clamped);
+	CurrentHealth = Clamped;
+
+	const bool bJustDied = (CurrentHealth <= 0.f);
+	if (bJustDied)
+	{
+		bIsDead = true;
+	}
+
+	if (bHealthChanged)
+	{
+		OnHealthChanged.Broadcast(GetHealthPercent());
+	}
 
 	if (ActualDamage > 0.f)
 	{
 		OnDamaged.Broadcast(InstigatorActor, ActualDamage);
 	}
 
-	if (CurrentHealth <= 0.f)
+	if (bJustDied)
 	{
-		bIsDead = true;
 		OnDeath.Broadcast(GetOwner());
 	}
 
@@ -88,16 +88,6 @@ void UIFHealthComponent::ApplyHealing(float Amount)
 	}
 
 	SetHealthClamped(CurrentHealth + Amount);
-}
-
-void UIFHealthComponent::HealToFull()
-{
-	if (bIsDead)
-	{
-		return;
-	}
-
-	SetHealthClamped(MaxHealth);
 }
 
 void UIFHealthComponent::Revive()
@@ -118,8 +108,12 @@ float UIFHealthComponent::GetHealthPercent() const
 
 void UIFHealthComponent::HandleOwnerTakeAnyDamage(AActor*, float Damage, const UDamageType*, AController* InstigatedBy, AActor* DamageCauser)
 {
-	AActor* const InstigatorActor = IsValid(InstigatedBy) ? InstigatedBy->GetPawn() : DamageCauser;
-	ApplyDamageFromInstigator(Damage, InstigatorActor);
+	AActor* InstigatorActor = IsValid(InstigatedBy) ? InstigatedBy->GetPawn() : nullptr;
+	if (!IsValid(InstigatorActor))
+	{
+		InstigatorActor = DamageCauser;
+	}
+	ApplyDamage(Damage, InstigatorActor);
 }
 
 void UIFHealthComponent::SetHealthClamped(float NewHealth)

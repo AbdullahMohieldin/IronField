@@ -33,22 +33,13 @@ public:
 	void InitializeHealth(float NewMaxHealth);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
-	float ApplyDamage(float Amount);
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
-	float ApplyDamageFromInstigator(float Amount, AActor* InstigatorActor);
+	float ApplyDamage(float Amount, AActor* InstigatorActor = nullptr);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
 	void ApplyHealing(float Amount);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
-	void HealToFull();
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
 	void Revive();
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
-	void SetInvincible(bool bNewInvincible) { bIsInvincible = bNewInvincible; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Health")
 	float GetMaxHealth() const { return MaxHealth; }
@@ -61,9 +52,6 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Health")
 	bool IsDead() const { return bIsDead; }
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Health")
-	bool IsInvincible() const { return bIsInvincible; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -82,13 +70,10 @@ private:
 	void SetHealthClamped(float NewHealth);
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Health", meta = (AllowPrivateAccess = "true"))
-	float CurrentHealth = 100.f;
+	float CurrentHealth = 150.f;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Health", meta = (AllowPrivateAccess = "true"))
 	bool bIsDead = false;
-
-	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Health")
-	bool bIsInvincible = false;
 
 	bool bHealthInitialized = false;
 };

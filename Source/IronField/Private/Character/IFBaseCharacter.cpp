@@ -73,7 +73,7 @@ void AIFBaseCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	if (IsValid(HealthComponent))
 	{
-		HealthComponent->OnDeath.RemoveAll(this);
+		HealthComponent->OnDeath.RemoveDynamic(this, &AIFBaseCharacter::HandleDeath);
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -121,7 +121,7 @@ float AIFBaseCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const
 		return 0.f;
 	}
 
-	if (!IsValid(HealthComponent) || HealthComponent->IsInvincible())
+	if (!IsValid(HealthComponent))
 	{
 		return 0.f;
 	}
@@ -132,31 +132,16 @@ float AIFBaseCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const
 		Attacker = EventInstigator->GetPawn();
 	}
 
-	FVector PushDir = -GetActorForwardVector();
-	if (IsValid(Attacker) && Attacker != this)
+	FVector PushDir = (IsValid(Attacker) && Attacker != this)
+		? (GetActorLocation() - Attacker->GetActorLocation()).GetSafeNormal2D()
+		: FVector::ZeroVector;
+	if (PushDir.IsNearlyZero())
 	{
-		FVector Delta = GetActorLocation() - Attacker->GetActorLocation();
-		Delta.Z = 0.f;
-		if (Delta.Normalize())
-		{
-			PushDir = Delta;
-		}
-		else
-		{
-			PushDir.Z = 0.f;
-			if (!PushDir.Normalize())
-			{
-				PushDir = FVector::ForwardVector;
-			}
-		}
+		PushDir = (-GetActorForwardVector()).GetSafeNormal2D();
 	}
-	else
+	if (PushDir.IsNearlyZero())
 	{
-		PushDir.Z = 0.f;
-		if (!PushDir.Normalize())
-		{
-			PushDir = FVector::ForwardVector;
-		}
+		PushDir = FVector::ForwardVector;
 	}
 	LastDamageDirection = PushDir;
 
@@ -203,8 +188,6 @@ void AIFBaseCharacter::HandleDeath(AActor*)
 	StopMovementForDeath();
 	DisableCollisionForDeath();
 	OnDeathStarted();
-
-	// After this point death is visual only; the AnimBP owns the pose.
 	OnCharacterDied.Broadcast(this);
 }
 

@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 #include "Character/IFBaseCharacter.h"
 #include "Tactical/IFTacticalTypes.h"
-#include "UObject/SoftObjectPtr.h"
 #include "IFSoldierCharacter.generated.h"
 
 class AActor;
@@ -14,12 +13,7 @@ class UMaterialInterface;
 class UStaticMesh;
 class UStaticMeshComponent;
 class UWidgetComponent;
-struct FStreamableHandle;
 
-/**
- * Base pawn for Layer 3 individual AI. Adds the melee combat slot, an AI controller,
- * camera-safe collision, RVO and the tuning the controller reads on every decision.
- */
 UCLASS()
 class IRONFIELD_API AIFSoldierCharacter : public AIFBaseCharacter
 {
@@ -36,13 +30,6 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
 	AIFSoldierAIController* GetSoldierController() const;
-
-	// --- Combat surface consumed by the BT tasks ---------------------------
-	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Combat")
-	bool TryPerformMeleeAttack();
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Combat")
-	bool TryContinueMeleeCombo(int32 CompletedChainIndex);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Combat")
 	void EnsureMeleeComboPlan();
@@ -62,28 +49,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
 	bool IsAttacking() const;
 
-	// Base standoff distance in centimetres between capsule surfaces where the soldier stops and swings.
-	// Prefer GetEffectiveAttackRange / GetMaxMeleeEngagementRange for any center-to-center distance test.
-	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
-	float GetAttackRange() const { return AttackRange; }
-
-	// Step-back deadzone (cm) beyond AttackRange before re-chasing or aborting an active melee attack.
-	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
-	float GetAttackRangeBuffer() const { return AttackRangeBuffer; }
-
-	// Stop/swing distance (surface-relative for AIFStructure, center-to-center for characters).
 	float GetEffectiveAttackRange(const AActor* Target) const;
-
-	// Hold/rechase threshold: GetEffectiveAttackRange(Target) + AttackRangeBuffer.
 	float GetMaxMeleeEngagementRange(const AActor* Target) const;
-
-	// Exact box-surface horizontal distance for AIFStructure targets; center-to-center 2D distance for characters.
 	float GetHorizontalDistanceToTarget(const AActor* Target) const;
-
-	// Nearest box-surface point for AIFStructure targets; actor location for characters.
 	FVector GetCombatApproachPoint(const AActor* Target) const;
 
-	// --- Decision tuning read by AIFSoldierAIController --------------------
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
 	FVector GetAnchorLocation() const { return bHasAnchorLocation ? AnchorLocation : GetActorLocation(); }
 
@@ -144,10 +114,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Tactical")
 	bool IsTacticalSelected() const { return bIsTacticalSelected; }
 
-	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Tactical")
-	EIFTacticalRingMode GetTacticalRingMode() const { return TacticalRingMode; }
-
 protected:
+	virtual void PostInitializeComponents() override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void HandleDeath(AActor* DeadActor) override;
@@ -205,13 +173,13 @@ protected:
 	FLinearColor EnemyHealthBarColor = FLinearColor(0.90f, 0.18f, 0.18f, 1.0f);
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Tactical")
-	TSoftObjectPtr<UStaticMesh> SelectionRingMesh;
+	TObjectPtr<UStaticMesh> SelectionRingMesh;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Tactical")
-	TSoftObjectPtr<UMaterialInterface> SelectionRingMaterial;
+	TObjectPtr<UMaterialInterface> SelectionRingMaterial;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Tactical")
-	TSoftObjectPtr<UMaterialInterface> HostileTargetRingMaterial;
+	TObjectPtr<UMaterialInterface> HostileTargetRingMaterial;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Tactical", meta = (ClampMin = "0.0"))
 	float SelectionRingGroundClearance = 2.f;
@@ -235,8 +203,6 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Soldier|Tactical", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UStaticMeshComponent> SelectionRingComponent;
 
-	void RequestSelectionRingAssets();
-	void HandleSelectionRingAssetsLoaded();
 	void UpdateSelectionRingTransform();
 	void RefreshTacticalRingVisual();
 	void UpdateOverheadWidgetVisibility();
@@ -244,7 +210,6 @@ private:
 	UFUNCTION()
 	void HandleHealthChanged(float HealthPercent);
 
-	TSharedPtr<FStreamableHandle> SelectionRingLoadHandle;
 	EIFTacticalRingMode TacticalRingMode = EIFTacticalRingMode::None;
 	bool bIsTacticalSelected = false;
 	bool bSelectionRingDisplayEnabled = false;

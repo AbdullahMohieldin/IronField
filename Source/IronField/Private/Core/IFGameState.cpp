@@ -1,5 +1,6 @@
 #include "Core/IFGameState.h"
 
+#include "Castle/IFStructure.h"
 #include "Castle/IFTerritory.h"
 
 void AIFGameState::ApplyMatchResult(EIFGameResult NewResult)
@@ -54,4 +55,30 @@ AIFTerritory* AIFGameState::FindTerritoryContainingBox(const FVector& WorldCente
 		}
 	}
 	return nullptr;
+}
+
+AIFTerritory* AIFGameState::FindNearestOwnedTerritoryWithKeep(FGenericTeamId TeamID, const FVector& ReferenceLocation) const
+{
+	AIFTerritory* BestTerritory = nullptr;
+	float BestDistSq = MAX_flt;
+
+	for (const TWeakObjectPtr<AIFTerritory>& Ptr : RegisteredTerritories)
+	{
+		AIFTerritory* const Territory = Ptr.Get();
+		if (!IsValid(Territory) || Territory->GetGenericTeamId() != TeamID || !Territory->HasActiveKeep())
+		{
+			continue;
+		}
+
+		const AIFStructure* const Keep = Territory->GetActiveKeep();
+		const FVector KeepLocation = IsValid(Keep) ? Keep->GetActorLocation() : Territory->GetHeroRespawnTransform().GetLocation();
+		const float DistSq = FVector::DistSquared(ReferenceLocation, KeepLocation);
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			BestTerritory = Territory;
+		}
+	}
+
+	return BestTerritory;
 }

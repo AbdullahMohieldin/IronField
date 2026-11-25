@@ -4,15 +4,14 @@
 #include "Character/IFBaseCharacter.h"
 #include "Combat/IFCombatTypes.h"
 #include "InputActionValue.h"
-#include "UObject/SoftObjectPtr.h"
 #include "IFPlayerCharacter.generated.h"
 
 class UCameraComponent;
 class UInputAction;
 class UInputMappingContext;
+class USphereComponent;
 class USpringArmComponent;
 class UIFStaminaComponent;
-struct FStreamableHandle;
 
 UCLASS()
 class IRONFIELD_API AIFPlayerCharacter : public AIFBaseCharacter
@@ -46,8 +45,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Tactical")
 	void ExitTacticalStandby();
 
-	UFUNCTION(BlueprintPure, Category = "IronField|Player|Tactical")
-	bool IsInTacticalStandby() const { return bIsInTacticalStandby; }
+	void RefreshInteractionPrompt();
 
 	UFUNCTION(Exec)
 	void DebugDamage(float Amount);
@@ -62,32 +60,38 @@ protected:
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void OnDeathStarted() override;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input")
-	TSoftObjectPtr<UInputMappingContext> DefaultMappingContext;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
+	TObjectPtr<UInputMappingContext> DefaultMappingContext;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input", meta = (ClampMin = "0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input", meta = (ClampMin = "0"))
 	int32 DefaultMappingPriority = 0;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input")
-	TSoftObjectPtr<UInputAction> MoveAction;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
+	TObjectPtr<UInputAction> MoveAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input")
-	TSoftObjectPtr<UInputAction> LookAction;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
+	TObjectPtr<UInputAction> LookAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input")
-	TSoftObjectPtr<UInputAction> JumpAction;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
+	TObjectPtr<UInputAction> JumpAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input")
-	TSoftObjectPtr<UInputAction> SprintAction;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
+	TObjectPtr<UInputAction> SprintAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Input")
-	TSoftObjectPtr<UInputAction> AttackAction;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
+	TObjectPtr<UInputAction> AttackAction;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
 	TObjectPtr<UInputAction> BlockAction;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
 	TObjectPtr<UInputAction> LeapSlamAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
+	TObjectPtr<UInputAction> InteractAction;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Interaction", meta = (ClampMin = "80.0"))
+	float InteractionRadiusCm = 280.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Movement", meta = (ClampMin = "0.0"))
 	float WalkSpeed = 475.f;
@@ -101,7 +105,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Movement", meta = (ClampMin = "0.0"))
 	float AttackMoveSpeed = 325.f;
 
-	// Minimum stick/keys deflection magnitude to sprint, in any direction.
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Movement", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float SprintInputThreshold = 0.2f;
 
@@ -130,6 +133,9 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Player|Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UIFStaminaComponent> StaminaComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Player|Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USphereComponent> InteractionSphere;
+
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Player|Movement")
 	bool bIsSprinting = false;
 
@@ -139,7 +145,7 @@ private:
 	UPROPERTY(VisibleInstanceOnly, Category = "IronField|Player|Movement")
 	FVector2D CachedMovementInput = FVector2D::ZeroVector;
 
-	TSharedPtr<FStreamableHandle> InputAssetsLoadHandle;
+	TArray<TWeakObjectPtr<AActor>> NearbyInteractables;
 
 	void Move(const FInputActionValue& Value);
 	void StopMoving();
@@ -147,6 +153,7 @@ private:
 	void StartSprint();
 	void StopSprint();
 	void Attack();
+	void HandleInteract();
 
 	UFUNCTION()
 	void HandleStaminaDepleted();
@@ -154,8 +161,24 @@ private:
 	UFUNCTION()
 	void HandleCombatStateChanged(EIFCombatState PreviousState, EIFCombatState NewState);
 
-	void RequestInputAssets();
-	void HandleInputAssetsLoaded();
+	UFUNCTION()
+	void HandleInteractionBeginOverlap(
+		UPrimitiveComponent* OverlappedComponent,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComp,
+		int32 OtherBodyIndex,
+		bool bFromSweep,
+		const FHitResult& SweepResult);
+
+	UFUNCTION()
+	void HandleInteractionEndOverlap(
+		UPrimitiveComponent* OverlappedComponent,
+		AActor* OtherActor,
+		UPrimitiveComponent* OtherComp,
+		int32 OtherBodyIndex);
+
+	AActor* GetNearestInteractable() const;
+	void ClearNearbyInteractablesAndPrompt();
 	void BindInputActions();
 	void AddDefaultMappingContext();
 	void RemoveDefaultMappingContext();

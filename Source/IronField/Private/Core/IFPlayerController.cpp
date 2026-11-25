@@ -2,14 +2,11 @@
 
 #include "Blueprint/UserWidget.h"
 #include "Castle/IFBuildingComponent.h"
-#include "Character/IFBaseCharacter.h"
 #include "Character/IFPlayerCharacter.h"
 #include "Core/IFGameState.h"
-#include "Core/IFInteractable.h"
 #include "Core/IFLog.h"
 #include "EnhancedInputComponent.h"
 #include "InputAction.h"
-#include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Tactical/IFTacticalCommandComponent.h"
 #include "UI/IFTacticalHUDWidget.h"
@@ -58,7 +55,6 @@ void AIFPlayerController::EndPlay(const EEndPlayReason::Type Reason)
 		GameState->OnGameResultChanged.RemoveDynamic(this, &AIFPlayerController::HandleMatchResultChanged);
 	}
 	ObservedGameState.Reset();
-	NearbyInteractables.Reset();
 
 	if (IsValid(PlayerHUDWidget))
 	{
@@ -93,15 +89,7 @@ void AIFPlayerController::OnUnPossess()
 		PlayerHUDWidget->UnbindVitalComponents();
 	}
 
-	NearbyInteractables.Reset();
-
-	if (IsValid(TacticalCommandComponent))
-	{
-		if (UIFTacticalHUDWidget* const HUD = TacticalCommandComponent->GetTacticalHUDWidget())
-		{
-			HUD->SetInteractionPrompt(FText::GetEmpty());
-		}
-	}
+	SetInteractionPromptText(FText::GetEmpty());
 }
 
 void AIFPlayerController::EnsurePlayerHUDCreatedAndBound(APawn* InPawn)
@@ -148,8 +136,6 @@ void AIFPlayerController::SetupInputComponent()
 	{
 		EnhancedInput->BindAction(PauseInputAction, ETriggerEvent::Started, this, &AIFPlayerController::TogglePause);
 	}
-
-	InputComponent->BindKey(EKeys::E, IE_Pressed, this, &AIFPlayerController::HandleInteractKeyPressed);
 
 	if (IsValid(TacticalCommandComponent))
 	{
@@ -319,128 +305,13 @@ bool AIFPlayerController::IsGameOverActive() const
 	return bIsGameOver;
 }
 
-void AIFPlayerController::RegisterNearbyInteractable(AActor* Interactable)
+void AIFPlayerController::SetInteractionPromptText(const FText& PromptText)
 {
-	if (!IsValid(Interactable) || !Interactable->Implements<UIFInteractable>())
-	{
-		return;
-	}
-
-	NearbyInteractables.AddUnique(Interactable);
-	RefreshInteractionPrompt();
-}
-
-void AIFPlayerController::UnregisterNearbyInteractable(AActor* Interactable)
-{
-	NearbyInteractables.RemoveAll([Interactable](const TWeakObjectPtr<AActor>& Ptr)
-	{
-		return !Ptr.IsValid() || Ptr.Get() == Interactable;
-	});
-	RefreshInteractionPrompt();
-}
-
-AActor* AIFPlayerController::GetNearestInteractable() const
-{
-	APawn* const ControlledPawn = GetPawn();
-	if (!IsValid(ControlledPawn))
-	{
-		return nullptr;
-	}
-
-	if (const AIFBaseCharacter* const BaseChar = Cast<AIFBaseCharacter>(ControlledPawn); IsValid(BaseChar) && BaseChar->IsDead())
-	{
-		return nullptr;
-	}
-
-	const FVector PawnLoc = ControlledPawn->GetActorLocation();
-	float BestDistSq = MAX_flt;
-	AActor* BestInteractable = nullptr;
-
-	for (const TWeakObjectPtr<AActor>& Ptr : NearbyInteractables)
-	{
-		AActor* const Actor = Ptr.Get();
-		if (!IsValid(Actor))
-		{
-			continue;
-		}
-		const IIFInteractable* const Interactable = Cast<IIFInteractable>(Actor);
-		if (Interactable == nullptr || !Interactable->CanInteract(ControlledPawn))
-		{
-			continue;
-		}
-
-		const float DistSq = FVector::DistSquared(PawnLoc, Actor->GetActorLocation());
-		if (DistSq < BestDistSq)
-		{
-			BestDistSq = DistSq;
-			BestInteractable = Actor;
-		}
-	}
-
-	if (!IsValid(BestInteractable))
-	{
-		TArray<AActor*> OverlappingActors;
-		ControlledPawn->GetOverlappingActors(OverlappingActors);
-		for (AActor* const Actor : OverlappingActors)
-		{
-			if (!IsValid(Actor))
-			{
-				continue;
-			}
-			const IIFInteractable* const Interactable = Cast<IIFInteractable>(Actor);
-			if (Interactable == nullptr || !Interactable->CanInteract(ControlledPawn))
-			{
-				continue;
-			}
-
-			const float DistSq = FVector::DistSquared(PawnLoc, Actor->GetActorLocation());
-			if (DistSq < BestDistSq)
-			{
-				BestDistSq = DistSq;
-				BestInteractable = Actor;
-			}
-		}
-	}
-
-	return BestInteractable;
-}
-
-void AIFPlayerController::RefreshInteractionPrompt()
-{
-	NearbyInteractables.RemoveAll([](const TWeakObjectPtr<AActor>& Ptr)
-	{
-		return !Ptr.IsValid();
-	});
-
-	AActor* const Nearest = GetNearestInteractable();
-	APawn* const ControlledPawn = GetPawn();
-	const FText PromptText = (IsValid(Nearest) && IsValid(ControlledPawn))
-		? Cast<IIFInteractable>(Nearest)->GetInteractPromptText(ControlledPawn)
-		: FText::GetEmpty();
-
 	if (IsValid(TacticalCommandComponent))
 	{
 		if (UIFTacticalHUDWidget* const HUD = TacticalCommandComponent->GetTacticalHUDWidget())
 		{
 			HUD->SetInteractionPrompt(PromptText);
 		}
-	}
-}
-
-void AIFPlayerController::HandleInteractKeyPressed()
-{
-	if (bIsGameOver || UGameplayStatics::IsGamePaused(this))
-	{
-		return;
-	}
-	if (IsValid(TacticalCommandComponent) && TacticalCommandComponent->IsTacticalModeActive())
-	{
-		return;
-	}
-
-	if (AActor* const Nearest = GetNearestInteractable())
-	{
-		Cast<IIFInteractable>(Nearest)->Interact(GetPawn());
-		RefreshInteractionPrompt();
 	}
 }

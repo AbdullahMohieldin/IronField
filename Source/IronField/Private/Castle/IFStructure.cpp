@@ -635,7 +635,7 @@ float AIFStructure::TakeDamage(
 		return 0.f;
 	}
 
-	if (!IsValid(HealthComponent) || HealthComponent->IsInvincible())
+	if (!IsValid(HealthComponent))
 	{
 		return 0.f;
 	}

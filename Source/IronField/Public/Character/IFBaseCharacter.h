@@ -37,14 +37,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Character|State")
 	bool IsAlive() const { return !IsDead(); }
 
-	/** Returns the cached horizontal push direction from the most recent incoming damage source. */
 	UFUNCTION(BlueprintPure, Category = "IronField|Character|Combat")
 	FVector GetLastDamageDirection() const { return LastDamageDirection; }
 
-	/** Temporarily slows actor-local time dilation for crisp impact feel without altering global world time. */
 	void ApplyLocalHitstop(float DurationSeconds, float TimeDilation = 0.05f);
-
-	/** Restores actor-local time dilation to 1.0 and cancels any pending hitstop timer. */
 	void ClearLocalHitstop();
 
 	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
@@ -68,12 +64,9 @@ protected:
 
 	virtual void OnDeathStarted() {}
 
-	// Bound to UIFHealthComponent::OnDeath. Soldiers override this to tear down AI after
-	// the shared death work (movement stop, collision, broadcast) has run.
 	UFUNCTION()
 	virtual void HandleDeath(AActor* DeadActor);
 
-	// Restores collision, movement, and the death gate so the character can live (and die) again.
 	void RestoreAliveState();
 
 private:
@@ -86,10 +79,9 @@ private:
 	void StopMovementForDeath();
 	void DisableCollisionForDeath();
 
-	// Death re-entrancy guard; cleared by RestoreAliveState so a revived character can die again.
 	bool bHasDied = false;
 
-	// Live collision state captured in BeginPlay and restored verbatim on revive.
+	// Live collision state captured in BeginPlay so Custom presets survive death/revive.
 	FName CapsuleCollisionProfile;
 	ECollisionEnabled::Type CapsuleCollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 	FCollisionResponseContainer SavedCapsuleResponses;

@@ -11,9 +11,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
 #include "Core/IFLog.h"
-#include "Engine/AssetManager.h"
+#include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
-#include "Engine/StreamableManager.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Materials/MaterialInterface.h"
@@ -69,18 +68,14 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 	OverheadWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
 	OverheadWidgetComponent->SetDrawSize(FVector2D(88.f, 16.f));
 	OverheadWidgetComponent->SetRelativeLocation(FVector(0.f, 0.f, 118.f));
-	OverheadWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	OverheadWidgetComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
-	OverheadWidgetComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	OverheadWidgetComponent->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	OverheadWidgetComponent->SetGenerateOverlapEvents(false);
 	OverheadWidgetComponent->SetCastShadow(false);
 	OverheadWidgetComponent->SetCanEverAffectNavigation(false);
 
 	SelectionRingComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SelectionRing"));
 	SelectionRingComponent->SetupAttachment(GetRootComponent());
-	SelectionRingComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	SelectionRingComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
-	SelectionRingComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	SelectionRingComponent->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 	SelectionRingComponent->SetGenerateOverlapEvents(false);
 	SelectionRingComponent->SetCanEverAffectNavigation(false);
 	SelectionRingComponent->SetCastShadow(false);
@@ -91,15 +86,17 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 	SetGenericTeamId(FGenericTeamId(IFTeamIds::Enemy));
 }
 
+void AIFSoldierCharacter::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+	MeleeCombat = Cast<UIFMeleeCombatComponent>(GetCombatComponent());
+}
+
 void AIFSoldierCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	MeleeCombat = Cast<UIFMeleeCombatComponent>(GetCombatComponent());
-
-	// OnPossess may already have refreshed a decision against the fallback anchor
-	// (the current actor location), so only capture the spawn point here if no
-	// explicit post was set before BeginPlay.
+	// OnPossess may run before BeginPlay; keep any anchor assigned there.
 	if (!bHasAnchorLocation)
 	{
 		AnchorLocation = GetActorLocation();
@@ -126,7 +123,11 @@ void AIFSoldierCharacter::BeginPlay()
 	SetActorTickEnabled(false);
 
 	UpdateSelectionRingTransform();
-	RequestSelectionRingAssets();
+	if (IsValid(SelectionRingComponent) && IsValid(SelectionRingMesh))
+	{
+		SelectionRingComponent->SetStaticMesh(SelectionRingMesh);
+	}
+	RefreshTacticalRingVisual();
 }
 
 void AIFSoldierCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -136,12 +137,6 @@ void AIFSoldierCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UIFHealthComponent* const Health = GetHealthComponent())
 	{
 		Health->OnHealthChanged.RemoveDynamic(this, &AIFSoldierCharacter::HandleHealthChanged);
-	}
-
-	if (SelectionRingLoadHandle.IsValid())
-	{
-		SelectionRingLoadHandle->CancelHandle();
-		SelectionRingLoadHandle.Reset();
 	}
 
 	if (UWorld* const World = GetWorld())
@@ -439,24 +434,6 @@ FVector AIFSoldierCharacter::GetCombatApproachPoint(const AActor* Target) const
 	return Target->GetActorLocation();
 }
 
-bool AIFSoldierCharacter::TryPerformMeleeAttack()
-{
-	if (!IsValid(MeleeCombat) || IsDead())
-	{
-		return false;
-	}
-	return MeleeCombat->TryStartAIAttack();
-}
-
-bool AIFSoldierCharacter::TryContinueMeleeCombo(int32 CompletedChainIndex)
-{
-	if (!IsValid(MeleeCombat) || IsDead())
-	{
-		return false;
-	}
-	return MeleeCombat->TryContinueAICombo(CompletedChainIndex);
-}
-
 void AIFSoldierCharacter::EnsureMeleeComboPlan()
 {
 	if (IsValid(MeleeCombat) && !IsDead())
@@ -586,47 +563,6 @@ void AIFSoldierCharacter::UpdateOverheadWidgetVisibility()
 	}
 }
 
-void AIFSoldierCharacter::RequestSelectionRingAssets()
-{
-	TArray<FSoftObjectPath> AssetPaths;
-	if (!SelectionRingMesh.IsNull())
-	{
-		AssetPaths.AddUnique(SelectionRingMesh.ToSoftObjectPath());
-	}
-	if (!SelectionRingMaterial.IsNull())
-	{
-		AssetPaths.AddUnique(SelectionRingMaterial.ToSoftObjectPath());
-	}
-	if (!HostileTargetRingMaterial.IsNull())
-	{
-		AssetPaths.AddUnique(HostileTargetRingMaterial.ToSoftObjectPath());
-	}
-	if (AssetPaths.IsEmpty())
-	{
-		return;
-	}
-
-	SelectionRingLoadHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(
-		AssetPaths,
-		FStreamableDelegate::CreateUObject(this, &AIFSoldierCharacter::HandleSelectionRingAssetsLoaded));
-}
-
-void AIFSoldierCharacter::HandleSelectionRingAssetsLoaded()
-{
-	SelectionRingLoadHandle.Reset();
-
-	if (!IsValid(SelectionRingComponent))
-	{
-		return;
-	}
-
-	if (UStaticMesh* const RingMesh = SelectionRingMesh.Get())
-	{
-		SelectionRingComponent->SetStaticMesh(RingMesh);
-	}
-	RefreshTacticalRingVisual();
-}
-
 void AIFSoldierCharacter::RefreshTacticalRingVisual()
 {
 	if (!IsValid(SelectionRingComponent))
@@ -643,12 +579,9 @@ void AIFSoldierCharacter::RefreshTacticalRingVisual()
 	if (TacticalRingMode == EIFTacticalRingMode::SelectedAlly)
 	{
 		const bool bAllowed = (GetGenericTeamId().GetId() == IFTeamIds::Player) && bIsTacticalSelected && bSelectionRingDisplayEnabled;
-		if (bAllowed)
+		if (bAllowed && IsValid(SelectionRingMaterial))
 		{
-			if (UMaterialInterface* const AllyMat = SelectionRingMaterial.Get())
-			{
-				SelectionRingComponent->SetMaterial(0, AllyMat);
-			}
+			SelectionRingComponent->SetMaterial(0, SelectionRingMaterial);
 		}
 		SelectionRingComponent->SetVisibility(bAllowed);
 		return;
@@ -656,11 +589,10 @@ void AIFSoldierCharacter::RefreshTacticalRingVisual()
 
 	if (TacticalRingMode == EIFTacticalRingMode::HostileTarget)
 	{
-		UMaterialInterface* const HostileMat = HostileTargetRingMaterial.Get();
-		const bool bAllowed = (GetGenericTeamId().GetId() != IFTeamIds::Player) && IsValid(HostileMat);
+		const bool bAllowed = (GetGenericTeamId().GetId() != IFTeamIds::Player) && IsValid(HostileTargetRingMaterial);
 		if (bAllowed)
 		{
-			SelectionRingComponent->SetMaterial(0, HostileMat);
+			SelectionRingComponent->SetMaterial(0, HostileTargetRingMaterial);
 		}
 		SelectionRingComponent->SetVisibility(bAllowed);
 	}

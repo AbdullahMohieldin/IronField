@@ -186,9 +186,12 @@ void UIFTacticalCommandComponent::HandleTacticalAssetsLoaded()
 		TacticalHUDWidget->RefreshBuildBar();
 		TacticalHUDWidget->RefreshTacticalAndPromptVisibility(bIsTacticalModeActive);
 	}
-	if (AIFPlayerController* const PC = GetOwningPlayerController())
+	if (const AIFPlayerController* const PC = GetOwningPlayerController())
 	{
-		PC->RefreshInteractionPrompt();
+		if (AIFPlayerCharacter* const PlayerChar = Cast<AIFPlayerCharacter>(PC->GetPawn()))
+		{
+			PlayerChar->RefreshInteractionPrompt();
+		}
 	}
 	ApplyFormationPreviewAssets();
 }
