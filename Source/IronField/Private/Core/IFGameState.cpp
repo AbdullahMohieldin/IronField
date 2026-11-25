@@ -4,7 +4,7 @@
 
 void AIFGameState::ApplyMatchResult(EIFGameResult NewResult)
 {
-	if (MatchResult == NewResult)
+	if (NewResult == EIFGameResult::None || MatchResult != EIFGameResult::None)
 	{
 		return;
 	}
@@ -20,12 +20,7 @@ void AIFGameState::RegisterTerritory(AIFTerritory* Territory)
 		return;
 	}
 
-	const bool bExists = RegisteredTerritories.ContainsByPredicate(
-		[Territory](const TWeakObjectPtr<AIFTerritory>& Ptr) { return Ptr.Get() == Territory; });
-	if (!bExists)
-	{
-		RegisteredTerritories.Add(Territory);
-	}
+	RegisteredTerritories.AddUnique(Territory);
 }
 
 void AIFGameState::UnregisterTerritory(AIFTerritory* Territory)
@@ -34,18 +29,6 @@ void AIFGameState::UnregisterTerritory(AIFTerritory* Territory)
 	{
 		return !Ptr.IsValid() || Ptr.Get() == Territory;
 	});
-}
-
-void AIFGameState::GetTerritories(TArray<AIFTerritory*>& OutTerritories) const
-{
-	OutTerritories.Reset();
-	for (const TWeakObjectPtr<AIFTerritory>& Ptr : RegisteredTerritories)
-	{
-		if (AIFTerritory* const Territory = Ptr.Get(); IsValid(Territory))
-		{
-			OutTerritories.Add(Territory);
-		}
-	}
 }
 
 AIFTerritory* AIFGameState::FindTerritoryAtLocation(const FVector& WorldLocation) const

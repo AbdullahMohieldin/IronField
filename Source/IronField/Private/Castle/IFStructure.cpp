@@ -28,6 +28,7 @@
 #include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "PhysicsEngine/BodySetup.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 #include "Stats/IFHealthComponent.h"
 #include "TimerManager.h"
 #include "UI/IFVitalBarsWidget.h"
@@ -132,8 +133,8 @@ void AIFStructure::BeginPlay()
 {
 	Super::BeginPlay();
 
-	ApplyFootprintConfiguration();
 	EnforceCameraIgnoreOnVisuals();
+	ApplyFootprintConfiguration();
 
 	if (IsValid(HealthComponent))
 	{
@@ -184,6 +185,17 @@ void AIFStructure::BeginPlay()
 
 void AIFStructure::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UWorld* const World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(HostCollapseTimerHandle);
+	}
+
+	if (AIFStructure* const Host = HostStructure.Get(); IsValid(Host))
+	{
+		Host->OnStructureDestroyed.RemoveDynamic(this, &AIFStructure::HandleHostStructureDestroyed);
+	}
+	HostStructure.Reset();
+
 	if (StructureAssetsLoadHandle.IsValid())
 	{
 		StructureAssetsLoadHandle->CancelHandle();
@@ -196,11 +208,8 @@ void AIFStructure::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		HealthComponent->OnDeath.RemoveDynamic(this, &AIFStructure::HandleHealthDepleted);
 	}
 
-	if (IsValid(ActiveDestructionGC))
-	{
-		ActiveDestructionGC->DestroyComponent();
-		ActiveDestructionGC = nullptr;
-	}
+	CleanupActiveDestructionGCs();
+	UnregisterDestroyedStructure(this);
 
 	if (IsValid(OverheadWidgetComponent))
 	{
@@ -239,6 +248,50 @@ FVector AIFStructure::GetFootprintExtent() const
 
 FVector AIFStructure::GetClosestSurfacePoint2D(const FVector& FromLocation) const
 {
+	if (!ExtraCollisionBoxes.IsEmpty())
+	{
+		auto FindClosestAmong = [this, &FromLocation](bool bGroundReachableOnly, FVector& OutPoint) -> bool
+		{
+			bool bHasAny = false;
+			float BestDistSq = MAX_flt;
+			for (const UBoxComponent* const Box : ExtraCollisionBoxes)
+			{
+				if (!IsValid(Box))
+				{
+					continue;
+				}
+				const FVector Extent = Box->GetUnscaledBoxExtent();
+				if (bGroundReachableOnly && (Box->GetRelativeLocation().Z - Extent.Z) >= 180.f)
+				{
+					continue;
+				}
+
+				const FTransform BoxTransform = Box->GetComponentTransform();
+				const FVector LocalPoint = BoxTransform.InverseTransformPosition(FromLocation);
+				const FVector ClampedLocal(
+					FMath::Clamp(LocalPoint.X, -Extent.X, Extent.X),
+					FMath::Clamp(LocalPoint.Y, -Extent.Y, Extent.Y),
+					0.f);
+				FVector WorldSurface = BoxTransform.TransformPosition(ClampedLocal);
+				WorldSurface.Z = GetActorLocation().Z;
+				const float DistSq = FVector::DistSquared2D(FromLocation, WorldSurface);
+				if (!bHasAny || DistSq < BestDistSq)
+				{
+					bHasAny = true;
+					BestDistSq = DistSq;
+					OutPoint = WorldSurface;
+				}
+			}
+			return bHasAny;
+		};
+
+		FVector BestPoint = GetActorLocation();
+		if (FindClosestAmong(true, BestPoint) || FindClosestAmong(false, BestPoint))
+		{
+			return BestPoint;
+		}
+	}
+
 	if (!IsValid(BoundsCollision))
 	{
 		return GetActorLocation();
@@ -264,12 +317,116 @@ float AIFStructure::GetHorizontalSurfaceDistance(const FVector& FromLocation) co
 	return FVector::Dist2D(FromLocation, ClosestPoint);
 }
 
-void AIFStructure::GetWallSnapEndpoints(FVector& OutNegXEnd, FVector& OutPosXEnd) const
+void AIFStructure::ComputeWorldCollisionBoxes(
+	const UIFStructureDataAsset* Data,
+	const FVector& Location,
+	float YawDeg,
+	TArray<FIFWorldCollisionBox>& OutBoxes)
 {
-	const FVector Extent = GetFootprintExtent();
-	const FTransform ActorXf = GetActorTransform();
-	OutNegXEnd = ActorXf.TransformPosition(FVector(-Extent.X, 0.f, 0.f));
-	OutPosXEnd = ActorXf.TransformPosition(FVector(Extent.X, 0.f, 0.f));
+	OutBoxes.Reset();
+	if (!IsValid(Data))
+	{
+		return;
+	}
+
+	const FTransform ActorXf(FRotator(0.f, YawDeg, 0.f), Location);
+
+	if (Data->CollisionBoxes.IsEmpty())
+	{
+		const FVector Ext = Data->FootprintExtent;
+		FIFWorldCollisionBox Box;
+		Box.WorldCenter = Location + FVector(0.f, 0.f, Ext.Z);
+		Box.HalfExtent = Ext;
+		Box.WorldRotation = FRotator(0.f, YawDeg, 0.f);
+		Box.WorldMinZ = Location.Z;
+		Box.WorldMaxZ = Location.Z + Ext.Z * 2.f;
+		Box.Role = EIFCollisionRole::SolidUnwalkable;
+		OutBoxes.Add(Box);
+		return;
+	}
+
+	OutBoxes.Reserve(Data->CollisionBoxes.Num());
+	for (const FIFCollisionBox& LocalBox : Data->CollisionBoxes)
+	{
+		const FTransform LocalXf(LocalBox.LocalRotation, LocalBox.LocalCenter);
+		const FTransform WorldXf = LocalXf * ActorXf;
+
+		FIFWorldCollisionBox WorldBox;
+		WorldBox.WorldCenter = WorldXf.GetLocation();
+		WorldBox.HalfExtent = LocalBox.HalfExtent;
+		WorldBox.WorldRotation = WorldXf.GetRotation().Rotator();
+		WorldBox.Role = LocalBox.Role;
+
+		// Exact world Z bounds of the rotated 3D box.
+		const FMatrix RotMat = WorldXf.GetRotation().ToMatrix();
+		const float HalfWorldZ =
+			FMath::Abs(RotMat.GetScaledAxis(EAxis::X).Z) * LocalBox.HalfExtent.X +
+			FMath::Abs(RotMat.GetScaledAxis(EAxis::Y).Z) * LocalBox.HalfExtent.Y +
+			FMath::Abs(RotMat.GetScaledAxis(EAxis::Z).Z) * LocalBox.HalfExtent.Z;
+		WorldBox.WorldMinZ = WorldBox.WorldCenter.Z - HalfWorldZ;
+		WorldBox.WorldMaxZ = WorldBox.WorldCenter.Z + HalfWorldZ;
+
+		OutBoxes.Add(WorldBox);
+	}
+}
+
+void AIFStructure::ComputeWorldConnectors(
+	const UIFStructureDataAsset* Data,
+	const FVector& Location,
+	float YawDeg,
+	TArray<FIFModularConnector>& OutWorldConnectors)
+{
+	OutWorldConnectors.Reset();
+	if (!IsValid(Data) || Data->Connectors.IsEmpty())
+	{
+		return;
+	}
+
+	const float Rad = FMath::DegreesToRadians(YawDeg);
+	const float CosA = FMath::Cos(Rad);
+	const float SinA = FMath::Sin(Rad);
+
+	OutWorldConnectors.Reserve(Data->Connectors.Num());
+	for (const FIFModularConnector& LocalConn : Data->Connectors)
+	{
+		FIFModularConnector WorldConn;
+		WorldConn.Channel = LocalConn.Channel;
+		WorldConn.LocalPosition.X = Location.X + (LocalConn.LocalPosition.X * CosA - LocalConn.LocalPosition.Y * SinA);
+		WorldConn.LocalPosition.Y = Location.Y + (LocalConn.LocalPosition.X * SinA + LocalConn.LocalPosition.Y * CosA);
+
+		const FVector2D Dir = LocalConn.LocalOutwardNormal.GetSafeNormal();
+		WorldConn.LocalOutwardNormal.X = Dir.X * CosA - Dir.Y * SinA;
+		WorldConn.LocalOutwardNormal.Y = Dir.X * SinA + Dir.Y * CosA;
+		WorldConn.LocalOutwardNormal = WorldConn.LocalOutwardNormal.GetSafeNormal();
+
+		OutWorldConnectors.Add(WorldConn);
+	}
+}
+
+void AIFStructure::GetWorldCollisionBoxes(TArray<FIFWorldCollisionBox>& OutBoxes) const
+{
+	if (IsValid(StructureData))
+	{
+		ComputeWorldCollisionBoxes(StructureData, GetActorLocation(), GetActorRotation().Yaw, OutBoxes);
+		return;
+	}
+
+	const FVector Ext = GetFootprintExtent();
+	const FVector Loc = GetActorLocation();
+	OutBoxes.Reset();
+	FIFWorldCollisionBox Box;
+	Box.WorldCenter = Loc + FVector(0.f, 0.f, Ext.Z);
+	Box.HalfExtent = Ext;
+	Box.WorldRotation = FRotator(0.f, GetActorRotation().Yaw, 0.f);
+	Box.WorldMinZ = Loc.Z;
+	Box.WorldMaxZ = Loc.Z + Ext.Z * 2.f;
+	Box.Role = EIFCollisionRole::SolidUnwalkable;
+	OutBoxes.Add(Box);
+}
+
+void AIFStructure::GetWorldConnectors(TArray<FIFModularConnector>& OutWorldConnectors) const
+{
+	ComputeWorldConnectors(StructureData, GetActorLocation(), GetActorRotation().Yaw, OutWorldConnectors);
 }
 
 void AIFStructure::AddConstructionProgress(float DeltaProgress)
@@ -307,6 +464,54 @@ void AIFStructure::CollapseStructure(AActor* KillerActor)
 
 	LastDamageInstigator = KillerActor;
 	HandleStructureDestroyedInternal(KillerActor);
+}
+
+void AIFStructure::SetHostStructure(AIFStructure* InHost)
+{
+	if (AIFStructure* const OldHost = HostStructure.Get(); IsValid(OldHost))
+	{
+		OldHost->OnStructureDestroyed.RemoveDynamic(this, &AIFStructure::HandleHostStructureDestroyed);
+	}
+
+	HostStructure = (InHost != this) ? InHost : nullptr;
+	if (AIFStructure* const NewHost = HostStructure.Get(); IsValid(NewHost) && NewHost->IsStructureAlive())
+	{
+		NewHost->OnStructureDestroyed.AddUniqueDynamic(this, &AIFStructure::HandleHostStructureDestroyed);
+	}
+}
+
+void AIFStructure::HandleHostStructureDestroyed(AIFStructure*, AActor* KillerActor)
+{
+	if (!IsStructureAlive())
+	{
+		return;
+	}
+
+	UWorld* const World = GetWorld();
+	if (!IsValid(World))
+	{
+		CollapseStructure(KillerActor);
+		return;
+	}
+
+	if (World->GetTimerManager().IsTimerActive(HostCollapseTimerHandle))
+	{
+		return;
+	}
+
+	TWeakObjectPtr<AIFStructure> WeakThis(this);
+	TWeakObjectPtr<AActor> WeakKiller(KillerActor);
+	World->GetTimerManager().SetTimer(
+		HostCollapseTimerHandle,
+		FTimerDelegate::CreateLambda([WeakThis, WeakKiller]()
+		{
+			if (AIFStructure* const Self = WeakThis.Get(); IsValid(Self) && Self->IsStructureAlive())
+			{
+				Self->CollapseStructure(WeakKiller.Get());
+			}
+		}),
+		0.05f,
+		false);
 }
 
 void AIFStructure::SetHostileTargetHighlighted(bool bHighlighted)
@@ -356,6 +561,14 @@ void AIFStructure::RelocateStructure(const FVector& NewLocation, float NewYaw, A
 		BoundsCollision->SetCanEverAffectNavigation(false);
 		FNavigationSystem::UpdateComponentData(*BoundsCollision);
 	}
+	for (UBoxComponent* const ExtraBox : ExtraCollisionBoxes)
+	{
+		if (IsValid(ExtraBox))
+		{
+			ExtraBox->SetCanEverAffectNavigation(false);
+			FNavigationSystem::UpdateComponentData(*ExtraBox);
+		}
+	}
 
 	SetActorLocationAndRotation(
 		NewLocation,
@@ -374,7 +587,18 @@ void AIFStructure::RelocateStructure(const FVector& NewLocation, float NewYaw, A
 	}
 
 	// Re-carve NavMesh at new location (current HP is preserved untouched).
-	if (IsValid(BoundsCollision))
+	if (!ExtraCollisionBoxes.IsEmpty())
+	{
+		for (UBoxComponent* const ExtraBox : ExtraCollisionBoxes)
+		{
+			if (IsValid(ExtraBox))
+			{
+				ExtraBox->SetCanEverAffectNavigation(true);
+				FNavigationSystem::UpdateComponentData(*ExtraBox);
+			}
+		}
+	}
+	else if (IsValid(BoundsCollision))
 	{
 		BoundsCollision->SetCanEverAffectNavigation(true);
 		FNavigationSystem::UpdateComponentData(*BoundsCollision);
@@ -464,22 +688,126 @@ void AIFStructure::SetStructureState(EIFStructureState NewState)
 	OnStructureStateChanged.Broadcast(this, PreviousState, NewState);
 }
 
+void AIFStructure::SetStructureCollisionBlocking(bool bBlockPawnsAndNav)
+{
+	const bool bAlive = IsStructureAlive();
+	const bool bShouldBlock = bBlockPawnsAndNav && bAlive;
+
+	auto UpdateBox = [bShouldBlock](UBoxComponent* Box)
+	{
+		if (!IsValid(Box))
+		{
+			return;
+		}
+		Box->SetCollisionResponseToChannel(ECC_Pawn, bShouldBlock ? ECR_Block : ECR_Ignore);
+		Box->SetCanEverAffectNavigation(bShouldBlock);
+		FNavigationSystem::UpdateComponentData(*Box);
+	};
+
+	if (ExtraCollisionBoxes.IsEmpty())
+	{
+		UpdateBox(BoundsCollision);
+	}
+	else
+	{
+		for (UBoxComponent* const Box : ExtraCollisionBoxes)
+		{
+			UpdateBox(Box);
+		}
+	}
+}
+
 void AIFStructure::ApplyFootprintConfiguration()
 {
 	const FVector Extent = GetFootprintExtent();
+	const bool bAlive = IsStructureAlive();
+
+	for (UBoxComponent* const OldBox : ExtraCollisionBoxes)
+	{
+		if (IsValid(OldBox))
+		{
+			OldBox->SetCanEverAffectNavigation(false);
+			FNavigationSystem::UpdateComponentData(*OldBox);
+			OldBox->DestroyComponent();
+		}
+	}
+	ExtraCollisionBoxes.Reset();
+
+	auto ConfigureBoxComponent = [bAlive](UBoxComponent* Box, EIFCollisionRole BoxRole)
+	{
+		if (!IsValid(Box))
+		{
+			return;
+		}
+		Box->SetCollisionObjectType(ECC_GameTraceChannel1); // Damageable
+		Box->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		Box->SetCollisionResponseToAllChannels(ECR_Block);
+		Box->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+		Box->SetGenerateOverlapEvents(false);
+		Box->bDynamicObstacle = false;
+
+		if (BoxRole == EIFCollisionRole::WalkableDeck || BoxRole == EIFCollisionRole::WalkableRamp)
+		{
+			Box->CanCharacterStepUpOn = ECB_Yes;
+			const FWalkableSlopeOverride SlopeOverride(WalkableSlope_Increase, 50.f);
+			Box->SetWalkableSlopeOverride(SlopeOverride);
+			if (UBodySetup* const BodySetup = Box->GetBodySetup())
+			{
+				BodySetup->WalkableSlopeOverride = SlopeOverride;
+			}
+		}
+		else
+		{
+			Box->CanCharacterStepUpOn = ECB_No;
+			const FWalkableSlopeOverride SlopeOverride(WalkableSlope_Unwalkable, 0.f);
+			Box->SetWalkableSlopeOverride(SlopeOverride);
+			if (UBodySetup* const BodySetup = Box->GetBodySetup())
+			{
+				BodySetup->WalkableSlopeOverride = SlopeOverride;
+			}
+		}
+
+		Box->SetCanEverAffectNavigation(bAlive);
+		FNavigationSystem::UpdateComponentData(*Box);
+	};
 
 	if (IsValid(BoundsCollision))
 	{
-		// Double Z extent around Z=0 root so overhead clicks and traces cover the full structure height.
-		BoundsCollision->SetBoxExtent(FVector(Extent.X, Extent.Y, Extent.Z * 2.f), true);
-		BoundsCollision->CanCharacterStepUpOn = ECB_No;
-		BoundsCollision->SetWalkableSlopeOverride(FWalkableSlopeOverride(WalkableSlope_Unwalkable, 0.f));
-		if (UBodySetup* const BodySetup = BoundsCollision->GetBodySetup())
+		const bool bHasCustomBoxes = IsValid(StructureData) && !StructureData->CollisionBoxes.IsEmpty();
+		if (bHasCustomBoxes)
 		{
-			BodySetup->WalkableSlopeOverride = FWalkableSlopeOverride(WalkableSlope_Unwalkable, 0.f);
+			// Multi-box / data-driven structures use BoundsCollision as a non-colliding root anchor at Z=0.
+			BoundsCollision->SetBoxExtent(FVector(Extent.X, Extent.Y, Extent.Z * 2.f), false);
+			BoundsCollision->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			BoundsCollision->SetCollisionResponseToAllChannels(ECR_Ignore);
+			BoundsCollision->SetCanEverAffectNavigation(false);
+			FNavigationSystem::UpdateComponentData(*BoundsCollision);
+
+			const TArray<FIFCollisionBox>& CustomBoxes = StructureData->CollisionBoxes;
+			for (int32 i = 0; i < CustomBoxes.Num(); ++i)
+			{
+				const FIFCollisionBox& BoxDef = CustomBoxes[i];
+				const FName BoxName(*FString::Printf(TEXT("FootprintBox_%d"), i));
+				UBoxComponent* const BoxComp = NewObject<UBoxComponent>(this, BoxName);
+				if (!IsValid(BoxComp))
+				{
+					continue;
+				}
+				BoxComp->SetupAttachment(BoundsCollision);
+				BoxComp->SetRelativeLocation(BoxDef.LocalCenter);
+				BoxComp->SetRelativeRotation(BoxDef.LocalRotation);
+				BoxComp->SetBoxExtent(BoxDef.HalfExtent, true);
+				BoxComp->RegisterComponent();
+				ConfigureBoxComponent(BoxComp, BoxDef.Role);
+				ExtraCollisionBoxes.Add(BoxComp);
+			}
 		}
-		BoundsCollision->SetCanEverAffectNavigation(IsStructureAlive());
-		FNavigationSystem::UpdateComponentData(*BoundsCollision);
+		else
+		{
+			// Fallback single-box footprint (e.g., Keep).
+			BoundsCollision->SetBoxExtent(FVector(Extent.X, Extent.Y, Extent.Z * 2.f), true);
+			ConfigureBoxComponent(BoundsCollision, EIFCollisionRole::SolidUnwalkable);
+		}
 	}
 
 	if (IsValid(OverheadWidgetComponent))
@@ -531,7 +859,7 @@ void AIFStructure::ApplyTeamVisuals()
 	{
 		if (IsValid(Prim) && Prim->ComponentHasTag(TeamColoredComponentTag))
 		{
-			const int32 NumMats = FMath::Max(1, Prim->GetNumMaterials());
+			const int32 NumMats = Prim->GetNumMaterials();
 			for (int32 MatIdx = 0; MatIdx < NumMats; ++MatIdx)
 			{
 				Prim->SetMaterial(MatIdx, TeamMat);
@@ -685,6 +1013,16 @@ void AIFStructure::HandleStructureDestroyedInternal(AActor* KillerActor)
 		return;
 	}
 
+	if (UWorld* const World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(HostCollapseTimerHandle);
+	}
+	if (AIFStructure* const Host = HostStructure.Get(); IsValid(Host))
+	{
+		Host->OnStructureDestroyed.RemoveDynamic(this, &AIFStructure::HandleHostStructureDestroyed);
+	}
+	HostStructure.Reset();
+
 	SetStructureState(EIFStructureState::Destroyed);
 	OnStructureDeactivated();
 
@@ -705,6 +1043,17 @@ void AIFStructure::HandleStructureDestroyedInternal(AActor* KillerActor)
 		FNavigationSystem::UpdateComponentData(*BoundsCollision);
 	}
 
+	for (UBoxComponent* const ExtraBox : ExtraCollisionBoxes)
+	{
+		if (IsValid(ExtraBox))
+		{
+			ExtraBox->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			ExtraBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+			ExtraBox->SetCanEverAffectNavigation(false);
+			FNavigationSystem::UpdateComponentData(*ExtraBox);
+		}
+	}
+
 	RefreshOverheadWidget();
 
 	if (IsValid(VisualRoot))
@@ -713,6 +1062,11 @@ void AIFStructure::HandleStructureDestroyedInternal(AActor* KillerActor)
 	}
 
 	TriggerDestructionFeedback();
+
+	if (!ActiveDestructionGCs.IsEmpty())
+	{
+		RegisterDestroyedStructureAndEnforceCap(this);
+	}
 
 	OnStructureDestroyed.Broadcast(this, KillerActor);
 
@@ -727,109 +1081,244 @@ void AIFStructure::HandleStructureDestroyedInternal(AActor* KillerActor)
 	}
 }
 
-void AIFStructure::TriggerDestructionFeedback()
+UStaticMeshComponent* AIFStructure::FindPrimaryVisualMeshComponent() const
 {
-	bool bSpawnedChaosDestruction = false;
-
-	if (!IsValid(StructureData) || StructureData->DestructionGeometryCollection.IsNull())
+	if (!IsValid(VisualRoot))
 	{
-		UE_LOG(LogIronField, Warning, TEXT("[IF-Structure] %s has no DestructionGeometryCollection assigned; falling back to static rubble."), *GetName());
+		return nullptr;
 	}
-	else
+
+	TArray<USceneComponent*> VisualChildren;
+	VisualRoot->GetChildrenComponents(true, VisualChildren);
+	for (USceneComponent* const Child : VisualChildren)
 	{
-		UGeometryCollection* DestructionGC = StructureData->DestructionGeometryCollection.Get();
-		if (!IsValid(DestructionGC))
+		if (UStaticMeshComponent* const MeshComp = Cast<UStaticMeshComponent>(Child))
 		{
-			DestructionGC = StructureData->DestructionGeometryCollection.LoadSynchronous();
-		}
-
-		if (IsValid(DestructionGC) && !IsValid(ActiveDestructionGC))
-		{
-			ActiveDestructionGC = NewObject<UGeometryCollectionComponent>(this, TEXT("DestructionGeometryCollection"));
-			if (IsValid(ActiveDestructionGC))
+			if (MeshComp != RubbleVisualComponent
+				&& MeshComp != SelectionRingComponent
+				&& IsValid(MeshComp->GetStaticMesh()))
 			{
-				auto ApplyDebrisCollisionProfile = [](UGeometryCollectionComponent* GCComp)
-				{
-					GCComp->SetCanEverAffectNavigation(false);
-					GCComp->SetGenerateOverlapEvents(false);
-					GCComp->SetCollisionEnabled(ECollisionEnabled::PhysicsOnly);
-					GCComp->SetCollisionObjectType(ECC_PhysicsBody);
-					GCComp->SetCollisionResponseToAllChannels(ECR_Ignore);
-					GCComp->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
-					GCComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-					GCComp->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
-					GCComp->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
-					GCComp->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Ignore);
-				};
-
-				ActiveDestructionGC->SetupAttachment(BoundsCollision);
-				ActiveDestructionGC->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
-				ActiveDestructionGC->ObjectType = EObjectStateTypeEnum::Chaos_Object_Dynamic;
-				ActiveDestructionGC->SetEnableDamageFromCollision(false);
-				ApplyDebrisCollisionProfile(ActiveDestructionGC);
-
-				// Register first so ComponentToWorld is valid and SetRestCollection runs full OnCreatePhysicsState().
-				ActiveDestructionGC->RegisterComponent();
-				ActiveDestructionGC->SetRestCollection(DestructionGC, true);
-				ApplyDebrisCollisionProfile(ActiveDestructionGC);
-				ActiveDestructionGC->SetSimulatePhysics(true);
-				ActiveDestructionGC->CrumbleActiveClusters();
-
-				const FVector Extent = GetFootprintExtent();
-				const FVector BreakOrigin = GetActorLocation() + FVector(0.f, 0.f, Extent.Z * 0.5f);
-				const float RadialImpulse = StructureData->ChaosRadialImpulse;
-
-				if (UWorld* const World = GetWorld())
-				{
-					TWeakObjectPtr<AIFStructure> WeakThis(this);
-					TWeakObjectPtr<UGeometryCollectionComponent> WeakGC(ActiveDestructionGC);
-					World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateLambda(
-						[WeakThis, WeakGC, BreakOrigin, RadialImpulse]()
-						{
-							UGeometryCollectionComponent* const GC = WeakGC.Get();
-							AIFStructure* const Owner = WeakThis.Get();
-							if (!IsValid(GC) || !IsValid(Owner))
-							{
-								return;
-							}
-
-							GC->CrumbleActiveClusters();
-
-							if (RadialImpulse > 0.f)
-							{
-								if (URadialVector* const RadialField = NewObject<URadialVector>(Owner))
-								{
-									RadialField->SetRadialVector(RadialImpulse, BreakOrigin);
-									GC->ApplyPhysicsField(
-										true,
-										EGeometryCollectionPhysicsTypeEnum::Chaos_LinearVelocity,
-										nullptr,
-										RadialField);
-								}
-							}
-						}));
-				}
-
-				const int32 TransformCount = ActiveDestructionGC->GetDynamicCollection()
-					? ActiveDestructionGC->GetDynamicCollection()->GetNumTransforms()
-					: 0;
-				UE_LOG(LogIronField, Log, TEXT("[IF-Structure] %s spawned Chaos GC '%s' at %s (Transforms=%d, PhysicsProxy=%s)."),
-					*GetName(),
-					*DestructionGC->GetName(),
-					*ActiveDestructionGC->GetComponentLocation().ToCompactString(),
-					TransformCount,
-					ActiveDestructionGC->GetPhysicsProxy() ? TEXT("Valid") : TEXT("Null"));
-
-				bSpawnedChaosDestruction = true;
+				return MeshComp;
 			}
 		}
 	}
 
-	if (!bSpawnedChaosDestruction && IsValid(RubbleVisualComponent) && IsValid(RubbleVisualComponent->GetStaticMesh()))
+	return nullptr;
+}
+
+UGeometryCollectionComponent* AIFStructure::SpawnFracturedGC(
+	UGeometryCollection* GCAsset,
+	const FTransform& WorldOrRelTransform,
+	bool bIsWorldTransform,
+	const FVector& ImpulseOrigin,
+	float ImpulseRadiusOverride)
+{
+	if (!IsValid(GCAsset) || !IsValid(BoundsCollision))
 	{
-		RubbleVisualComponent->SetVisibility(true, true);
+		return nullptr;
 	}
 
+	const FName UniqueGCName = MakeUniqueObjectName(
+		this,
+		UGeometryCollectionComponent::StaticClass(),
+		TEXT("DestructionGeometryCollection"));
+	UGeometryCollectionComponent* const GCComp = NewObject<UGeometryCollectionComponent>(this, UniqueGCName);
+	if (!IsValid(GCComp))
+	{
+		return nullptr;
+	}
+
+	UPhysicalMaterial* StoneRubblePhysMat = nullptr;
+	if (IsValid(StructureData) && !StructureData->DestructionPhysicalMaterial.IsNull())
+	{
+		StoneRubblePhysMat = StructureData->DestructionPhysicalMaterial.Get();
+		if (!IsValid(StoneRubblePhysMat))
+		{
+			StoneRubblePhysMat = StructureData->DestructionPhysicalMaterial.LoadSynchronous();
+		}
+	}
+	if (!IsValid(StoneRubblePhysMat))
+	{
+		static const FSoftObjectPath DefaultStoneRubblePath(TEXT("/Game/IronField/Structures/Destruction/PM_IF_StoneRubble.PM_IF_StoneRubble"));
+		StoneRubblePhysMat = Cast<UPhysicalMaterial>(DefaultStoneRubblePath.TryLoad());
+	}
+
+	auto ApplyDebrisCollisionProfile = [StoneRubblePhysMat](UGeometryCollectionComponent* TargetGC)
+	{
+		TargetGC->SetCanEverAffectNavigation(false);
+		TargetGC->SetUseRootProxyForNavigation(false);
+		TargetGC->SetGenerateOverlapEvents(false);
+		TargetGC->SetEnableDamageFromCollision(true);
+		TargetGC->SetCastShadow(false);
+		TargetGC->bCastDynamicShadow = false;
+		TargetGC->CanCharacterStepUpOn = ECB_No;
+		TargetGC->SetCollisionEnabled(ECollisionEnabled::PhysicsOnly);
+		TargetGC->SetCollisionObjectType(ECC_PhysicsBody);
+		TargetGC->SetCollisionResponseToAllChannels(ECR_Ignore);
+		TargetGC->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+		TargetGC->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		TargetGC->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+		TargetGC->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
+		TargetGC->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Ignore);
+		if (IsValid(StoneRubblePhysMat))
+		{
+			TargetGC->SetPhysMaterialOverride(StoneRubblePhysMat);
+		}
+		TargetGC->SetLinearDamping(0.35f);
+		TargetGC->SetAngularDamping(0.55f);
+	};
+
+	GCComp->SetupAttachment(BoundsCollision);
+	const FTransform RelativeXf = bIsWorldTransform
+		? WorldOrRelTransform.GetRelativeTransform(BoundsCollision->GetComponentTransform())
+		: WorldOrRelTransform;
+	GCComp->SetRelativeTransform(RelativeXf);
+	GCComp->ObjectType = EObjectStateTypeEnum::Chaos_Object_Dynamic;
+	ApplyDebrisCollisionProfile(GCComp);
+
+	// Register first so ComponentToWorld is valid, then apply RestCollection defaults and re-enforce debris overrides.
+	GCComp->RegisterComponent();
+	GCComp->SetRestCollection(GCAsset, /*bApplyAssetDefaults=*/true);
+	ApplyDebrisCollisionProfile(GCComp);
+	GCComp->SetSimulatePhysics(true);
+
+	ActiveDestructionGCs.Add(GCComp);
+
+	const float BreakStrain = (IsValid(StructureData) && StructureData->ChaosBreakStrain > 0.f)
+		? StructureData->ChaosBreakStrain
+		: 500000.f;
+	const float PushMagnitude = IsValid(StructureData) ? StructureData->ChaosRadialImpulse : 60.f;
+	const float ConfiguredRadius = (ImpulseRadiusOverride > 0.f)
+		? ImpulseRadiusOverride
+		: (IsValid(StructureData) ? StructureData->ChaosRadialFalloffRadius : 350.f);
+
+	if (UWorld* const World = GetWorld())
+	{
+		TWeakObjectPtr<AIFStructure> WeakThis(this);
+		TWeakObjectPtr<UGeometryCollectionComponent> WeakGC(GCComp);
+		World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateLambda(
+			[WeakThis, WeakGC, ImpulseOrigin, BreakStrain, PushMagnitude, ConfiguredRadius]()
+			{
+				UGeometryCollectionComponent* const GC = WeakGC.Get();
+				AIFStructure* const Owner = WeakThis.Get();
+				if (!IsValid(GC) || !IsValid(Owner))
+				{
+					return;
+				}
+
+				GC->UpdateBounds();
+				const FBoxSphereBounds GCBounds = GC->Bounds;
+				const float EffectiveRadius = FMath::Max(ConfiguredRadius, GCBounds.SphereRadius * 1.35f);
+				const FVector EffectiveOrigin = (GCBounds.SphereRadius > 1.f)
+					? (GCBounds.Origin - FVector(0.f, 0.f, GCBounds.BoxExtent.Z * 0.2f))
+					: ImpulseOrigin;
+
+				const UGeometryCollection* const RestCollection = GC->GetRestCollection();
+				const int32 RootIdx = IsValid(RestCollection) ? RestCollection->GetRootIndex() : INDEX_NONE;
+				if (RootIdx != INDEX_NONE)
+				{
+					// Break only the Level 0 root cluster into Level 1 chunks so ground impact shatters them into Level 2 rubble.
+					GC->CrumbleCluster(RootIdx);
+				}
+				else
+				{
+					if (URadialFalloff* const StrainField = NewObject<URadialFalloff>(Owner))
+					{
+						StrainField->SetRadialFalloff(
+							BreakStrain,
+							BreakStrain,
+							1.f,
+							0.f,
+							EffectiveRadius,
+							EffectiveOrigin,
+							EFieldFalloffType::Field_FallOff_None);
+						GC->ApplyPhysicsField(
+							true,
+							EGeometryCollectionPhysicsTypeEnum::Chaos_ExternalClusterStrain,
+							nullptr,
+							StrainField);
+					}
+					GC->CrumbleActiveClusters();
+				}
+
+				if (PushMagnitude > 0.f)
+				{
+					FVector PushDir = Owner->GetActorForwardVector().GetSafeNormal2D();
+					if (Owner->LastDamageInstigator.IsValid())
+					{
+						const FVector Away = (Owner->GetActorLocation() - Owner->LastDamageInstigator->GetActorLocation()).GetSafeNormal2D();
+						if (!Away.IsNearlyZero())
+						{
+							PushDir = Away;
+						}
+					}
+					if (PushDir.IsNearlyZero())
+					{
+						PushDir = FVector::ForwardVector;
+					}
+
+					const FVector PrimaryVelocity = PushDir * PushMagnitude + FVector(0.f, 0.f, -PushMagnitude * 0.35f);
+					if (UUniformVector* const UniformField = NewObject<UUniformVector>(Owner))
+					{
+						UniformField->SetUniformVector(PrimaryVelocity.Size(), PrimaryVelocity.GetSafeNormal());
+						UFieldNodeBase* FinalField = UniformField;
+
+						if (EffectiveRadius > 0.f)
+						{
+							URadialVector* const ScatterField = NewObject<URadialVector>(Owner);
+							URadialFalloff* const FalloffField = NewObject<URadialFalloff>(Owner);
+							UOperatorField* const MaskedScatter = NewObject<UOperatorField>(Owner);
+							UOperatorField* const CombinedField = NewObject<UOperatorField>(Owner);
+							if (IsValid(ScatterField) && IsValid(FalloffField) && IsValid(MaskedScatter) && IsValid(CombinedField))
+							{
+								ScatterField->SetRadialVector(PushMagnitude * 0.25f, EffectiveOrigin);
+								FalloffField->SetRadialFalloff(
+									1.f,
+									0.f,
+									1.f,
+									0.f,
+									EffectiveRadius,
+									EffectiveOrigin,
+									EFieldFalloffType::Field_Falloff_Linear);
+								MaskedScatter->SetOperatorField(
+									1.f,
+									ScatterField,
+									FalloffField,
+									EFieldOperationType::Field_Multiply);
+								CombinedField->SetOperatorField(
+									1.f,
+									UniformField,
+									MaskedScatter,
+									EFieldOperationType::Field_Add);
+								FinalField = CombinedField;
+							}
+						}
+
+						GC->ApplyPhysicsField(
+							true,
+							EGeometryCollectionPhysicsTypeEnum::Chaos_LinearVelocity,
+							nullptr,
+							FinalField);
+					}
+				}
+			}));
+	}
+
+	const int32 TransformCount = GCComp->GetDynamicCollection()
+		? GCComp->GetDynamicCollection()->GetNumTransforms()
+		: 0;
+	UE_LOG(LogIronField, Log, TEXT("[IF-Structure] %s spawned Chaos GC '%s' at %s (Transforms=%d, PhysicsProxy=%s)."),
+		*GetName(),
+		*GCAsset->GetName(),
+		*GCComp->GetComponentLocation().ToCompactString(),
+		TransformCount,
+		GCComp->GetPhysicsProxy() ? TEXT("Valid") : TEXT("Null"));
+
+	return GCComp;
+}
+
+void AIFStructure::SpawnDestructionVFX() const
+{
 	if (IsValid(StructureData))
 	{
 		if (UParticleSystem* const DestroyVFX = StructureData->DestructionCascadeVFX.Get())
@@ -839,9 +1328,59 @@ void AIFStructure::TriggerDestructionFeedback()
 	}
 }
 
-void AIFStructure::RequestStructureAssets()
+void AIFStructure::TriggerDestructionFeedback()
 {
-	TArray<FSoftObjectPath> AssetPaths;
+	bool bSpawnedChaosDestruction = false;
+
+	if (!IsValid(StructureData) || StructureData->DestructionGeometryCollection.IsNull())
+	{
+		UE_LOG(LogIronField, Warning, TEXT("[IF-Structure] %s has no DestructionGeometryCollection assigned."), *GetName());
+	}
+	else
+	{
+		UGeometryCollection* DestructionGC = StructureData->DestructionGeometryCollection.Get();
+		if (!IsValid(DestructionGC))
+		{
+			DestructionGC = StructureData->DestructionGeometryCollection.LoadSynchronous();
+		}
+
+		if (IsValid(DestructionGC))
+		{
+			const UStaticMeshComponent* const PrimaryVisual = FindPrimaryVisualMeshComponent();
+			const bool bUseLiveVisualTransform = IsValid(PrimaryVisual);
+			const FTransform SpawnXf = bUseLiveVisualTransform
+				? PrimaryVisual->GetComponentTransform()
+				: StructureData->DestructionGCRelativeTransform;
+			const FVector Extent = GetFootprintExtent();
+			const FVector BreakOrigin = GetActorLocation() + FVector(0.f, 0.f, Extent.Z * 0.5f);
+
+			bSpawnedChaosDestruction = IsValid(SpawnFracturedGC(
+				DestructionGC,
+				SpawnXf,
+				bUseLiveVisualTransform,
+				BreakOrigin));
+		}
+	}
+
+	if (IsValid(RubbleVisualComponent))
+	{
+		const UStaticMesh* const RubbleMesh = RubbleVisualComponent->GetStaticMesh();
+		const bool bIsPrototypeCube = IsValid(RubbleMesh) && RubbleMesh->GetPathName().Contains(TEXT("/Engine/BasicShapes/Cube"));
+		if (bSpawnedChaosDestruction || bIsPrototypeCube || !IsValid(RubbleMesh))
+		{
+			RubbleVisualComponent->SetVisibility(false, true);
+		}
+		else
+		{
+			RubbleVisualComponent->SetVisibility(true, true);
+		}
+	}
+
+	SpawnDestructionVFX();
+}
+
+void AIFStructure::GatherStructureAssetPaths(TArray<FSoftObjectPath>& AssetPaths) const
+{
 	auto AddIfSet = [&AssetPaths](const auto& SoftRef)
 	{
 		if (!SoftRef.IsNull())
@@ -859,10 +1398,18 @@ void AIFStructure::RequestStructureAssets()
 
 	if (IsValid(StructureData))
 	{
+		AddIfSet(StructureData->PreviewMesh);
 		AddIfSet(StructureData->DestructionGeometryCollection);
+		AddIfSet(StructureData->DestructionPhysicalMaterial);
 		AddIfSet(StructureData->DestructionCascadeVFX);
 		AddIfSet(StructureData->BuildCompleteCascadeVFX);
 	}
+}
+
+void AIFStructure::RequestStructureAssets()
+{
+	TArray<FSoftObjectPath> AssetPaths;
+	GatherStructureAssetPaths(AssetPaths);
 
 	if (AssetPaths.IsEmpty())
 	{
@@ -881,6 +1428,11 @@ void AIFStructure::HandleStructureAssetsLoaded()
 	RefreshSelectionRingVisual();
 }
 
+bool AIFStructure::ShouldStripPrimitiveCollision(const UPrimitiveComponent*) const
+{
+	return true;
+}
+
 void AIFStructure::EnforceCameraIgnoreOnVisuals()
 {
 	TArray<UPrimitiveComponent*> Primitives;
@@ -894,8 +1446,11 @@ void AIFStructure::EnforceCameraIgnoreOnVisuals()
 
 		Prim->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 
-		// Keep BoundsCollision as the sole collision/damage/NavMesh volume; all cosmetic meshes stay NoCollision.
-		if (Prim != BoundsCollision)
+		// Keep BoundsCollision / ExtraCollisionBoxes (and subclass opt-outs like GateDoor InteractionZone) intact; cosmetic meshes stay NoCollision.
+		const UBoxComponent* const AsBox = Cast<UBoxComponent>(Prim);
+		if (Prim != BoundsCollision
+			&& !(IsValid(AsBox) && ExtraCollisionBoxes.Contains(AsBox))
+			&& ShouldStripPrimitiveCollision(Prim))
 		{
 			Prim->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			Prim->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -903,4 +1458,74 @@ void AIFStructure::EnforceCameraIgnoreOnVisuals()
 			Prim->SetGenerateOverlapEvents(false);
 		}
 	}
+}
+
+namespace
+{
+	constexpr int32 MaxActiveDestroyedStructures = 8;
+	TArray<TWeakObjectPtr<AIFStructure>> GActiveDestroyedStructures;
+
+	void PruneDestroyedStructuresForWorld(const UWorld* TargetWorld)
+	{
+		GActiveDestroyedStructures.RemoveAll([TargetWorld](const TWeakObjectPtr<AIFStructure>& Ptr)
+		{
+			const AIFStructure* const Struct = Ptr.Get();
+			return !IsValid(Struct) || Struct->IsActorBeingDestroyed() || Struct->GetWorld() != TargetWorld;
+		});
+	}
+}
+
+void AIFStructure::CleanupActiveDestructionGCs()
+{
+	for (UGeometryCollectionComponent* const GCComp : ActiveDestructionGCs)
+	{
+		if (IsValid(GCComp))
+		{
+			GCComp->DestroyComponent();
+		}
+	}
+	ActiveDestructionGCs.Reset();
+}
+
+void AIFStructure::RegisterDestroyedStructureAndEnforceCap(AIFStructure* NewlyDestroyed)
+{
+	if (!IsValid(NewlyDestroyed))
+	{
+		return;
+	}
+
+	const UWorld* const CurrentWorld = NewlyDestroyed->GetWorld();
+	PruneDestroyedStructuresForWorld(CurrentWorld);
+
+	const TWeakObjectPtr<AIFStructure> NewWeak(NewlyDestroyed);
+	if (!GActiveDestroyedStructures.Contains(NewWeak))
+	{
+		GActiveDestroyedStructures.Add(NewWeak);
+	}
+
+	while (GActiveDestroyedStructures.Num() > MaxActiveDestroyedStructures)
+	{
+		AIFStructure* const Oldest = GActiveDestroyedStructures[0].Get();
+		GActiveDestroyedStructures.RemoveAt(0);
+		if (IsValid(Oldest) && Oldest != NewlyDestroyed && !Oldest->IsActorBeingDestroyed())
+		{
+			Oldest->CleanupActiveDestructionGCs();
+			Oldest->SetLifeSpan(0.05f);
+		}
+	}
+}
+
+void AIFStructure::UnregisterDestroyedStructure(const AIFStructure* Structure)
+{
+	if (!Structure)
+	{
+		return;
+	}
+
+	const UWorld* const CurrentWorld = Structure->GetWorld();
+	GActiveDestroyedStructures.RemoveAll([Structure, CurrentWorld](const TWeakObjectPtr<AIFStructure>& Ptr)
+	{
+		const AIFStructure* const Existing = Ptr.Get();
+		return !IsValid(Existing) || Existing == Structure || Existing->GetWorld() != CurrentWorld;
+	});
 }

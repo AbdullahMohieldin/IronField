@@ -2,10 +2,7 @@
 
 #include "Character/IFPlayerCharacter.h"
 #include "Core/IFGameState.h"
-#include "Core/IFLog.h"
 #include "Core/IFPlayerController.h"
-#include "Engine/World.h"
-#include "GameFramework/PlayerController.h"
 #include "UI/IFTacticalHUD.h"
 
 AIFGameMode::AIFGameMode()
@@ -16,43 +13,27 @@ AIFGameMode::AIFGameMode()
 	HUDClass = AIFTacticalHUD::StaticClass();
 }
 
-void AIFGameMode::BeginPlay()
-{
-	Super::BeginPlay();
-
-	IFGameState = GetGameState<AIFGameState>();
-}
-
-EIFGameResult AIFGameMode::GetMatchResult() const
-{
-	return IsValid(IFGameState) ? IFGameState->GetMatchResult() : EIFGameResult::None;
-}
-
 void AIFGameMode::EndMatch(EIFGameResult Result)
 {
-	if (Result == EIFGameResult::None || !IsValid(IFGameState) || IFGameState->GetMatchResult() != EIFGameResult::None)
+	AIFGameState* const GS = GetGameState<AIFGameState>();
+	if (Result == EIFGameResult::None || !IsValid(GS) || GS->GetMatchResult() != EIFGameResult::None)
 	{
 		return;
 	}
 
-	IFGameState->ApplyMatchResult(Result);
-
-	if (UWorld* const World = GetWorld())
-	{
-		AIFPlayerController* const PC = Cast<AIFPlayerController>(World->GetFirstPlayerController());
-		if (IsValid(PC))
-		{
-			PC->ShowGameOverScreen(Result);
-		}
-	}
+	GS->ApplyMatchResult(Result);
 }
 
 void AIFGameMode::DebugVictory()
 {
+#if !UE_BUILD_SHIPPING
 	EndMatch(EIFGameResult::Victory);
+#endif
 }
 
 void AIFGameMode::DebugDefeat()
 {
+#if !UE_BUILD_SHIPPING
 	EndMatch(EIFGameResult::Defeat);
+#endif
 }

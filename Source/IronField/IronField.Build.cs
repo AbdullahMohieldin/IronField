@@ -10,21 +10,21 @@ public class IronField : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
-			"InputCore",
 			"EnhancedInput",
 			"UMG",
-			"Slate",
 			"SlateCore",
-			"AIModule",
-			"NavigationSystem",
-			"GameplayTasks",
-			"Niagara",
-			"GeometryCollectionEngine",
-			"Chaos",
-			"FieldSystemEngine"
+			"AIModule"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {
+			"InputCore",
+			"Slate",
+			"NavigationSystem",
+			"Niagara",
+			"GeometryCollectionEngine",
+			"Chaos",
+			"FieldSystemEngine",
+			"PhysicsCore"
 		});
 	}
 }

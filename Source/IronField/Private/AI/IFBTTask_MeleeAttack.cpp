@@ -11,10 +11,28 @@
 
 namespace
 {
-	float GetYawErrorDegrees(const AIFSoldierCharacter& Soldier, const AActor& Target)
+	FVector GetTargetFacingDirection2D(const AIFSoldierCharacter& Soldier, const AActor& Target)
 	{
+		if (const AIFStructure* const TargetStructure = Cast<AIFStructure>(&Target))
+		{
+			FVector ToTarget = TargetStructure->GetClosestSurfacePoint2D(Soldier.GetActorLocation()) - Soldier.GetActorLocation();
+			ToTarget.Z = 0.f;
+			if (ToTarget.SizeSquared2D() < KINDA_SMALL_NUMBER)
+			{
+				ToTarget = TargetStructure->GetActorLocation() - Soldier.GetActorLocation();
+				ToTarget.Z = 0.f;
+			}
+			return ToTarget;
+		}
+
 		FVector ToTarget = Soldier.GetCombatApproachPoint(&Target) - Soldier.GetActorLocation();
 		ToTarget.Z = 0.f;
+		return ToTarget;
+	}
+
+	float GetYawErrorDegrees(const AIFSoldierCharacter& Soldier, const AActor& Target)
+	{
+		const FVector ToTarget = GetTargetFacingDirection2D(Soldier, Target);
 		if (ToTarget.IsNearlyZero())
 		{
 			return 0.f;
@@ -26,8 +44,7 @@ namespace
 
 	float FaceTargetSmooth(AIFSoldierCharacter& Soldier, const AActor& Target, float DeltaSeconds, float InterpSpeed)
 	{
-		FVector ToTarget = Soldier.GetCombatApproachPoint(&Target) - Soldier.GetActorLocation();
-		ToTarget.Z = 0.f;
+		const FVector ToTarget = GetTargetFacingDirection2D(Soldier, Target);
 		if (ToTarget.IsNearlyZero())
 		{
 			return 0.f;

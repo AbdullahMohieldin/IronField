@@ -45,6 +45,11 @@ enum class EIFPlacementInvalidReason : uint8
 	KeepAlreadyExists,
 	TooCloseToFlag,
 	BlockedByObstacle,
+	BlockedByUnit,
+	RequiresWallAttachment,
+	RequiresCornerAttachment,
+	RequiresGateArchway,
+	GateAlreadyHasDoor,
 	InvalidLocation
 };
 

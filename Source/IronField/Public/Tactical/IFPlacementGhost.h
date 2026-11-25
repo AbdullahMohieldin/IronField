@@ -4,8 +4,8 @@
 #include "GameFramework/Actor.h"
 #include "IFPlacementGhost.generated.h"
 
+class UIFBuildingComponent;
 class UIFStructureDataAsset;
-class UIFTacticalCommandComponent;
 class UMaterialInterface;
 class USceneComponent;
 class UStaticMesh;
@@ -23,7 +23,7 @@ class IRONFIELD_API AIFPlacementGhost : public AActor
 public:
 	AIFPlacementGhost();
 
-	void SetOwningTacticalComponent(UIFTacticalCommandComponent* InOwnerComponent);
+	void SetOwningBuildingComponent(UIFBuildingComponent* InOwnerComponent);
 
 	void BeginPreview(
 		const UIFStructureDataAsset* InStructureData,
@@ -44,8 +44,14 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Tactical|Placement")
 	TObjectPtr<UStaticMeshComponent> FootprintPreviewMesh;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Tactical|Placement")
+	TObjectPtr<UStaticMeshComponent> SecondaryPreviewMesh;
+
 private:
-	TWeakObjectPtr<UIFTacticalCommandComponent> OwningTacticalComponent;
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMesh> DefaultCubeMesh;
+
+	TWeakObjectPtr<UIFBuildingComponent> OwningBuildingComponent;
 	TWeakObjectPtr<UMaterialInterface> ValidMaterial;
 	TWeakObjectPtr<UMaterialInterface> InvalidMaterial;
 

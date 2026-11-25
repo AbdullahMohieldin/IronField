@@ -580,6 +580,7 @@ void AIFPlayerCharacter::OnDeathStarted()
 		{
 			Tactical->ExitTacticalMode(true);
 		}
+		PC->RefreshInteractionPrompt();
 	}
 
 	bUseControllerRotationYaw = false;

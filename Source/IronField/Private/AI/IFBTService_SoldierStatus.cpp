@@ -9,8 +9,8 @@
 UIFBTService_SoldierStatus::UIFBTService_SoldierStatus()
 {
 	NodeName = TEXT("IF Soldier Status");
-	Interval = 0.10f;
-	RandomDeviation = 0.02f;
+	Interval = 0.22f;
+	RandomDeviation = 0.04f;
 
 	TargetActorKey.AddObjectFilter(this,
 		GET_MEMBER_NAME_CHECKED(UIFBTService_SoldierStatus, TargetActorKey), AActor::StaticClass());

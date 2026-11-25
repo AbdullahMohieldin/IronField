@@ -6,13 +6,29 @@
 #include "Tactical/IFTacticalTypes.h"
 #include "IFTacticalHUDWidget.generated.h"
 
+class AIFGateDoor;
 class AIFStructure;
 class UBorder;
 class UButton;
+class UIFBuildingComponent;
 class UIFStructureDataAsset;
 class UIFTacticalCommandComponent;
+class UIFTacticalHUDWidget;
 class UTextBlock;
 class UWidget;
+
+UCLASS()
+class IRONFIELD_API UIFBuildSlotButtonProxy : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	int32 SlotIndex = INDEX_NONE;
+	TWeakObjectPtr<UIFTacticalHUDWidget> OwnerWidget;
+
+	UFUNCTION()
+	void HandleClicked();
+};
 
 /**
  * Contextual, event-driven Tactical Mode overlay (zero tick, zero Blueprint logic).
@@ -30,6 +46,22 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|UI")
 	void UnbindFromTacticalComponent();
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|UI")
+	void BindToBuildingComponent(UIFBuildingComponent* InBuildingComponent);
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|UI")
+	void UnbindFromBuildingComponent();
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|UI")
+	void RefreshBuildBar();
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|UI")
+	void SetInteractionPrompt(const FText& PromptText);
+
+	void RefreshTacticalAndPromptVisibility(bool bTacticalActive);
+
+	void HandleDynamicBuildSlotClicked(int32 SlotIndex);
 
 protected:
 	virtual void NativeConstruct() override;
@@ -165,6 +197,9 @@ private:
 	void HandleBuildPlacementValidityChanged(bool bIsValid, EIFPlacementInvalidReason InvalidReason);
 
 	UFUNCTION()
+	void HandleBuildPlacementRejected(EIFPlacementInvalidReason InvalidReason);
+
+	UFUNCTION()
 	void HandleSelectedStructureChanged(AIFStructure* SelectedStructure);
 
 	UFUNCTION()
@@ -191,6 +226,9 @@ private:
 	UFUNCTION()
 	void HandleDemolishStructureClicked();
 
+	UFUNCTION()
+	void HandleToggleGateClicked();
+
 	void ConfigureFormationButtons();
 	void UnbindFormationButtons();
 	void ConfigureBuildButtons();
@@ -206,7 +244,48 @@ private:
 	void UpdateControlsHintText(int32 SelectedUnitCount, bool bIsPlacementActive);
 	void ShowOrderToast(EIFTacticalOrderType OrderType);
 	void HideOrderToast();
+	void EndStatusFlash();
 
 	TWeakObjectPtr<UIFTacticalCommandComponent> BoundTacticalComponent;
+	TWeakObjectPtr<UIFBuildingComponent> BoundBuildingComponent;
 	FTimerHandle OrderToastTimerHandle;
+	FTimerHandle StatusFlashTimerHandle;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UIFBuildSlotButtonProxy>> DynamicBuildProxies;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UBorder>> DynamicBuildBorders;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> DynamicBuildLabels;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> DynamicBuildRoleLabels;
+
+	TArray<TWeakObjectPtr<UIFStructureDataAsset>> DynamicBuildDataAssets;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBorder> InteractionPromptBorder;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> InteractionPromptText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UButton> ToggleGateButton;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ToggleGateButtonLabel;
+
+	FText ActiveInteractionPromptText;
+	bool bIsTacticalOverlayActive = false;
+
+	void EnsureInteractionPromptCreated();
+	void EnsureToggleGateButtonCreated();
+	void RefreshToggleGateButtonLabel(const AIFGateDoor* GateDoor);
+	AIFGateDoor* ResolveSelectedGateDoor(AIFStructure* SelectedStructure) const;
+
+	bool bHasCachedBuildStyle = false;
+	FButtonStyle CachedBuildButtonStyle;
+	FSlateFontInfo CachedBuildLabelFont;
 };

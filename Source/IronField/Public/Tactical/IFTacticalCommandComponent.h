@@ -10,14 +10,12 @@
 
 class AActor;
 class AIFBaseCharacter;
-class AIFPlacementGhost;
 class AIFPlayerController;
 class AIFSoldierCharacter;
 class AIFStructure;
 class AIFTacticalCameraRig;
 class AIFTacticalHUD;
-class AIFTerritory;
-class UIFStructureDataAsset;
+class UIFBuildingComponent;
 class UIFTacticalHUDWidget;
 class UInputAction;
 class UInputComponent;
@@ -55,15 +53,6 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Tactical|Events")
 	FOnTacticalFormationChanged OnFormationTypeChanged;
 
-	UPROPERTY(BlueprintAssignable, Category = "IronField|Tactical|Build")
-	FOnBuildPlacementModeChanged OnBuildPlacementModeChanged;
-
-	UPROPERTY(BlueprintAssignable, Category = "IronField|Tactical|Build")
-	FOnBuildPlacementValidityChanged OnBuildPlacementValidityChanged;
-
-	UPROPERTY(BlueprintAssignable, Category = "IronField|Tactical|Selection")
-	FOnTacticalStructureSelectionChanged OnSelectedStructureChanged;
-
 	void SetupControllerInput(UInputComponent* PlayerInputComponent);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|Flow")
@@ -94,45 +83,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Tactical|Selection")
 	int32 GetSelectedSoldierCount() const;
 
-	// --- Part 09 Tactical Build Placement, Relocate & Demolish --------------
-	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|Build")
-	bool BeginBuildPlacement(UIFStructureDataAsset* StructureData);
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|Build")
-	bool BeginBuildPlacementByType(EIFStructureType StructureType);
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|Build")
-	void CancelBuildPlacement();
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|Build")
-	void RotateBuildPreview(bool bReverse = false);
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Tactical|Build")
-	bool IsInBuildPlacementMode() const { return bIsInBuildPlacementMode && ActiveBuildData.IsValid(); }
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Tactical|Build")
-	bool IsRelocatingStructure() const { return bIsInBuildPlacementMode && RelocatingStructure.IsValid(); }
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Tactical|Build")
-	UIFStructureDataAsset* GetActiveBuildData() const { return ActiveBuildData.Get(); }
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Tactical|Build")
-	UIFStructureDataAsset* GetBuildableStructureByType(EIFStructureType StructureType) const;
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Tactical|Selection")
-	AIFStructure* GetSelectedStructure() const { return SelectedStructure.Get(); }
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|Selection")
-	void ClearSelectedStructure();
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|Build")
-	bool BeginRelocateSelectedStructure();
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Tactical|Build")
-	bool DemolishSelectedStructure();
-
-	// Invoked by AIFPlacementGhost::Tick ONLY while placement mode is active (zero idle tick).
-	void UpdateBuildPlacementPreview();
+	AActor* GetTacticalCameraRigActor() const;
+	UIFTacticalHUDWidget* GetTacticalHUDWidget() const { return TacticalHUDWidget; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -261,33 +213,8 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|UI")
 	TSoftClassPtr<UIFTacticalHUDWidget> TacticalHUDWidgetClass;
 
-	// --- Part 09 Build Placement Config -------------------------------------
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Build")
 	TSoftObjectPtr<UInputAction> RotateBuildAction;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Build")
-	TArray<TSoftObjectPtr<UIFStructureDataAsset>> BuildableStructures;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Build")
-	TSoftObjectPtr<UStaticMesh> PlacementGhostMesh;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Build")
-	TSoftObjectPtr<UMaterialInterface> PlacementGhostValidMaterial;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Build")
-	TSoftObjectPtr<UMaterialInterface> PlacementGhostInvalidMaterial;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Build", meta = (ClampMin = "5.0", ClampMax = "180.0"))
-	float PlacementRotationStepDegrees = 45.f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Build", meta = (ClampMin = "0.0"))
-	float WallSnapDistanceCm = 150.f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Build")
-	bool bEnableWallSnapping = true;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Build")
-	bool bRequireHeroInTerritory = false;
 
 private:
 	void RequestTacticalAssets();
@@ -333,28 +260,10 @@ private:
 	UFUNCTION()
 	void HandleHighlightedStructureDestroyed(AIFStructure* DestroyedStructure, AActor* KillerActor);
 
-	UFUNCTION()
-	void HandleSelectedStructureDestroyed(AIFStructure* DestroyedStructure, AActor* KillerActor);
-
-	bool BeginBuildPlacementInternal(UIFStructureDataAsset* StructureData, AIFStructure* InRelocatingStructure);
-	AIFPlacementGhost* EnsurePlacementGhostSpawned();
-	bool TryConfirmBuildPlacement();
-	bool ValidateBuildPlacement(
-		const UIFStructureDataAsset* Data,
-		const FVector& CandidateLocation,
-		float CandidateYaw,
-		AIFTerritory*& OutTerritory,
-		EIFPlacementInvalidReason& OutReason) const;
-	bool TrySnapWallPlacement(
-		const UIFStructureDataAsset* Data,
-		const FVector& CursorLocation,
-		float BaseYaw,
-		FVector& OutSnappedLocation,
-		float& OutSnappedYaw) const;
 	AIFStructure* FindBestStructureUnderCursor(const FVector& RayOrigin, const FVector& RayDir, float MaxDistance, const APawn* PlayerPawn, bool bHostileOnly) const;
-	void SelectFriendlyStructure(AIFStructure* Structure);
 	void SetHighlightedHostileStructure(AIFStructure* HostileStructure);
 	void ClearHighlightedHostileStructure();
+	UIFBuildingComponent* GetBuildingComponent() const;
 
 	void PerformSingleClickSelection();
 	void PerformMarqueeSelection(const FVector2D& StartPos, const FVector2D& EndPos);
@@ -396,27 +305,16 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UIFTacticalHUDWidget> TacticalHUDWidget;
 
-	UPROPERTY(Transient)
-	TObjectPtr<AIFPlacementGhost> PlacementGhost;
-
-	UPROPERTY(Transient)
-	TArray<TObjectPtr<UIFStructureDataAsset>> LoadedBuildableStructures;
-
 	TWeakObjectPtr<UParticleSystemComponent> ActiveOrderMarkerPSC;
 	FTimerHandle OrderMarkerTimerHandle;
 
 	TSharedPtr<FStreamableHandle> TacticalAssetsLoadHandle;
-	TSharedPtr<FStreamableHandle> BuildClassLoadHandle;
 	FDelegateHandle AppActivationHandle;
 
 	TSet<TObjectKey<UInputAction>> BoundInputActions;
 	TArray<TWeakObjectPtr<AIFSoldierCharacter>> SelectedSoldiers;
 	TWeakObjectPtr<AIFSoldierCharacter> HighlightedHostileTarget;
 	TWeakObjectPtr<AIFStructure> HighlightedHostileStructure;
-	TWeakObjectPtr<AIFStructure> SelectedStructure;
-	TWeakObjectPtr<AIFStructure> RelocatingStructure;
-	TWeakObjectPtr<UIFStructureDataAsset> ActiveBuildData;
-	TWeakObjectPtr<AIFTerritory> LastValidBuildTerritory;
 
 	FVector2D MarqueeStartScreenPos = FVector2D::ZeroVector;
 	FVector2D MarqueeCurrentScreenPos = FVector2D::ZeroVector;
@@ -426,14 +324,7 @@ private:
 	FVector FormationDragCurrentPoint = FVector::ZeroVector;
 	TArray<FIFFormationSlot> PreviewFormationSlots;
 
-	FVector CurrentBuildPreviewLocation = FVector::ZeroVector;
-	float CurrentBuildPreviewYaw = 0.f;
-	EIFPlacementInvalidReason LastBuildInvalidReason = EIFPlacementInvalidReason::None;
-
 	bool bIsTacticalModeActive = false;
-	bool bIsInBuildPlacementMode = false;
-	bool bIsCurrentBuildPlacementValid = false;
-	bool bHasBroadcastPlacementValidity = false;
 	bool bIsSelectPressed = false;
 	bool bIsMarqueeDragging = false;
 	bool bIsSelectModifierHeld = false;

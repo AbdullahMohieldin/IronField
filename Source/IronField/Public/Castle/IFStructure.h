@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Castle/IFBuildingTypes.h"
 #include "Castle/IFCastleTypes.h"
 #include "Combat/IFTeamTypes.h"
 #include "GameFramework/Actor.h"
@@ -10,6 +11,7 @@
 class AIFTerritory;
 class UAIPerceptionStimuliSourceComponent;
 class UBoxComponent;
+class UGeometryCollection;
 class UGeometryCollectionComponent;
 class UIFHealthComponent;
 class UIFStructureDataAsset;
@@ -88,8 +90,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Structure|Combat")
 	float GetHorizontalSurfaceDistance(const FVector& FromLocation) const;
 
-	// Returns the +/-X world endpoints of the footprint for flush wall-segment chaining.
-	void GetWallSnapEndpoints(FVector& OutNegXEnd, FVector& OutPosXEnd) const;
+	void GetWorldCollisionBoxes(TArray<FIFWorldCollisionBox>& OutBoxes) const;
+	void GetWorldConnectors(TArray<FIFModularConnector>& OutWorldConnectors) const;
+
+	static void ComputeWorldCollisionBoxes(
+		const UIFStructureDataAsset* Data,
+		const FVector& Location,
+		float YawDeg,
+		TArray<FIFWorldCollisionBox>& OutBoxes);
+
+	static void ComputeWorldConnectors(
+		const UIFStructureDataAsset* Data,
+		const FVector& Location,
+		float YawDeg,
+		TArray<FIFModularConnector>& OutWorldConnectors);
 
 	// --- Future Civilian / Worker Hooks (Part 10+) --------------------------
 	UFUNCTION(BlueprintCallable, Category = "IronField|Structure|Construction")
@@ -103,6 +117,12 @@ public:
 
 	// --- Scorched-Earth Collapse (Method B when Territory Keep falls) -------
 	void CollapseStructure(AActor* KillerActor = nullptr);
+
+	// --- Host Support Tracking (prevents floating walkways/stairs/doors) ----
+	void SetHostStructure(AIFStructure* InHost);
+
+	UFUNCTION(BlueprintPure, Category = "IronField|Structure")
+	AIFStructure* GetHostStructure() const { return HostStructure.Get(); }
 
 	// --- Tactical Selection, Relocate & Demolish ----------------------------
 	UFUNCTION(BlueprintCallable, Category = "IronField|Structure|Tactical")
@@ -140,10 +160,21 @@ protected:
 	virtual void OnStructureActivated() {}
 	virtual void OnStructureDeactivated() {}
 
-	// Clean hook for future Chaos GeometryCollection swap without refactoring core destruction flow.
+	// Clean hook for Chaos GeometryCollection swap without refactoring core destruction flow.
 	virtual void TriggerDestructionFeedback();
+	virtual bool ShouldStripPrimitiveCollision(const UPrimitiveComponent* Prim) const;
+	virtual void GatherStructureAssetPaths(TArray<FSoftObjectPath>& OutAssetPaths) const;
+
+	UGeometryCollectionComponent* SpawnFracturedGC(
+		UGeometryCollection* GCAsset,
+		const FTransform& WorldOrRelTransform,
+		bool bIsWorldTransform,
+		const FVector& ImpulseOrigin,
+		float ImpulseRadiusOverride = -1.f);
+	void SpawnDestructionVFX() const;
 
 	void SetStructureState(EIFStructureState NewState);
+	void SetStructureCollisionBlocking(bool bBlockPawnsAndNav);
 	void ApplyFootprintConfiguration();
 	void ApplyTeamVisuals();
 	void RefreshOverheadWidget();
@@ -214,13 +245,23 @@ private:
 	UFUNCTION()
 	void HandleHealthDepleted(AActor* DeadActor);
 
+	UFUNCTION()
+	void HandleHostStructureDestroyed(AIFStructure* DestroyedHost, AActor* KillerActor);
+
 	void HandleStructureDestroyedInternal(AActor* KillerActor);
 	void RequestStructureAssets();
 	void HandleStructureAssetsLoaded();
 	void EnforceCameraIgnoreOnVisuals();
+	UStaticMeshComponent* FindPrimaryVisualMeshComponent() const;
+	void CleanupActiveDestructionGCs();
+	static void RegisterDestroyedStructureAndEnforceCap(AIFStructure* NewlyDestroyed);
+	static void UnregisterDestroyedStructure(const AIFStructure* Structure);
 
 	UPROPERTY(Transient)
-	TObjectPtr<UGeometryCollectionComponent> ActiveDestructionGC;
+	TArray<TObjectPtr<UGeometryCollectionComponent>> ActiveDestructionGCs;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UBoxComponent>> ExtraCollisionBoxes;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> SelectionOutlineMID;
@@ -228,8 +269,10 @@ private:
 	TWeakObjectPtr<UMaterialInterface> LastSelectionOutlineSourceMat;
 
 	TWeakObjectPtr<AIFTerritory> OwningTerritory;
+	TWeakObjectPtr<AIFStructure> HostStructure;
 	TWeakObjectPtr<AActor> LastDamageInstigator;
 	TSharedPtr<FStreamableHandle> StructureAssetsLoadHandle;
+	FTimerHandle HostCollapseTimerHandle;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Structure|State", meta = (AllowPrivateAccess = "true"))
 	EIFStructureState StructureState = EIFStructureState::Active;

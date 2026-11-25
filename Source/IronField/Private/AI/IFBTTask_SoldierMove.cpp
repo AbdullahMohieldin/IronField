@@ -67,7 +67,7 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 		MoveReq.SetProjectGoalLocation(true);
 	}
 
-	MoveReq.SetAcceptanceRadius(AcceptanceRadius);
+	MoveReq.SetAcceptanceRadius(IsValid(Cast<AIFStructure>(GoalActor)) ? 20.f : AcceptanceRadius);
 	MoveReq.SetUsePathfinding(true);
 	MoveReq.SetAllowPartialPath(true);
 	MoveReq.SetCanStrafe(false);

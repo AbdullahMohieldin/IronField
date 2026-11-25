@@ -21,10 +21,8 @@ public:
 
 	void ApplyMatchResult(EIFGameResult NewResult);
 
-	// --- Typed Territory Registry (Zero stringly-typed lookups) -------------
 	void RegisterTerritory(AIFTerritory* Territory);
 	void UnregisterTerritory(AIFTerritory* Territory);
-	void GetTerritories(TArray<AIFTerritory*>& OutTerritories) const;
 	AIFTerritory* FindTerritoryAtLocation(const FVector& WorldLocation) const;
 	AIFTerritory* FindTerritoryContainingBox(const FVector& WorldCenter, const FVector2D& HalfExtents, float YawDegrees) const;
 

@@ -47,3 +47,14 @@ Config/*UserSettings.ini
 # Third-party Fab/Paragon packs (migrated locally)
 Content/Paragon*/
 
+
+# Heavy third-party castle assets (kept local)
+Content/ModularFantasyCastle/
+Content/IronField_Merged/
+
+# Heavy local 3D packs, static meshes & Chaos GCs
+Content/MedievalAssets/
+Content/IronField/Assets/
+Content/IronField/Structures/Destruction/GC_*.uasset
+Content/IronField/Structures/Destruction/Helpers/
+

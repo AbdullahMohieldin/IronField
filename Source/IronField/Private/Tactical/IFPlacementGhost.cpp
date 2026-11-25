@@ -1,11 +1,11 @@
 #include "Tactical/IFPlacementGhost.h"
 
+#include "Castle/IFBuildingComponent.h"
 #include "Castle/IFStructureDataAsset.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
-#include "Tactical/IFTacticalCommandComponent.h"
 
 AIFPlacementGhost::AIFPlacementGhost()
 {
@@ -26,15 +26,28 @@ AIFPlacementGhost::AIFPlacementGhost()
 	FootprintPreviewMesh->SetGenerateOverlapEvents(false);
 	FootprintPreviewMesh->SetCanEverAffectNavigation(false);
 	FootprintPreviewMesh->SetCastShadow(false);
+	FootprintPreviewMesh->bDisallowNanite = true;
 	FootprintPreviewMesh->bReceivesDecals = false;
 	FootprintPreviewMesh->SetVisibility(false);
+
+	SecondaryPreviewMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SecondaryPreviewMesh"));
+	SecondaryPreviewMesh->SetupAttachment(GhostRoot);
+	SecondaryPreviewMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SecondaryPreviewMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	SecondaryPreviewMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	SecondaryPreviewMesh->SetGenerateOverlapEvents(false);
+	SecondaryPreviewMesh->SetCanEverAffectNavigation(false);
+	SecondaryPreviewMesh->SetCastShadow(false);
+	SecondaryPreviewMesh->bDisallowNanite = true;
+	SecondaryPreviewMesh->bReceivesDecals = false;
+	SecondaryPreviewMesh->SetVisibility(false);
 
 	SetActorHiddenInGame(true);
 }
 
-void AIFPlacementGhost::SetOwningTacticalComponent(UIFTacticalCommandComponent* InOwnerComponent)
+void AIFPlacementGhost::SetOwningBuildingComponent(UIFBuildingComponent* InOwnerComponent)
 {
-	OwningTacticalComponent = InOwnerComponent;
+	OwningBuildingComponent = InOwnerComponent;
 }
 
 void AIFPlacementGhost::BeginPreview(
@@ -53,18 +66,82 @@ void AIFPlacementGhost::BeginPreview(
 
 	if (IsValid(FootprintPreviewMesh))
 	{
-		if (IsValid(InPreviewMesh))
+		if (!IsValid(DefaultCubeMesh))
 		{
-			FootprintPreviewMesh->SetStaticMesh(InPreviewMesh);
+			if (IsValid(InPreviewMesh))
+			{
+				DefaultCubeMesh = InPreviewMesh;
+			}
+			else if (IsValid(FootprintPreviewMesh->GetStaticMesh()))
+			{
+				DefaultCubeMesh = FootprintPreviewMesh->GetStaticMesh();
+			}
 		}
-		// Standard 100cm BasicShape Cube scaled to match exact structure FootprintExtent.
-		const FVector MeshScale(
-			FMath::Max(0.1f, (CurrentFootprintExtent.X * 2.f) / 100.f),
-			FMath::Max(0.1f, (CurrentFootprintExtent.Y * 2.f) / 100.f),
-			FMath::Max(0.1f, (CurrentFootprintExtent.Z * 2.f) / 100.f));
-		FootprintPreviewMesh->SetRelativeScale3D(MeshScale);
-		FootprintPreviewMesh->SetRelativeLocation(FVector(0.f, 0.f, CurrentFootprintExtent.Z));
+
+		UStaticMesh* CustomPreviewMesh = nullptr;
+		if (IsValid(InStructureData) && !InStructureData->PreviewMesh.IsNull())
+		{
+			CustomPreviewMesh = InStructureData->PreviewMesh.Get();
+			if (!IsValid(CustomPreviewMesh))
+			{
+				CustomPreviewMesh = InStructureData->PreviewMesh.LoadSynchronous();
+			}
+		}
+
+		if (IsValid(CustomPreviewMesh))
+		{
+			FootprintPreviewMesh->SetStaticMesh(CustomPreviewMesh);
+			FootprintPreviewMesh->SetRelativeTransform(InStructureData->PreviewMeshRelativeTransform);
+		}
+		else
+		{
+			if (IsValid(DefaultCubeMesh))
+			{
+				FootprintPreviewMesh->SetStaticMesh(DefaultCubeMesh);
+			}
+
+			// Standard 100cm BasicShape Cube scaled to match exact structure FootprintExtent.
+			const FVector MeshScale(
+				FMath::Max(0.1f, (CurrentFootprintExtent.X * 2.f) / 100.f),
+				FMath::Max(0.1f, (CurrentFootprintExtent.Y * 2.f) / 100.f),
+				FMath::Max(0.1f, (CurrentFootprintExtent.Z * 2.f) / 100.f));
+			FootprintPreviewMesh->SetRelativeTransform(
+				FTransform(FRotator::ZeroRotator, FVector(0.f, 0.f, CurrentFootprintExtent.Z), MeshScale));
+		}
+
+		FootprintPreviewMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		FootprintPreviewMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+		FootprintPreviewMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+		FootprintPreviewMesh->SetCanEverAffectNavigation(false);
 		FootprintPreviewMesh->SetVisibility(true);
+
+		if (IsValid(SecondaryPreviewMesh))
+		{
+			if (IsValid(InStructureData)
+				&& InStructureData->PlacementRule == EIFPlacementRule::GateOpeningOnly
+				&& IsValid(CustomPreviewMesh))
+			{
+				FTransform MirroredTransform = InStructureData->PreviewMeshRelativeTransform;
+				FVector MirroredLoc = MirroredTransform.GetLocation();
+				MirroredLoc.X = -MirroredLoc.X;
+				FVector MirroredScale = MirroredTransform.GetScale3D();
+				MirroredScale.X = -MirroredScale.X;
+				MirroredTransform.SetLocation(MirroredLoc);
+				MirroredTransform.SetScale3D(MirroredScale);
+
+				SecondaryPreviewMesh->SetStaticMesh(CustomPreviewMesh);
+				SecondaryPreviewMesh->SetRelativeTransform(MirroredTransform);
+				SecondaryPreviewMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				SecondaryPreviewMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+				SecondaryPreviewMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+				SecondaryPreviewMesh->SetCanEverAffectNavigation(false);
+				SecondaryPreviewMesh->SetVisibility(true);
+			}
+			else
+			{
+				SecondaryPreviewMesh->SetVisibility(false);
+			}
+		}
 	}
 
 	bPreviewActive = true;
@@ -83,6 +160,10 @@ void AIFPlacementGhost::EndPreview()
 	{
 		FootprintPreviewMesh->SetVisibility(false);
 	}
+	if (IsValid(SecondaryPreviewMesh))
+	{
+		SecondaryPreviewMesh->SetVisibility(false);
+	}
 }
 
 void AIFPlacementGhost::UpdatePreviewTransformAndValidity(const FVector& WorldLocation, float YawDegrees, bool bIsValidPlacement)
@@ -94,12 +175,21 @@ void AIFPlacementGhost::UpdatePreviewTransformAndValidity(const FVector& WorldLo
 		bHasAppliedMaterial = true;
 		bLastValidityState = bIsValidPlacement;
 
-		if (IsValid(FootprintPreviewMesh))
+		UMaterialInterface* const Mat = bIsValidPlacement ? ValidMaterial.Get() : InvalidMaterial.Get();
+		if (IsValid(Mat) && IsValid(FootprintPreviewMesh))
 		{
-			UMaterialInterface* const Mat = bIsValidPlacement ? ValidMaterial.Get() : InvalidMaterial.Get();
-			if (IsValid(Mat))
+			const int32 NumMats = FMath::Max(1, FootprintPreviewMesh->GetNumMaterials());
+			for (int32 MatIdx = 0; MatIdx < NumMats; ++MatIdx)
 			{
-				FootprintPreviewMesh->SetMaterial(0, Mat);
+				FootprintPreviewMesh->SetMaterial(MatIdx, Mat);
+			}
+		}
+		if (IsValid(Mat) && IsValid(SecondaryPreviewMesh) && SecondaryPreviewMesh->IsVisible())
+		{
+			const int32 NumMats = FMath::Max(1, SecondaryPreviewMesh->GetNumMaterials());
+			for (int32 MatIdx = 0; MatIdx < NumMats; ++MatIdx)
+			{
+				SecondaryPreviewMesh->SetMaterial(MatIdx, Mat);
 			}
 		}
 	}
@@ -115,9 +205,9 @@ void AIFPlacementGhost::Tick(float DeltaSeconds)
 		return;
 	}
 
-	if (UIFTacticalCommandComponent* const Tactical = OwningTacticalComponent.Get())
+	if (UIFBuildingComponent* const Building = OwningBuildingComponent.Get())
 	{
-		Tactical->UpdateBuildPlacementPreview();
+		Building->UpdatePlacementPreview();
 	}
 	else
 	{

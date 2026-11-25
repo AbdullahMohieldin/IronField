@@ -1,26 +1,34 @@
 #include "Core/IFPlayerController.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Castle/IFBuildingComponent.h"
+#include "Character/IFBaseCharacter.h"
 #include "Character/IFPlayerCharacter.h"
-#include "Core/IFGameInstance.h"
+#include "Core/IFGameState.h"
+#include "Core/IFInteractable.h"
 #include "Core/IFLog.h"
-#include "Engine/AssetManager.h"
-#include "Engine/StreamableManager.h"
 #include "EnhancedInputComponent.h"
 #include "InputAction.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Tactical/IFTacticalCommandComponent.h"
+#include "UI/IFTacticalHUDWidget.h"
 #include "UI/IFVitalBarsWidget.h"
 
 AIFPlayerController::AIFPlayerController()
 {
 	TacticalCommandComponent = CreateDefaultSubobject<UIFTacticalCommandComponent>(TEXT("TacticalCommand"));
+	BuildingSystem = CreateDefaultSubobject<UIFBuildingComponent>(TEXT("BuildingSystem"));
 }
 
 void AIFPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (!IsLocalController())
+	{
+		return;
+	}
 
 	ApplyGameplayInputMode();
 
@@ -29,63 +37,34 @@ void AIFPlayerController::BeginPlay()
 		EnsurePlayerHUDCreatedAndBound(CurrentPawn);
 	}
 
-	FStreamableManager& Streamable = UAssetManager::GetStreamableManager();
-
-	if (!HUDWidgetClass.IsNull())
+	if (const UWorld* const World = GetWorld())
 	{
-		HUDLoadHandle = Streamable.RequestAsyncLoad(HUDWidgetClass.ToSoftObjectPath(), FStreamableDelegate::CreateUObject(this, &AIFPlayerController::HandleHUDClassLoaded));
-	}
-
-	TArray<FSoftObjectPath> MenuWidgetPaths;
-	if (!PauseMenuWidgetClass.IsNull())
-	{
-		MenuWidgetPaths.Add(PauseMenuWidgetClass.ToSoftObjectPath());
-	}
-	if (!GameOverScreenWidgetClass.IsNull())
-	{
-		MenuWidgetPaths.Add(GameOverScreenWidgetClass.ToSoftObjectPath());
-	}
-	if (MenuWidgetPaths.Num() > 0)
-	{
-		MenuWidgetsLoadHandle = Streamable.RequestAsyncLoad(MenuWidgetPaths, FStreamableDelegate::CreateUObject(this, &AIFPlayerController::HandleMenuWidgetsPreloaded));
-	}
-
-	if (!PauseInputAction.IsNull() && !IsValid(PauseInputAction.Get()))
-	{
-		PauseActionLoadHandle = Streamable.RequestAsyncLoad(PauseInputAction.ToSoftObjectPath(),
-			FStreamableDelegate::CreateUObject(this, &AIFPlayerController::HandlePauseActionLoaded));
+		if (AIFGameState* const GameState = World->GetGameState<AIFGameState>(); IsValid(GameState))
+		{
+			ObservedGameState = GameState;
+			GameState->OnGameResultChanged.AddUniqueDynamic(this, &AIFPlayerController::HandleMatchResultChanged);
+			if (GameState->GetMatchResult() != EIFGameResult::None)
+			{
+				HandleMatchResultChanged(GameState->GetMatchResult());
+			}
+		}
 	}
 }
 
 void AIFPlayerController::EndPlay(const EEndPlayReason::Type Reason)
 {
-	if (HUDLoadHandle.IsValid())
+	if (AIFGameState* const GameState = ObservedGameState.Get(); IsValid(GameState))
 	{
-		HUDLoadHandle->CancelHandle();
-		HUDLoadHandle.Reset();
+		GameState->OnGameResultChanged.RemoveDynamic(this, &AIFPlayerController::HandleMatchResultChanged);
 	}
-	if (MenuWidgetsLoadHandle.IsValid())
-	{
-		MenuWidgetsLoadHandle->CancelHandle();
-		MenuWidgetsLoadHandle.Reset();
-	}
-	if (PauseActionLoadHandle.IsValid())
-	{
-		PauseActionLoadHandle->CancelHandle();
-		PauseActionLoadHandle.Reset();
-	}
+	ObservedGameState.Reset();
+	NearbyInteractables.Reset();
 
 	if (IsValid(PlayerHUDWidget))
 	{
 		PlayerHUDWidget->UnbindVitalComponents();
 		PlayerHUDWidget->RemoveFromParent();
 		PlayerHUDWidget = nullptr;
-	}
-
-	if (IsValid(HUDWidget))
-	{
-		HUDWidget->RemoveFromParent();
-		HUDWidget = nullptr;
 	}
 
 	ClosePauseMenu();
@@ -103,6 +82,26 @@ void AIFPlayerController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 	EnsurePlayerHUDCreatedAndBound(InPawn);
+}
+
+void AIFPlayerController::OnUnPossess()
+{
+	Super::OnUnPossess();
+
+	if (IsValid(PlayerHUDWidget))
+	{
+		PlayerHUDWidget->UnbindVitalComponents();
+	}
+
+	NearbyInteractables.Reset();
+
+	if (IsValid(TacticalCommandComponent))
+	{
+		if (UIFTacticalHUDWidget* const HUD = TacticalCommandComponent->GetTacticalHUDWidget())
+		{
+			HUD->SetInteractionPrompt(FText::GetEmpty());
+		}
+	}
 }
 
 void AIFPlayerController::EnsurePlayerHUDCreatedAndBound(APawn* InPawn)
@@ -139,62 +138,23 @@ void AIFPlayerController::SetupInputComponent()
 		return;
 	}
 
-	// P must also fire while paused so the same key resumes; Escape is reserved by PIE.
 	InputComponent->SetTickableWhenPaused(true);
 
-	// Raw keys are the fallback until IA_Pause is assigned; binding both would double-toggle.
-	if (PauseInputAction.IsNull())
+	if (!IsValid(PauseInputAction))
 	{
-		InputComponent->BindKey(EKeys::P, IE_Pressed, this, &AIFPlayerController::TogglePause);
-		InputComponent->BindKey(EKeys::Gamepad_Special_Right, IE_Pressed, this, &AIFPlayerController::TogglePause);
+		UE_LOG(LogIronField, Warning, TEXT("[IF-Input] PauseInputAction is not assigned on %s."), *GetName());
+	}
+	else if (UEnhancedInputComponent* const EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent))
+	{
+		EnhancedInput->BindAction(PauseInputAction, ETriggerEvent::Started, this, &AIFPlayerController::TogglePause);
 	}
 
-	BindPauseAction();
+	InputComponent->BindKey(EKeys::E, IE_Pressed, this, &AIFPlayerController::HandleInteractKeyPressed);
 
 	if (IsValid(TacticalCommandComponent))
 	{
 		TacticalCommandComponent->SetupControllerInput(InputComponent);
 	}
-}
-
-void AIFPlayerController::HandleHUDClassLoaded()
-{
-	HUDLoadHandle.Reset();
-
-	UClass* const WidgetClass = HUDWidgetClass.Get();
-	if (!IsValid(WidgetClass))
-	{
-		return;
-	}
-
-	HUDWidget = CreateWidget<UUserWidget>(this, WidgetClass);
-	if (IsValid(HUDWidget))
-	{
-		HUDWidget->AddToViewport();
-	}
-}
-
-void AIFPlayerController::HandleMenuWidgetsPreloaded()
-{
-	MenuWidgetsLoadHandle.Reset();
-}
-
-void AIFPlayerController::HandlePauseActionLoaded()
-{
-	PauseActionLoadHandle.Reset();
-	BindPauseAction();
-}
-
-void AIFPlayerController::BindPauseAction()
-{
-	UInputAction* const Action = PauseInputAction.Get();
-	UEnhancedInputComponent* const EnhancedInput = Cast<UEnhancedInputComponent>(InputComponent);
-	if (!IsValid(Action) || !IsValid(EnhancedInput))
-	{
-		return;
-	}
-
-	EnhancedInput->BindAction(Action, ETriggerEvent::Started, this, &AIFPlayerController::TogglePause);
 }
 
 void AIFPlayerController::TogglePause()
@@ -209,7 +169,9 @@ void AIFPlayerController::TogglePause()
 
 void AIFPlayerController::DebugTogglePause()
 {
+#if !UE_BUILD_SHIPPING
 	TogglePause();
+#endif
 }
 
 void AIFPlayerController::SetMatchPaused(bool bPaused)
@@ -224,7 +186,6 @@ void AIFPlayerController::SetMatchPaused(bool bPaused)
 		TacticalCommandComponent->HandleMatchPausedChanged(bPaused);
 	}
 
-	// Pause state and input mode never depend on widget availability; the menu is optional.
 	if (bPaused)
 	{
 		ShowPauseMenu();
@@ -248,22 +209,12 @@ void AIFPlayerController::SetMatchPaused(bool bPaused)
 
 void AIFPlayerController::ShowPauseMenu()
 {
-	if (IsValid(PauseMenuWidget))
+	if (!IsLocalController() || IsValid(PauseMenuWidget) || !PauseMenuWidgetClass)
 	{
 		return;
 	}
 
-	UClass* WidgetClass = PauseMenuWidgetClass.Get();
-	if (!IsValid(WidgetClass))
-	{
-		WidgetClass = PauseMenuWidgetClass.LoadSynchronous();
-	}
-	if (!IsValid(WidgetClass))
-	{
-		return;
-	}
-
-	PauseMenuWidget = CreateWidget<UUserWidget>(this, WidgetClass);
+	PauseMenuWidget = CreateWidget<UUserWidget>(this, PauseMenuWidgetClass);
 	if (IsValid(PauseMenuWidget))
 	{
 		PauseMenuWidget->AddToViewport();
@@ -279,9 +230,17 @@ void AIFPlayerController::ClosePauseMenu()
 	}
 }
 
+void AIFPlayerController::HandleMatchResultChanged(EIFGameResult NewResult)
+{
+	if (NewResult != EIFGameResult::None)
+	{
+		ShowGameOverScreen(NewResult);
+	}
+}
+
 void AIFPlayerController::ShowGameOverScreen(EIFGameResult Result)
 {
-	if (bIsGameOver)
+	if (!IsLocalController() || bIsGameOver)
 	{
 		return;
 	}
@@ -295,14 +254,9 @@ void AIFPlayerController::ShowGameOverScreen(EIFGameResult Result)
 	ApplyUIInputMode();
 	UGameplayStatics::SetGamePaused(this, true);
 
-	UClass* WidgetClass = GameOverScreenWidgetClass.Get();
-	if (!IsValid(WidgetClass))
+	if (GameOverScreenWidgetClass)
 	{
-		WidgetClass = GameOverScreenWidgetClass.LoadSynchronous();
-	}
-	if (IsValid(WidgetClass))
-	{
-		GameOverScreenWidget = CreateWidget<UUserWidget>(this, WidgetClass);
+		GameOverScreenWidget = CreateWidget<UUserWidget>(this, GameOverScreenWidgetClass);
 		if (IsValid(GameOverScreenWidget))
 		{
 			GameOverScreenWidget->AddToViewport();
@@ -322,11 +276,6 @@ void AIFPlayerController::RestartMatch()
 	UGameplayStatics::SetGamePaused(this, false);
 	const FName LevelName = FName(*UGameplayStatics::GetCurrentLevelName(this, true));
 	UGameplayStatics::OpenLevel(this, LevelName);
-}
-
-void AIFPlayerController::ReturnToMainMenu()
-{
-	RestartMatch();
 }
 
 void AIFPlayerController::ApplyGameplayInputMode(bool bFlushKeys)
@@ -351,8 +300,7 @@ void AIFPlayerController::ApplyTacticalInputMode()
 
 void AIFPlayerController::ApplyPauseInputMode()
 {
-	// GameAndUI keeps player input alive so IA_Pause can resume; UIOnly sets IgnoreInput
-	// and would swallow the unpause press along with every other key.
+	// GameAndUI keeps player input alive so IA_Pause can resume; UIOnly would swallow it.
 	FInputModeGameAndUI InputMode;
 	InputMode.SetHideCursorDuringCapture(false);
 	SetInputMode(InputMode);
@@ -369,4 +317,130 @@ void AIFPlayerController::ApplyUIInputMode()
 bool AIFPlayerController::IsGameOverActive() const
 {
 	return bIsGameOver;
+}
+
+void AIFPlayerController::RegisterNearbyInteractable(AActor* Interactable)
+{
+	if (!IsValid(Interactable) || !Interactable->Implements<UIFInteractable>())
+	{
+		return;
+	}
+
+	NearbyInteractables.AddUnique(Interactable);
+	RefreshInteractionPrompt();
+}
+
+void AIFPlayerController::UnregisterNearbyInteractable(AActor* Interactable)
+{
+	NearbyInteractables.RemoveAll([Interactable](const TWeakObjectPtr<AActor>& Ptr)
+	{
+		return !Ptr.IsValid() || Ptr.Get() == Interactable;
+	});
+	RefreshInteractionPrompt();
+}
+
+AActor* AIFPlayerController::GetNearestInteractable() const
+{
+	APawn* const ControlledPawn = GetPawn();
+	if (!IsValid(ControlledPawn))
+	{
+		return nullptr;
+	}
+
+	if (const AIFBaseCharacter* const BaseChar = Cast<AIFBaseCharacter>(ControlledPawn); IsValid(BaseChar) && BaseChar->IsDead())
+	{
+		return nullptr;
+	}
+
+	const FVector PawnLoc = ControlledPawn->GetActorLocation();
+	float BestDistSq = MAX_flt;
+	AActor* BestInteractable = nullptr;
+
+	for (const TWeakObjectPtr<AActor>& Ptr : NearbyInteractables)
+	{
+		AActor* const Actor = Ptr.Get();
+		if (!IsValid(Actor))
+		{
+			continue;
+		}
+		const IIFInteractable* const Interactable = Cast<IIFInteractable>(Actor);
+		if (Interactable == nullptr || !Interactable->CanInteract(ControlledPawn))
+		{
+			continue;
+		}
+
+		const float DistSq = FVector::DistSquared(PawnLoc, Actor->GetActorLocation());
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			BestInteractable = Actor;
+		}
+	}
+
+	if (!IsValid(BestInteractable))
+	{
+		TArray<AActor*> OverlappingActors;
+		ControlledPawn->GetOverlappingActors(OverlappingActors);
+		for (AActor* const Actor : OverlappingActors)
+		{
+			if (!IsValid(Actor))
+			{
+				continue;
+			}
+			const IIFInteractable* const Interactable = Cast<IIFInteractable>(Actor);
+			if (Interactable == nullptr || !Interactable->CanInteract(ControlledPawn))
+			{
+				continue;
+			}
+
+			const float DistSq = FVector::DistSquared(PawnLoc, Actor->GetActorLocation());
+			if (DistSq < BestDistSq)
+			{
+				BestDistSq = DistSq;
+				BestInteractable = Actor;
+			}
+		}
+	}
+
+	return BestInteractable;
+}
+
+void AIFPlayerController::RefreshInteractionPrompt()
+{
+	NearbyInteractables.RemoveAll([](const TWeakObjectPtr<AActor>& Ptr)
+	{
+		return !Ptr.IsValid();
+	});
+
+	AActor* const Nearest = GetNearestInteractable();
+	APawn* const ControlledPawn = GetPawn();
+	const FText PromptText = (IsValid(Nearest) && IsValid(ControlledPawn))
+		? Cast<IIFInteractable>(Nearest)->GetInteractPromptText(ControlledPawn)
+		: FText::GetEmpty();
+
+	if (IsValid(TacticalCommandComponent))
+	{
+		if (UIFTacticalHUDWidget* const HUD = TacticalCommandComponent->GetTacticalHUDWidget())
+		{
+			HUD->SetInteractionPrompt(PromptText);
+		}
+	}
+}
+
+void AIFPlayerController::HandleInteractKeyPressed()
+{
+	if (bIsGameOver || UGameplayStatics::IsGamePaused(this))
+	{
+		return;
+	}
+	if (IsValid(TacticalCommandComponent) && TacticalCommandComponent->IsTacticalModeActive())
+	{
+		return;
+	}
+
+	if (AActor* const Nearest = GetNearestInteractable())
+	{
+		Cast<IIFInteractable>(Nearest)->Interact(GetPawn());
+		RefreshInteractionPrompt();
+	}
 }
