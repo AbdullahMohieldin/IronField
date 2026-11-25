@@ -30,7 +30,6 @@ struct FIFMeleeAttackStep
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Hit")
 	FName HitStartSocket = NAME_None;
 
-	// Optional blade tip: when set and distinct, the sweep samples the full blade length.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Hit")
 	FName HitEndSocket = NAME_None;
 
@@ -40,7 +39,6 @@ struct FIFMeleeAttackStep
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Hit", meta = (ClampMin = "1", ClampMax = "16"))
 	int32 TraceSampleCount = 4;
 
-	// Opens the combo window by normalized montage time when no ComboWindow notify is authored.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Combo", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float FallbackComboWindowStartNormalized = 0.55f;
 
@@ -92,6 +90,12 @@ struct FIFShieldBlockConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Block", meta = (ClampMin = "0.0"))
 	float MinBlockEntryStamina = 5.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Block", meta = (ClampMin = "0.1"))
+	float FallbackGuardBreakDurationSeconds = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Block")
+	FVector BlockVFXOffset = FVector(55.f, 0.f, 35.f);
 };
 
 USTRUCT(BlueprintType)
@@ -137,6 +141,24 @@ struct FIFLeapSlamConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
 	TSoftObjectPtr<USoundBase> HitSound;
+
+	FIFMeleeAttackStep ToAttackStep() const
+	{
+		FIFMeleeAttackStep Step;
+		Step.Montage = Montage;
+		Step.Damage = Damage;
+		Step.StaminaCost = StaminaCost;
+		Step.bCausesHeavyStagger = bCausesHeavyStagger;
+		Step.HitRadius = LeapSlamTraceRadius;
+		Step.HitStartSocket = HitStartSocket;
+		Step.HitEndSocket = HitEndSocket;
+		Step.TraceSampleCount = TraceSampleCount;
+		Step.HitVFX = HitVFX;
+		Step.HitCascadeVFX = HitCascadeVFX;
+		Step.HitstopSeconds = HitstopSeconds;
+		Step.HitSound = HitSound;
+		return Step;
+	}
 };
 
 USTRUCT(BlueprintType)
@@ -163,15 +185,12 @@ class IRONFIELD_API UIFCombatDataAsset : public UDataAsset
 	GENERATED_BODY()
 
 public:
-	// Array length is the combo length; any pack works without C++ changes.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat", meta = (TitleProperty = "Montage"))
 	TArray<FIFMeleeAttackStep> ComboSteps;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat", meta = (ClampMin = "0.0"))
 	float ComboResetSeconds = 0.8f;
 
-	// Indexed by completed chain count: [0] = chance of a 2nd swing after the 1st,
-	// [1] = 3rd after 2nd, and so on. Empty disables AI combo chaining.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|AI")
 	TArray<float> AIComboContinuationChances;
 
@@ -190,7 +209,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact", meta = (ClampMin = "0.0"))
 	float AdditiveFlinchCooldownSeconds = 0.25f;
 
-	// False grants attack poise: hits still deal damage but never interrupt the swing.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|HitReact")
 	bool bAllowHitReactDuringAttack = true;
 

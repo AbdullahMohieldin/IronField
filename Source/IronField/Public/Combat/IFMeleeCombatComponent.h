@@ -39,9 +39,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat")
 	bool TryStartAttack();
 
-	// AI-only entry points; player input goes through TryStartAttack and the buffer.
-	bool TryStartAIAttack();
-	bool TryContinueAICombo(int32 CompletedChainIndex);
 	float GetAIComboBreatherSeconds() const;
 
 	void EnsureAIComboPlan();
@@ -90,10 +87,7 @@ protected:
 	virtual const FIFMeleeAttackStep* GetCurrentStep() const;
 	UAnimMontage* GetCurrentMontage() const { return CurrentMontage; }
 
-	// Player subclass snaps aim and arms the combo window here; enemies need neither.
 	virtual void HandleStepStarted() {}
-
-	// Last-chance buffer consumption at natural montage end; base has no buffer.
 	virtual bool TryBufferedAdvance() { return false; }
 
 	virtual void HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
@@ -126,8 +120,6 @@ private:
 	void TriggerAdditiveFlinch(AActor* DamageCauser, AController* EventInstigator);
 
 	TSharedPtr<FStreamableHandle> DataLoadHandle;
-
-	// Owns residency for soft-referenced combat assets until EndPlay.
 	TSharedPtr<FStreamableHandle> StepAssetsLoadHandle;
 
 	bool bCombatReady = false;

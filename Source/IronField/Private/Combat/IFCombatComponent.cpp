@@ -102,22 +102,16 @@ UAnimMontage* UIFCombatComponent::ResolveDirectionalHitReactMontage(AActor* Dama
 		Attacker = EventInstigator->GetPawn();
 	}
 
-	FVector OwnerForward2D = OwnerCharacter->GetActorForwardVector();
-	OwnerForward2D.Z = 0.f;
-	OwnerForward2D.Normalize();
-
-	FVector OwnerRight2D = OwnerCharacter->GetActorRightVector();
-	OwnerRight2D.Z = 0.f;
-	OwnerRight2D.Normalize();
+	const FVector OwnerForward2D = OwnerCharacter->GetActorForwardVector().GetSafeNormal2D();
+	const FVector OwnerRight2D = OwnerCharacter->GetActorRightVector().GetSafeNormal2D();
 
 	FVector ToAttacker2D = OwnerForward2D;
 	if (IsValid(Attacker) && Attacker != OwnerCharacter.Get())
 	{
-		ToAttacker2D = Attacker->GetActorLocation() - OwnerCharacter->GetActorLocation();
-		ToAttacker2D.Z = 0.f;
-		if (!ToAttacker2D.Normalize())
+		const FVector Candidate = (Attacker->GetActorLocation() - OwnerCharacter->GetActorLocation()).GetSafeNormal2D();
+		if (!Candidate.IsNearlyZero())
 		{
-			ToAttacker2D = OwnerForward2D;
+			ToAttacker2D = Candidate;
 		}
 	}
 

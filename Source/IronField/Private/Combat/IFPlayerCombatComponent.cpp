@@ -73,26 +73,26 @@ void UIFPlayerCombatComponent::StartBlock()
 	const AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
 	if (!IsValid(Player) || Player->IsDead() || !IsIdle())
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] StartBlock ignored (state=%d)."), static_cast<int32>(GetCombatState()));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] StartBlock ignored (state=%d)."), static_cast<int32>(GetCombatState()));
 		return;
 	}
 
 	if (!IsValid(LoadedCombatData))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] StartBlock ignored: combat data not loaded."));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] StartBlock ignored: combat data not loaded."));
 		return;
 	}
 
 	if (IsValid(Stamina) && !Stamina->HasStamina(LoadedCombatData->ShieldBlock.MinBlockEntryStamina))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] StartBlock ignored: below minimum block entry stamina."));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] StartBlock ignored: below minimum block entry stamina."));
 		return;
 	}
 
 	bAttackBuffered = false;
 	CurrentStepIndex = INDEX_NONE;
 	SetCombatState(EIFCombatState::Blocking);
-	UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Block started."));
+	UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] Block started."));
 }
 
 void UIFPlayerCombatComponent::StopBlock()
@@ -102,7 +102,7 @@ void UIFPlayerCombatComponent::StopBlock()
 	if (GetCombatState() == EIFCombatState::Blocking)
 	{
 		SetCombatState(EIFCombatState::Idle);
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Block stopped."));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] Block stopped."));
 	}
 }
 
@@ -138,18 +138,15 @@ bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor
 		Attacker = EventInstigator->GetPawn();
 	}
 
-	FVector OwnerForward2D = Player->GetActorForwardVector();
-	OwnerForward2D.Z = 0.f;
-	OwnerForward2D.Normalize();
+	const FVector OwnerForward2D = Player->GetActorForwardVector().GetSafeNormal2D();
 
 	FVector ToAttacker2D = OwnerForward2D;
 	if (IsValid(Attacker) && Attacker != Player)
 	{
-		ToAttacker2D = Attacker->GetActorLocation() - Player->GetActorLocation();
-		ToAttacker2D.Z = 0.f;
-		if (!ToAttacker2D.Normalize())
+		const FVector Candidate = (Attacker->GetActorLocation() - Player->GetActorLocation()).GetSafeNormal2D();
+		if (!Candidate.IsNearlyZero())
 		{
-			ToAttacker2D = OwnerForward2D;
+			ToAttacker2D = Candidate;
 		}
 	}
 
@@ -166,7 +163,9 @@ bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor
 	{
 		if (UWorld* const World = GetWorld())
 		{
-			const FVector BlockLocation = Player->GetActorLocation() + ToAttacker2D * 55.f + FVector(0.f, 0.f, 35.f);
+			const FVector BlockLocation = Player->GetActorLocation()
+				+ ToAttacker2D * BlockConfig.BlockVFXOffset.X
+				+ FVector(0.f, 0.f, BlockConfig.BlockVFXOffset.Z);
 			UGameplayStatics::SpawnEmitterAtLocation(World, BlockVFX, BlockLocation, ToAttacker2D.Rotation(), true);
 		}
 	}
@@ -187,7 +186,6 @@ bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor
 		return true;
 	}
 
-	// Guard break
 	if (IsValid(Stamina))
 	{
 		Stamina->TryConsumeStamina(CurrentStaminaVal);
@@ -218,7 +216,7 @@ void UIFPlayerCombatComponent::TriggerGuardBreak()
 
 	if (Duration <= 0.f)
 	{
-		Duration = 2.0f;
+		Duration = IsValid(LoadedCombatData) ? LoadedCombatData->ShieldBlock.FallbackGuardBreakDurationSeconds : 2.0f;
 	}
 
 	if (UWorld* const World = GetWorld())
@@ -252,20 +250,20 @@ bool UIFPlayerCombatComponent::RequestLeapSlam()
 	AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
 	if (!IsValid(Player) || Player->IsDead() || IsStunned() || IsInHitReact())
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: owner invalid, dead, stunned, or in hit react."));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored: owner invalid, dead, stunned, or in hit react."));
 		return false;
 	}
 
 	const EIFCombatState CurrentState = GetCombatState();
 	if (CurrentState != EIFCombatState::Idle && CurrentState != EIFCombatState::Blocking)
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored (state=%d)."), static_cast<int32>(CurrentState));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored (state=%d)."), static_cast<int32>(CurrentState));
 		return false;
 	}
 
 	if (!IsValid(LoadedCombatData))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: combat data not loaded."));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored: combat data not loaded."));
 		return false;
 	}
 
@@ -273,20 +271,20 @@ bool UIFPlayerCombatComponent::RequestLeapSlam()
 	const UWorld* const World = GetWorld();
 	if (!IsValid(World) || World->GetTimeSeconds() < NextLeapSlamAllowedTime)
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: cooldown %.2fs remaining."), GetLeapSlamCooldownRemaining());
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored: cooldown %.2fs remaining."), GetLeapSlamCooldownRemaining());
 		return false;
 	}
 
 	if (IsValid(Stamina) && !Stamina->HasStamina(LeapSlamConfig.StaminaCost))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: stamina below cost %.0f."), LeapSlamConfig.StaminaCost);
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored: stamina below cost %.0f."), LeapSlamConfig.StaminaCost);
 		return false;
 	}
 
 	UAnimMontage* const LeapSlamMontage = LeapSlamConfig.Montage.Get();
 	if (!IsValid(LeapSlamMontage) || !IsValid(CachedAnimInstance))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam ignored: montage or anim instance missing."));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored: montage or anim instance missing."));
 		return false;
 	}
 
@@ -295,7 +293,7 @@ bool UIFPlayerCombatComponent::RequestLeapSlam()
 
 	if (!PlayAttackMontage(LeapSlamMontage))
 	{
-		UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam aborted: montage playback failed."));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam aborted: montage playback failed."));
 		return false;
 	}
 
@@ -325,18 +323,7 @@ bool UIFPlayerCombatComponent::RequestLeapSlam()
 	CurrentStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
 
-	LeapSlamAttackStep.Montage = LeapSlamConfig.Montage;
-	LeapSlamAttackStep.Damage = LeapSlamConfig.Damage;
-	LeapSlamAttackStep.StaminaCost = LeapSlamConfig.StaminaCost;
-	LeapSlamAttackStep.bCausesHeavyStagger = LeapSlamConfig.bCausesHeavyStagger;
-	LeapSlamAttackStep.HitRadius = LeapSlamConfig.LeapSlamTraceRadius;
-	LeapSlamAttackStep.HitStartSocket = LeapSlamConfig.HitStartSocket;
-	LeapSlamAttackStep.HitEndSocket = LeapSlamConfig.HitEndSocket;
-	LeapSlamAttackStep.TraceSampleCount = LeapSlamConfig.TraceSampleCount;
-	LeapSlamAttackStep.HitVFX = LeapSlamConfig.HitVFX;
-	LeapSlamAttackStep.HitCascadeVFX = LeapSlamConfig.HitCascadeVFX;
-	LeapSlamAttackStep.HitstopSeconds = LeapSlamConfig.HitstopSeconds;
-	LeapSlamAttackStep.HitSound = LeapSlamConfig.HitSound;
+	LeapSlamAttackStep = LeapSlamConfig.ToAttackStep();
 
 	bIsLeapSlamming = true;
 	SetCombatState(EIFCombatState::Attacking);
@@ -345,7 +332,7 @@ bool UIFPlayerCombatComponent::RequestLeapSlam()
 		return false;
 	}
 
-	UE_LOG(LogIronField, Log, TEXT("[IF-Combat] LeapSlam attack started."));
+	UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam attack started."));
 	return true;
 }
 
@@ -600,7 +587,7 @@ void UIFPlayerCombatComponent::TryResumeBlock()
 	CurrentStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
 	SetCombatState(EIFCombatState::Blocking);
-	UE_LOG(LogIronField, Log, TEXT("[IF-Combat] Block resumed."));
+	UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] Block resumed."));
 }
 
 void UIFPlayerCombatComponent::ClearComboWindowState()

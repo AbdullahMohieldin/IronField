@@ -15,9 +15,6 @@ enum class EIFCombatState : uint8
 	Dead
 };
 
-/**
- * Damage type tagging attacks heavy enough to interrupt active swings and trigger full-body hit reacts.
- */
 UCLASS()
 class IRONFIELD_API UIFHeavyMeleeDamageType : public UDamageType
 {

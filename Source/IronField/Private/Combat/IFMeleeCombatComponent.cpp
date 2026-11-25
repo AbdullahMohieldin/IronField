@@ -26,20 +26,19 @@ void UIFMeleeCombatComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	OwnerCharacter = Cast<AIFBaseCharacter>(GetOwner());
 	if (OwnerCharacter.IsValid())
 	{
-		if (USkeletalMeshComponent* const Mesh = OwnerCharacter->GetMesh())
-		{
-			CachedAnimInstance = Mesh->GetAnimInstance();
-		}
-		Stamina = GetOwner()->FindComponentByClass<UIFStaminaComponent>();
+		Stamina = OwnerCharacter->FindComponentByClass<UIFStaminaComponent>();
 	}
 
 	if (!CombatData.IsNull())
 	{
 		DataLoadHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(
 			CombatData.ToSoftObjectPath(), FStreamableDelegate::CreateUObject(this, &UIFMeleeCombatComponent::HandleCombatDataLoaded));
+	}
+	else
+	{
+		UE_LOG(LogIronField, Warning, TEXT("[IF-Combat] %s: CombatData is not assigned."), *GetNameSafe(GetOwner()));
 	}
 }
 
@@ -199,41 +198,6 @@ bool UIFMeleeCombatComponent::TryStartAttack()
 	}
 
 	return PlayStep(GetNextStepIndex());
-}
-
-bool UIFMeleeCombatComponent::TryStartAIAttack()
-{
-	if (!bCombatReady || !IsValid(LoadedCombatData) || LoadedCombatData->ComboSteps.IsEmpty())
-	{
-		return false;
-	}
-	if (!IsIdle())
-	{
-		return false;
-	}
-
-	const int32 StepIndex = LoadedCombatData->bRandomizeAIComboOpener
-		? FMath::RandRange(0, LoadedCombatData->ComboSteps.Num() - 1)
-		: GetNextStepIndex();
-	return PlayStep(StepIndex);
-}
-
-bool UIFMeleeCombatComponent::TryContinueAICombo(int32 CompletedChainIndex)
-{
-	if (!bCombatReady || !IsValid(LoadedCombatData) || !IsIdle() || LastFinishedStepIndex == INDEX_NONE)
-	{
-		return false;
-	}
-
-	// Indexed by chain position, not step index, so decay holds with a random opener.
-	const TArray<float>& Chances = LoadedCombatData->AIComboContinuationChances;
-	if (!Chances.IsValidIndex(CompletedChainIndex) || FMath::FRand() >= Chances[CompletedChainIndex])
-	{
-		return false;
-	}
-
-	const int32 NextIndex = (LastFinishedStepIndex + 1) % LoadedCombatData->ComboSteps.Num();
-	return PlayStep(NextIndex);
 }
 
 float UIFMeleeCombatComponent::GetAIComboBreatherSeconds() const
@@ -668,7 +632,6 @@ void UIFMeleeCombatComponent::OpenHitWindow()
 	BuildSamplePoints(PreviousSamplePoints);
 	bHitWindowOpen = true;
 
-	// Initial overlap catches targets already inside the arc at window start (legacy B2).
 	const FCollisionShape Shape = FCollisionShape::MakeSphere(Step->HitRadius);
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFMeleeOverlap), false);
 	QueryParams.AddIgnoredActor(GetOwner());
@@ -870,6 +833,12 @@ void UIFMeleeCombatComponent::TriggerAdditiveFlinch(AActor* DamageCauser, AContr
 void UIFMeleeCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AController* EventInstigator, bool bIsHeavyStagger)
 {
 	if (!bIsHeavyStagger)
+	{
+		TriggerAdditiveFlinch(DamageCauser, EventInstigator);
+		return;
+	}
+
+	if (IsAttacking() && IsValid(LoadedCombatData) && !LoadedCombatData->bAllowHitReactDuringAttack)
 	{
 		TriggerAdditiveFlinch(DamageCauser, EventInstigator);
 		return;
