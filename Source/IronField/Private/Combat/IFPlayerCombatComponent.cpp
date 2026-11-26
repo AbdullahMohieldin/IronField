@@ -58,7 +58,6 @@ void UIFPlayerCombatComponent::RequestAttack()
 		return;
 	}
 
-	// One-slot buffer: consumed instantly inside the window, otherwise at window open.
 	bAttackBuffered = true;
 	if (bComboWindowOpen)
 	{
@@ -374,8 +373,7 @@ void UIFPlayerCombatComponent::HandleStepStarted()
 {
 	ClearComboWindowState();
 
-	// Free-look locomotion means the body may face away from the aim; snap to camera yaw
-	// so every swing attacks where the player is looking.
+	// Snap facing to camera yaw so swings align with aim.
 	AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
 	if (IsValid(Player))
 	{

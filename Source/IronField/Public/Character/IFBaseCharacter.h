@@ -19,7 +19,6 @@ class IRONFIELD_API AIFBaseCharacter : public ACharacter, public IGenericTeamAge
 public:
 	AIFBaseCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-	// Subobject name of the combat slot; subclasses swap its class via SetDefaultSubobjectClass.
 	static const FName CombatComponentName;
 
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Character|Events")
@@ -81,7 +80,6 @@ private:
 
 	bool bHasDied = false;
 
-	// Live collision state captured in BeginPlay so Custom presets survive death/revive.
 	FName CapsuleCollisionProfile;
 	ECollisionEnabled::Type CapsuleCollisionEnabled = ECollisionEnabled::QueryAndPhysics;
 	FCollisionResponseContainer SavedCapsuleResponses;

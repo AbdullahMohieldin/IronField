@@ -38,8 +38,7 @@ void AIFBaseCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Snapshot the authored collision state so revive restores it exactly, including
-	// "Custom" presets, which have no named profile to reapply.
+	// Custom collision presets have no named profile to reapply, so save channel responses too.
 	if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
 	{
 		CapsuleCollisionProfile = Capsule->GetCollisionProfileName();
@@ -83,7 +82,6 @@ void AIFBaseCharacter::Landed(const FHitResult& Hit)
 {
 	Super::Landed(Hit);
 
-	// Corpses keep falling until they land, then become fully inert.
 	if (IsDead())
 	{
 		if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
@@ -218,8 +216,7 @@ void AIFBaseCharacter::DisableCollisionForDeath()
 		const UCharacterMovementComponent* const Movement = GetCharacterMovement();
 		const bool bStillFalling = IsValid(Movement) && Movement->IsFalling();
 
-		// Let falling corpses land cleanly on static floors, then Landed() disables capsule collision;
-		// grounded corpses disable capsule collision immediately so living pawns never bump them.
+		// Keep WorldStatic blocking while airborne so Landed() can disable collision on the floor.
 		Capsule->SetCollisionResponseToAllChannels(ECR_Ignore);
 		Capsule->SetCanEverAffectNavigation(false);
 		if (bStillFalling)
@@ -234,8 +231,6 @@ void AIFBaseCharacter::DisableCollisionForDeath()
 
 	if (USkeletalMeshComponent* const MeshComp = GetMesh())
 	{
-		// Channel responses are left untouched so "Custom" presets survive death/revive;
-		// NoCollision already makes them irrelevant while dead.
 		MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		MeshComp->SetCanEverAffectNavigation(false);
 	}
@@ -258,7 +253,7 @@ void AIFBaseCharacter::RestoreAliveState()
 	if (USkeletalMeshComponent* const MeshComp = GetMesh())
 	{
 		MeshComp->SetCollisionProfileName(MeshCollisionProfile);
-		// Applying a profile can reset the enabled mode; the snapshot wins so QueryOnly stays QueryOnly.
+		// SetCollisionProfileName resets CollisionEnabled, so reapply the saved mode after it.
 		MeshComp->SetCollisionEnabled(MeshCollisionEnabled);
 		MeshComp->SetCanEverAffectNavigation(bMeshAffectsNavigation);
 	}

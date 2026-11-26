@@ -486,7 +486,7 @@ bool UIFMeleeCombatComponent::PlayGuardAttack()
 
 void UIFMeleeCombatComponent::HandleOwnedMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, int32 InstanceID)
 {
-	// Queued callbacks retain the ID of the execution that produced them.
+	// Ignore blend-out callbacks from an earlier montage instance.
 	if (InstanceID == INDEX_NONE || InstanceID != CurrentMontageInstanceID
 		|| Montage != CurrentMontage || !IsAttacking())
 	{
@@ -758,7 +758,7 @@ void UIFMeleeCombatComponent::ProcessHit(AActor* Target, const FVector& HitLocat
 		return;
 	}
 
-	// Walls block swings: trace to impact point so wide structures do not self-occlude their own center.
+	// Trace to the hit point rather than actor center so wide structures do not block their own hits.
 	const FVector LosEnd = !HitLocation.IsNearlyZero() ? HitLocation : Target->GetActorLocation();
 	FHitResult LineOfSight;
 	FCollisionQueryParams LosParams(SCENE_QUERY_STAT(IFMeleeLOS), false);

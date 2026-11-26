@@ -57,7 +57,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
 	FVector GetAnchorLocation() const { return bHasAnchorLocation ? AnchorLocation : GetActorLocation(); }
 
-	// Moves the post. Pass false from inside controller decisions to avoid recursion.
+	// Pass false when called from controller decisions to avoid recursion.
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|AI")
 	void SetAnchorLocation(const FVector& NewAnchorLocation, bool bRefreshControllerDecision = true);
 
@@ -97,7 +97,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
 	float GetAdvanceStopDistance() const { return AdvanceStopDistance; }
 
-	// Keeps perception sight aligned with actual pawn orientation without ticking the AI controller.
 	virtual void GetActorEyesViewPoint(FVector& OutLocation, FRotator& OutRotation) const override;
 
 	virtual void Tick(float DeltaSeconds) override;
@@ -123,11 +122,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Combat", meta = (ClampMin = "0.0"))
 	float AttackRange = 60.f;
 
-	// Step-back deadzone (cm) beyond AttackRange before re-chasing or aborting an active melee attack.
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Combat", meta = (ClampMin = "0.0"))
 	float AttackRangeBuffer = 25.f;
 
-	// Corpses are removed after this long; 0 keeps them for the level lifetime.
+	// Seconds before a corpse is destroyed (0 = never).
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Death", meta = (ClampMin = "0.0"))
 	float CorpseLifeSpan = 12.f;
 
@@ -137,29 +135,24 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Death", meta = (ClampMin = "0.0"))
 	float RagdollTransitionDelaySeconds = 0.28f;
 
-	// Mass-independent velocity-change impulse (cm/s) applied via bVelChange = true.
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Death", meta = (ClampMin = "0.0"))
 	float RagdollDeathImpulse = 220.f;
 
-	// Dawn: true (defends a post). Dusk: false (advances on the player).
 	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI")
 	bool bLeashToAnchor = true;
 
 	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI", meta = (ClampMin = "0.0"))
 	float AutonomousEngageRadius = 400.f;
 
-	// Dusk: true. The controller resolves the goal below and walks to it while idle.
 	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI")
 	bool bAdvanceWhenIdle = false;
 
 	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI")
 	bool bAdvanceTowardsPlayer = true;
 
-	// Optional explicit goal (level actor). Ignored when bAdvanceTowardsPlayer is true.
 	UPROPERTY(EditInstanceOnly, Category = "IronField|Soldier|AI")
 	TObjectPtr<AActor> AdvanceGoalActor;
 
-	// Fallback static goal when neither the player nor an actor is configured.
 	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI")
 	FVector AdvanceGoalLocation = FVector::ZeroVector;
 
@@ -218,9 +211,6 @@ private:
 	float AnchorFacingYaw = 0.f;
 	bool bHasAnchorFacing = false;
 	bool bIsAligningToAnchorFacing = false;
-
-	// OnPossess (and therefore the first RefreshDecision) can run before BeginPlay,
-	// so the anchor is only authoritative once this is true.
 	bool bHasAnchorLocation = false;
 
 	void ActivateRagdollDeath();

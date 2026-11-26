@@ -4,8 +4,7 @@
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "IFAnimNotifyState_AttackCollision.generated.h"
 
-// Stateless: instances are shared across actors playing the same montage, so the
-// component is resolved from the mesh owner on every callback.
+// Shared across all actors playing the montage; keep stateless.
 UCLASS(meta = (DisplayName = "IF Attack Collision"))
 class IRONFIELD_API UIFAnimNotifyState_AttackCollision : public UAnimNotifyState
 {

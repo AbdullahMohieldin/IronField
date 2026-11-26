@@ -38,7 +38,6 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationRoll = false;
 
-	// AI minions should never push the player camera around.
 	if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
 	{
 		Capsule->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
@@ -96,7 +95,7 @@ void AIFSoldierCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// OnPossess may run before BeginPlay; keep any anchor assigned there.
+	// OnPossess can run before BeginPlay, so do not overwrite an anchor already set there.
 	if (!bHasAnchorLocation)
 	{
 		AnchorLocation = GetActorLocation();
@@ -178,7 +177,6 @@ void AIFSoldierCharacter::Tick(float DeltaSeconds)
 
 void AIFSoldierCharacter::HandleDeath(AActor* DeadActor)
 {
-	// Base stops movement, disables pawn collision, stops montages and broadcasts.
 	Super::HandleDeath(DeadActor);
 
 	CancelAnchorFacingAlignment();
@@ -212,7 +210,7 @@ void AIFSoldierCharacter::HandleDeath(AActor* DeadActor)
 		AIController->StopMovement();
 	}
 
-	// Detach only unpossesses; an AAIController is not destroyed by this call.
+	// DetachFromControllerPendingDestroy unpossesses without destroying the AIController.
 	DetachFromControllerPendingDestroy();
 
 	if (IsValid(AIController))
@@ -299,7 +297,7 @@ void AIFSoldierCharacter::ActivateRagdollDeath()
 	MeshComp->SetAllBodiesSimulatePhysics(true);
 	MeshComp->SetAllBodiesPhysicsBlendWeight(1.f);
 
-	// Re-apply after enabling simulation so per-bone PhysicsAsset body instances inherit Pawn/PhysicsBody ignores.
+	// Re-apply after enabling physics so per-bone body instances inherit the collision channels.
 	ApplyRagdollCollision();
 	MeshComp->WakeAllRigidBodies();
 
@@ -384,7 +382,7 @@ float AIFSoldierCharacter::GetEffectiveAttackRange(const AActor* Target) const
 	const float SelfRadius = GetSimpleCollisionRadius();
 	if (Cast<AIFStructure>(Target))
 	{
-		// Distance to structures is measured to the exact rotated box surface, so no extra target radius is added.
+		// Structure distance is already measured to the box surface, so skip target radius.
 		return FMath::Max(AttackRange, 0.f) + SelfRadius;
 	}
 
@@ -549,13 +547,11 @@ void AIFSoldierCharacter::UpdateOverheadWidgetVisibility()
 	const UIFHealthComponent* const Health = GetHealthComponent();
 	const bool bDamaged = IsValid(Health)
 		&& (Health->GetCurrentHealth() < Health->GetMaxHealth() - KINDA_SMALL_NUMBER);
-	// Friendly tactical selection counts only while Tactical Mode displays rings so Action Mode stays uncluttered.
 	const bool bSelectedInTactical = bIsTacticalSelected && bSelectionRingDisplayEnabled;
 	const bool bHostileTargeted = (TacticalRingMode == EIFTacticalRingMode::HostileTarget);
 	const bool bShouldShow = bDamaged || bSelectedInTactical || bHostileTargeted;
 
-	// Toggle inner Slate visibility while keeping the Screen UWidgetComponent active so UE 5.8
-	// never triggers RemoveWidgetFromScreen -> NativeDestruct on full-HP units.
+	// Toggle the inner widget instead of the Screen WidgetComponent to avoid triggering NativeDestruct.
 	OverheadWidgetComponent->SetVisibility(true);
 	if (UUserWidget* const OverheadWidget = OverheadWidgetComponent->GetUserWidgetObject())
 	{

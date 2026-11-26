@@ -4,8 +4,7 @@
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "IFAnimNotifyState_ComboWindow.generated.h"
 
-// Stateless: placed over the recovery phase; opening it consumes any buffered attack
-// immediately, cutting the recovery tail instead of waiting for the montage to end.
+// Shared across all actors playing the montage; keep stateless.
 UCLASS(meta = (DisplayName = "IF Combo Window"))
 class IRONFIELD_API UIFAnimNotifyState_ComboWindow : public UAnimNotifyState
 {

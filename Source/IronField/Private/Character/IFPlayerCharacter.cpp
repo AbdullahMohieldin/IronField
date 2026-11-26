@@ -140,8 +140,6 @@ void AIFPlayerCharacter::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 
-	// Pitch limits live on the camera manager (spawned in PC PostInitializeComponents)
-	// so control rotation is clamped before the boom inherits it.
 	APlayerController* const PlayerController = Cast<APlayerController>(NewController);
 	if (IsValid(PlayerController) && IsValid(PlayerController->PlayerCameraManager))
 	{
@@ -318,7 +316,6 @@ void AIFPlayerCharacter::Move(const FInputActionValue& Value)
 		return;
 	}
 
-	// GuardBreak stun locks movement; LeapSlam intentionally remains steerable.
 	const UIFCombatComponent* const Combat = GetCombatComponent();
 	if (IsValid(Combat) && Combat->IsStunned())
 	{
@@ -340,7 +337,7 @@ void AIFPlayerCharacter::Move(const FInputActionValue& Value)
 
 void AIFPlayerCharacter::StopMoving()
 {
-	// Deliberately ungated: release events must zero the cache even while dead.
+	// Always clear cached input on release, even while dead.
 	CachedMovementInput = FVector2D::ZeroVector;
 	UpdateMovementSpeed();
 	UpdateSprintState();
@@ -508,8 +505,6 @@ void AIFPlayerCharacter::UpdateRotationMode()
 		return;
 	}
 
-	// Always face controller/camera direction smoothly via RotationRate (720 deg/s)
-	// for directional combat strafing (W=Fwd, A/D=Strafe, S=Bwd).
 	bUseControllerRotationYaw = false;
 	Movement->bOrientRotationToMovement = false;
 	Movement->bUseControllerDesiredRotation = true;
