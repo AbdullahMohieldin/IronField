@@ -5,6 +5,7 @@
 #include "Character/IFBaseCharacter.h"
 #include "Combat/IFTeamTypes.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Core/IFGameTypes.h"
 #include "Core/IFLog.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/AssetManager.h"
@@ -639,7 +640,7 @@ void UIFMeleeCombatComponent::OpenHitWindow()
 
 	FCollisionObjectQueryParams ObjectParams;
 	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
-	ObjectParams.AddObjectTypesToQuery(ECC_GameTraceChannel1); // Damageable object channel
+	ObjectParams.AddObjectTypesToQuery(IFCollision::Damageable);
 
 	for (const FVector& Point : PreviousSamplePoints)
 	{
@@ -685,7 +686,7 @@ void UIFMeleeCombatComponent::UpdateHitWindow(float)
 
 	FCollisionObjectQueryParams ObjectParams;
 	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
-	ObjectParams.AddObjectTypesToQuery(ECC_GameTraceChannel1); // Damageable object channel
+	ObjectParams.AddObjectTypesToQuery(IFCollision::Damageable);
 
 	for (int32 SampleIndex = 0; SampleIndex < CurrentPoints.Num(); ++SampleIndex)
 	{

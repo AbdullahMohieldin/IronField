@@ -90,9 +90,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
 	TObjectPtr<UInputAction> InteractAction;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Interaction", meta = (ClampMin = "80.0"))
-	float InteractionRadiusCm = 280.f;
-
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Movement", meta = (ClampMin = "0.0"))
 	float WalkSpeed = 475.f;
 

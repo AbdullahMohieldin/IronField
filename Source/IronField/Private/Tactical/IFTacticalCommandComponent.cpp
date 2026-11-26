@@ -9,6 +9,7 @@
 #include "Character/IFSoldierCharacter.h"
 #include "Combat/IFTeamTypes.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Core/IFGameTypes.h"
 #include "Core/IFLog.h"
 #include "Core/IFPlayerController.h"
 #include "Engine/AssetManager.h"
@@ -1922,7 +1923,7 @@ AIFStructure* UIFTacticalCommandComponent::FindBestStructureUnderCursor(
 	}
 
 	FCollisionObjectQueryParams StructObjectParams;
-	StructObjectParams.AddObjectTypesToQuery(ECC_GameTraceChannel1);
+	StructObjectParams.AddObjectTypesToQuery(IFCollision::Damageable);
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFTacticalStructureTrace), false);
 	if (IsValid(TacticalCameraRig))

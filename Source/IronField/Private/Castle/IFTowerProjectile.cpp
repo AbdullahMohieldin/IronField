@@ -4,6 +4,7 @@
 #include "Character/IFBaseCharacter.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Core/IFGameTypes.h"
 #include "GameFramework/DamageType.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -19,7 +20,7 @@ AIFTowerProjectile::AIFTowerProjectile()
 	CollisionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
 	CollisionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	CollisionSphere->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
-	CollisionSphere->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block); // Structures / Damageable
+	CollisionSphere->SetCollisionResponseToChannel(IFCollision::Damageable, ECR_Block);
 	CollisionSphere->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	CollisionSphere->SetGenerateOverlapEvents(true);
 	CollisionSphere->SetCanEverAffectNavigation(false);

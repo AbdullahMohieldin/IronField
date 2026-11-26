@@ -9,6 +9,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
 #include "Core/IFGameState.h"
+#include "Core/IFGameTypes.h"
 #include "Core/IFLog.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StaticMesh.h"
@@ -41,7 +42,7 @@ AIFStructure::AIFStructure()
 
 	BoundsCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("BoundsCollision"));
 	BoundsCollision->InitBoxExtent(FVector(150.f, 150.f, 150.f));
-	BoundsCollision->SetCollisionObjectType(ECC_GameTraceChannel1); // Damageable
+	BoundsCollision->SetCollisionObjectType(IFCollision::Damageable);
 	BoundsCollision->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	BoundsCollision->SetCollisionResponseToAllChannels(ECR_Block);
 	BoundsCollision->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
@@ -739,7 +740,7 @@ void AIFStructure::ApplyFootprintConfiguration()
 		{
 			return;
 		}
-		Box->SetCollisionObjectType(ECC_GameTraceChannel1); // Damageable
+		Box->SetCollisionObjectType(IFCollision::Damageable);
 		Box->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 		Box->SetCollisionResponseToAllChannels(ECR_Block);
 		Box->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
@@ -1159,7 +1160,7 @@ UGeometryCollectionComponent* AIFStructure::SpawnFracturedGC(
 		TargetGC->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 		TargetGC->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 		TargetGC->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
-		TargetGC->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Ignore);
+		TargetGC->SetCollisionResponseToChannel(IFCollision::Damageable, ECR_Ignore);
 		if (IsValid(StoneRubblePhysMat))
 		{
 			TargetGC->SetPhysMaterialOverride(StoneRubblePhysMat);

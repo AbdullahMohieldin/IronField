@@ -6,6 +6,7 @@
 #include "Combat/IFPlayerCombatComponent.h"
 #include "Components/SphereComponent.h"
 #include "Core/IFGameMode.h"
+#include "Core/IFGameTypes.h"
 #include "Core/IFInteractable.h"
 #include "Core/IFPlayerController.h"
 #include "Engine/LocalPlayer.h"
@@ -26,19 +27,17 @@
 AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UIFPlayerCombatComponent>(AIFBaseCharacter::CombatComponentName))
 {
-	PrimaryActorTick.bCanEverTick = false;
-
 	StaminaComponent = CreateDefaultSubobject<UIFStaminaComponent>(TEXT("Stamina"));
 	StaminaComponent->ConfigureStaminaDefaults(100.f, 15.f, 1.45f);
 
 	InteractionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("InteractionSphere"));
 	InteractionSphere->SetupAttachment(RootComponent);
-	InteractionSphere->InitSphereRadius(InteractionRadiusCm);
+	InteractionSphere->InitSphereRadius(280.f);
 	InteractionSphere->SetCollisionObjectType(ECC_WorldDynamic);
 	InteractionSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	InteractionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
 	InteractionSphere->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
-	InteractionSphere->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Overlap);
+	InteractionSphere->SetCollisionResponseToChannel(IFCollision::Damageable, ECR_Overlap);
 	InteractionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	InteractionSphere->SetGenerateOverlapEvents(true);
 	InteractionSphere->SetCanEverAffectNavigation(false);
@@ -87,7 +86,6 @@ void AIFPlayerCharacter::BeginPlay()
 
 	if (IsValid(InteractionSphere))
 	{
-		InteractionSphere->SetSphereRadius(InteractionRadiusCm);
 		InteractionSphere->OnComponentBeginOverlap.AddUniqueDynamic(this, &AIFPlayerCharacter::HandleInteractionBeginOverlap);
 		InteractionSphere->OnComponentEndOverlap.AddUniqueDynamic(this, &AIFPlayerCharacter::HandleInteractionEndOverlap);
 
