@@ -590,6 +590,7 @@ void UIFMeleeCombatComponent::HandleCombatStateTransition(EIFCombatState Previou
 
 	if (PreviousState == EIFCombatState::Attacking && NewState != EIFCombatState::Attacking)
 	{
+		CloseHitWindow();
 		Stamina->ResetRegenDelay();
 	}
 
@@ -658,8 +659,9 @@ void UIFMeleeCombatComponent::OpenHitWindow()
 
 void UIFMeleeCombatComponent::UpdateHitWindow(float)
 {
-	if (!bHitWindowOpen)
+	if (!bHitWindowOpen || !IsAttacking())
 	{
+		CloseHitWindow();
 		return;
 	}
 	const FIFMeleeAttackStep* const Step = GetCurrentStep();

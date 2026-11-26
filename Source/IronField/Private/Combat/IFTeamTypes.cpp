@@ -18,38 +18,36 @@ namespace IFTeamUtils
 
 	FGenericTeamId GetActorTeamId(const AActor* Actor)
 	{
-		if (!IsValid(Actor))
+		const AActor* CurrentActor = Actor;
+		for (int32 Hop = 0; Hop < 4 && IsValid(CurrentActor); ++Hop)
 		{
-			return FGenericTeamId::NoTeam;
-		}
-
-		if (const IGenericTeamAgentInterface* const TeamAgent = Cast<const IGenericTeamAgentInterface>(Actor))
-		{
-			return TeamAgent->GetGenericTeamId();
-		}
-
-		if (const APawn* const Pawn = Cast<const APawn>(Actor))
-		{
-			if (const IGenericTeamAgentInterface* const ControllerAgent = Cast<const IGenericTeamAgentInterface>(Pawn->GetController()))
+			if (const IGenericTeamAgentInterface* const TeamAgent = Cast<const IGenericTeamAgentInterface>(CurrentActor))
 			{
-				return ControllerAgent->GetGenericTeamId();
+				return TeamAgent->GetGenericTeamId();
 			}
-		}
 
-		if (const AController* const Controller = Cast<const AController>(Actor))
-		{
-			if (const IGenericTeamAgentInterface* const PawnAgent = Cast<const IGenericTeamAgentInterface>(Controller->GetPawn()))
+			if (const APawn* const Pawn = Cast<const APawn>(CurrentActor))
 			{
-				return PawnAgent->GetGenericTeamId();
+				if (const IGenericTeamAgentInterface* const ControllerAgent = Cast<const IGenericTeamAgentInterface>(Pawn->GetController()))
+				{
+					return ControllerAgent->GetGenericTeamId();
+				}
 			}
-		}
 
-		if (const APawn* const InstigatorPawn = Actor->GetInstigator())
-		{
-			if (InstigatorPawn != Actor)
+			if (const AController* const Controller = Cast<const AController>(CurrentActor))
 			{
-				return GetActorTeamId(InstigatorPawn);
+				if (const IGenericTeamAgentInterface* const PawnAgent = Cast<const IGenericTeamAgentInterface>(Controller->GetPawn()))
+				{
+					return PawnAgent->GetGenericTeamId();
+				}
 			}
+
+			const APawn* const NextInstigator = CurrentActor->GetInstigator();
+			if (!IsValid(NextInstigator) || NextInstigator == CurrentActor)
+			{
+				break;
+			}
+			CurrentActor = NextInstigator;
 		}
 
 		return FGenericTeamId::NoTeam;

@@ -134,11 +134,6 @@ void UIFStaminaComponent::RegenerateStamina(float DeltaTime)
 	}
 
 	ApplyStaminaChange(CurrentStamina + (StaminaRegenRate * RegenRateMultiplier) * DeltaTime, false);
-
-	if (CurrentStamina >= MaxStamina)
-	{
-		SetComponentTickEnabled(false);
-	}
 }
 
 void UIFStaminaComponent::UpdateTickEnabled()

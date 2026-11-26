@@ -13,10 +13,12 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/DamageType.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
+#include "Kismet/GameplayStatics.h"
 #include "Stats/IFHealthComponent.h"
 #include "Stats/IFStaminaComponent.h"
 #include "Tactical/IFTacticalCommandComponent.h"
@@ -707,9 +709,6 @@ void AIFPlayerCharacter::HandleInteract()
 void AIFPlayerCharacter::DebugDamage(float Amount)
 {
 #if !UE_BUILD_SHIPPING
-	if (UIFHealthComponent* const Health = GetHealthComponent())
-	{
-		Health->ApplyDamage(Amount);
-	}
+	UGameplayStatics::ApplyDamage(this, Amount, nullptr, nullptr, UDamageType::StaticClass());
 #endif
 }

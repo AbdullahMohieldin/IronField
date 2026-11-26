@@ -129,18 +129,9 @@ UAnimMontage* UIFCombatComponent::ResolveDirectionalHitReactMontage(AActor* Dama
 	}
 
 	UAnimMontage* MontageToPlay = SelectedSoftMontage.Get();
-	if (!IsValid(MontageToPlay) && !SelectedSoftMontage.IsNull())
-	{
-		MontageToPlay = SelectedSoftMontage.LoadSynchronous();
-	}
-
 	if (!IsValid(MontageToPlay))
 	{
 		MontageToPlay = DirectionalHitReacts.HitReactFront.Get();
-		if (!IsValid(MontageToPlay) && !DirectionalHitReacts.HitReactFront.IsNull())
-		{
-			MontageToPlay = DirectionalHitReacts.HitReactFront.LoadSynchronous();
-		}
 	}
 
 	return MontageToPlay;

@@ -33,9 +33,6 @@ public:
 	void InitializeHealth(float NewMaxHealth);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
-	float ApplyDamage(float Amount, AActor* InstigatorActor = nullptr);
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
 	void ApplyHealing(float Amount);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
@@ -67,6 +64,7 @@ private:
 	UFUNCTION()
 	void HandleOwnerTakeAnyDamage(AActor* DamagedActor, float Damage, const UDamageType* DamageType, AController* InstigatedBy, AActor* DamageCauser);
 
+	float ApplyDamage(float Amount, AActor* InstigatorActor = nullptr);
 	void SetHealthClamped(float NewHealth);
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Health", meta = (AllowPrivateAccess = "true"))
