@@ -587,27 +587,46 @@ void AIFTerritory::UpdatePerimeterGeometry()
 
 void AIFTerritory::ApplyFactionVisuals()
 {
-	UMaterialInterface* BorderMat = NeutralBorderMaterial.Get();
+	auto ResolveMaterial = [](const TSoftObjectPtr<UMaterialInterface>& SoftMat) -> UMaterialInterface*
+	{
+		if (SoftMat.IsNull())
+		{
+			return nullptr;
+		}
+		UMaterialInterface* Mat = SoftMat.Get();
+		return IsValid(Mat) ? Mat : SoftMat.LoadSynchronous();
+	};
+
+	UMaterialInterface* BorderMat = ResolveMaterial(NeutralBorderMaterial);
+	UMaterialInterface* FlagMat = ResolveMaterial(NeutralFlagMaterial);
 	const uint8 RawTeamId = TeamID.GetId();
 	if (RawTeamId == IFTeamIds::Player)
 	{
-		BorderMat = DawnBorderMaterial.Get();
+		BorderMat = ResolveMaterial(DawnBorderMaterial);
+		FlagMat = ResolveMaterial(DawnFlagMaterial);
 	}
 	else if (RawTeamId == IFTeamIds::Enemy)
 	{
-		BorderMat = DuskBorderMaterial.Get();
+		BorderMat = ResolveMaterial(DuskBorderMaterial);
+		FlagMat = ResolveMaterial(DuskFlagMaterial);
 	}
 
 	if (IsValid(BorderMat))
 	{
-		UStaticMeshComponent* const FactionMeshes[] = { BorderNorth, BorderSouth, BorderEast, BorderWest, FlagBannerMesh };
-		for (UStaticMeshComponent* const MeshComp : FactionMeshes)
+		UStaticMeshComponent* const BorderMeshes[] = { BorderNorth, BorderSouth, BorderEast, BorderWest };
+		for (UStaticMeshComponent* const MeshComp : BorderMeshes)
 		{
 			if (IsValid(MeshComp))
 			{
 				MeshComp->SetMaterial(0, BorderMat);
 			}
 		}
+	}
+
+	UMaterialInterface* const ResolvedFlagMat = IsValid(FlagMat) ? FlagMat : BorderMat;
+	if (IsValid(FlagBannerMesh) && IsValid(ResolvedFlagMat))
+	{
+		FlagBannerMesh->SetMaterial(0, ResolvedFlagMat);
 	}
 
 	EnsureFlagRingMID();
@@ -698,6 +717,18 @@ void AIFTerritory::RequestTerritoryAssets()
 	{
 		AssetPaths.AddUnique(NeutralBorderMaterial.ToSoftObjectPath());
 	}
+	if (!DawnFlagMaterial.IsNull())
+	{
+		AssetPaths.AddUnique(DawnFlagMaterial.ToSoftObjectPath());
+	}
+	if (!DuskFlagMaterial.IsNull())
+	{
+		AssetPaths.AddUnique(DuskFlagMaterial.ToSoftObjectPath());
+	}
+	if (!NeutralFlagMaterial.IsNull())
+	{
+		AssetPaths.AddUnique(NeutralFlagMaterial.ToSoftObjectPath());
+	}
 	if (!FlagCaptureRingMaterial.IsNull())
 	{
 		AssetPaths.AddUnique(FlagCaptureRingMaterial.ToSoftObjectPath());
@@ -715,7 +746,6 @@ void AIFTerritory::RequestTerritoryAssets()
 
 void AIFTerritory::HandleTerritoryAssetsLoaded()
 {
-	TerritoryAssetsLoadHandle.Reset();
 	ApplyFactionVisuals();
 }
 

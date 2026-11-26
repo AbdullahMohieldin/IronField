@@ -154,6 +154,15 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Territory|Visuals")
 	TSoftObjectPtr<UMaterialInterface> NeutralBorderMaterial;
 
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Territory|Visuals")
+	TSoftObjectPtr<UMaterialInterface> DawnFlagMaterial;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Territory|Visuals")
+	TSoftObjectPtr<UMaterialInterface> DuskFlagMaterial;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Territory|Visuals")
+	TSoftObjectPtr<UMaterialInterface> NeutralFlagMaterial;
+
 	// Radial capture ring material driving CaptureProgress, BaseRingColor, FillRingColor, and IsContested.
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Territory|Visuals")
 	TSoftObjectPtr<UMaterialInterface> FlagCaptureRingMaterial;
