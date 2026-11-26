@@ -26,10 +26,7 @@ void AIFGameState::RegisterTerritory(AIFTerritory* Territory)
 
 void AIFGameState::UnregisterTerritory(AIFTerritory* Territory)
 {
-	RegisteredTerritories.RemoveAll([Territory](const TWeakObjectPtr<AIFTerritory>& Ptr)
-	{
-		return !Ptr.IsValid() || Ptr.Get() == Territory;
-	});
+	RegisteredTerritories.RemoveSingleSwap(Territory);
 }
 
 AIFTerritory* AIFGameState::FindTerritoryAtLocation(const FVector& WorldLocation) const
