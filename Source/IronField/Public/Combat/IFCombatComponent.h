@@ -1,7 +1,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Combat/IFCombatDataAsset.h"
 #include "Combat/IFCombatTypes.h"
 #include "Components/ActorComponent.h"
 #include "IFCombatComponent.generated.h"
@@ -9,6 +8,7 @@
 class AIFBaseCharacter;
 class UAnimInstance;
 class UAnimMontage;
+struct FIFDirectionalHitReactConfig;
 
 UCLASS(ClassGroup = (IronField), meta = (BlueprintSpawnableComponent))
 class IRONFIELD_API UIFCombatComponent : public UActorComponent
@@ -20,9 +20,6 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Combat|Events")
 	FOnCombatStateChanged OnCombatStateChanged;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Combat")
-	FIFDirectionalHitReactConfig DirectionalHitReacts;
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
 	EIFCombatState GetCombatState() const { return CombatState; }
@@ -55,6 +52,7 @@ protected:
 	void SetCombatState(EIFCombatState NewState);
 	virtual void HandleCombatStateTransition(EIFCombatState PreviousState, EIFCombatState NewState) {}
 	virtual void OnHitReactFinished();
+	virtual const FIFDirectionalHitReactConfig* GetDirectionalHitReactConfig() const { return nullptr; }
 
 	UAnimMontage* ResolveDirectionalHitReactMontage(AActor* DamageCauser, AController* EventInstigator);
 	bool PlayAdditiveFlinchMontage(UAnimMontage* MontageToPlay);

@@ -173,8 +173,6 @@ void UIFTacticalCommandComponent::RequestTacticalAssets()
 
 void UIFTacticalCommandComponent::HandleTacticalAssetsLoaded()
 {
-	TacticalAssetsLoadHandle.Reset();
-
 	if (UIFBuildingComponent* const Building = GetBuildingComponent())
 	{
 		Building->EnsureBuildableStructuresLoaded();
@@ -1800,36 +1798,63 @@ void UIFTacticalCommandComponent::SpawnOrderMarkerVFX(EIFTacticalOrderType Order
 		return;
 	}
 
+	auto ResolveVFX = [](const TSoftObjectPtr<UParticleSystem>& SoftVFX) -> UParticleSystem*
+	{
+		if (SoftVFX.IsNull())
+		{
+			return nullptr;
+		}
+		UParticleSystem* Asset = SoftVFX.Get();
+		return IsValid(Asset) ? Asset : SoftVFX.LoadSynchronous();
+	};
+
 	UParticleSystem* ParticleAsset = nullptr;
 	switch (OrderType)
 	{
 	case EIFTacticalOrderType::AttackTarget:
-		ParticleAsset = AttackOrderCascadeVFX.Get();
+		ParticleAsset = ResolveVFX(AttackOrderCascadeVFX);
 		break;
 	case EIFTacticalOrderType::FollowCommander:
-		ParticleAsset = FollowOrderCascadeVFX.Get();
+		ParticleAsset = ResolveVFX(FollowOrderCascadeVFX);
 		break;
 	case EIFTacticalOrderType::MoveTo:
 	default:
-		ParticleAsset = MoveOrderCascadeVFX.Get();
+		ParticleAsset = ResolveVFX(MoveOrderCascadeVFX);
 		break;
 	}
 
 	if (!IsValid(ParticleAsset))
 	{
-		ParticleAsset = MoveOrderCascadeVFX.Get();
+		ParticleAsset = ResolveVFX(MoveOrderCascadeVFX);
 	}
 	if (!IsValid(ParticleAsset))
 	{
 		return;
 	}
 
+	FVector SpawnLocation = Location;
+	FHitResult GroundHit;
+	FCollisionQueryParams GroundParams(SCENE_QUERY_STAT(IFTacticalOrderVFXGround), false);
+	if (IsValid(TacticalCameraRig))
+	{
+		GroundParams.AddIgnoredActor(TacticalCameraRig);
+	}
+	if (World->LineTraceSingleByChannel(
+		GroundHit,
+		Location + FVector(0.f, 0.f, 150.f),
+		Location - FVector(0.f, 0.f, 300.f),
+		ECC_WorldStatic,
+		GroundParams))
+	{
+		SpawnLocation = GroundHit.ImpactPoint + FVector(0.f, 0.f, 5.f);
+	}
+
 	UParticleSystemComponent* const SpawnedPSC = UGameplayStatics::SpawnEmitterAtLocation(
 		World,
 		ParticleAsset,
-		Location,
+		SpawnLocation,
 		FRotator::ZeroRotator,
-		FVector::OneVector,
+		FVector(OrderMarkerScale),
 		true,
 		EPSCPoolMethod::None,
 		true);
@@ -1838,6 +1863,7 @@ void UIFTacticalCommandComponent::SpawnOrderMarkerVFX(EIFTacticalOrderType Order
 	{
 		ActiveOrderMarkerPSC = SpawnedPSC;
 		const float EffectiveDilation = FMath::Max(UGameplayStatics::GetGlobalTimeDilation(this), 0.1f);
+		SpawnedPSC->CustomTimeDilation = 1.f / EffectiveDilation;
 		const float TimerDelay = FMath::Max(0.05f, OrderMarkerDurationSeconds * EffectiveDilation);
 		World->GetTimerManager().SetTimer(
 			OrderMarkerTimerHandle,

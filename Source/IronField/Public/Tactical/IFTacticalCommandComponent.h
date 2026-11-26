@@ -210,6 +210,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|VFX", meta = (ClampMin = "0.1"))
 	float OrderMarkerDurationSeconds = 1.25f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|VFX", meta = (ClampMin = "0.1"))
+	float OrderMarkerScale = 1.f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|UI")
 	TSoftClassPtr<UIFTacticalHUDWidget> TacticalHUDWidgetClass;
 

@@ -3,6 +3,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/IFBaseCharacter.h"
+#include "Combat/IFCombatDataAsset.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Controller.h"
@@ -96,6 +97,12 @@ void UIFCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AControll
 
 UAnimMontage* UIFCombatComponent::ResolveDirectionalHitReactMontage(AActor* DamageCauser, AController* EventInstigator)
 {
+	const FIFDirectionalHitReactConfig* const HitReactConfig = GetDirectionalHitReactConfig();
+	if (!HitReactConfig)
+	{
+		return nullptr;
+	}
+
 	const AActor* Attacker = DamageCauser;
 	if (!IsValid(Attacker) && IsValid(EventInstigator))
 	{
@@ -121,17 +128,17 @@ UAnimMontage* UIFCombatComponent::ResolveDirectionalHitReactMontage(AActor* Dama
 	TSoftObjectPtr<UAnimMontage> SelectedSoftMontage;
 	if (FMath::Abs(ForwardDot) >= FMath::Abs(RightDot))
 	{
-		SelectedSoftMontage = (ForwardDot >= 0.f) ? DirectionalHitReacts.HitReactFront : DirectionalHitReacts.HitReactBack;
+		SelectedSoftMontage = (ForwardDot >= 0.f) ? HitReactConfig->HitReactFront : HitReactConfig->HitReactBack;
 	}
 	else
 	{
-		SelectedSoftMontage = (RightDot >= 0.f) ? DirectionalHitReacts.HitReactRight : DirectionalHitReacts.HitReactLeft;
+		SelectedSoftMontage = (RightDot >= 0.f) ? HitReactConfig->HitReactRight : HitReactConfig->HitReactLeft;
 	}
 
 	UAnimMontage* MontageToPlay = SelectedSoftMontage.Get();
 	if (!IsValid(MontageToPlay))
 	{
-		MontageToPlay = DirectionalHitReacts.HitReactFront.Get();
+		MontageToPlay = HitReactConfig->HitReactFront.Get();
 	}
 
 	return MontageToPlay;

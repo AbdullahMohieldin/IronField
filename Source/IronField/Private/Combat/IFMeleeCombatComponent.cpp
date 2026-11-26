@@ -132,8 +132,6 @@ void UIFMeleeCombatComponent::HandleCombatDataLoaded()
 		return;
 	}
 
-	DirectionalHitReacts = LoadedCombatData->DirectionalHitReacts;
-
 	TArray<FSoftObjectPath> AssetPaths;
 	GatherRequiredAssetPaths(AssetPaths);
 
@@ -582,17 +580,25 @@ void UIFMeleeCombatComponent::HandleOwnerRevived()
 	Super::HandleOwnerRevived();
 }
 
+const FIFDirectionalHitReactConfig* UIFMeleeCombatComponent::GetDirectionalHitReactConfig() const
+{
+	return IsValid(LoadedCombatData) ? &LoadedCombatData->DirectionalHitReacts : nullptr;
+}
+
 void UIFMeleeCombatComponent::HandleCombatStateTransition(EIFCombatState PreviousState, EIFCombatState NewState)
 {
-	if (!IsValid(Stamina))
-	{
-		return;
-	}
-
 	if (PreviousState == EIFCombatState::Attacking && NewState != EIFCombatState::Attacking)
 	{
 		CloseHitWindow();
-		Stamina->ResetRegenDelay();
+		if (IsValid(Stamina))
+		{
+			Stamina->ResetRegenDelay();
+		}
+	}
+
+	if (!IsValid(Stamina))
+	{
+		return;
 	}
 
 	switch (NewState)

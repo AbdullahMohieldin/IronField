@@ -69,6 +69,7 @@ protected:
 
 	virtual void GatherRequiredAssetPaths(TArray<FSoftObjectPath>& OutAssetPaths) const;
 	virtual void HandleCombatStateTransition(EIFCombatState PreviousState, EIFCombatState NewState) override;
+	virtual const FIFDirectionalHitReactConfig* GetDirectionalHitReactConfig() const override;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat")
 	TSoftObjectPtr<UIFCombatDataAsset> CombatData;
