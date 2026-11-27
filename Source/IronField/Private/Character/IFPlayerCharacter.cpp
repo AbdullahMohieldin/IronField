@@ -23,6 +23,7 @@
 #include "Stats/IFHealthComponent.h"
 #include "Stats/IFStaminaComponent.h"
 #include "Tactical/IFTacticalCommandComponent.h"
+#include "TimerManager.h"
 
 AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UIFPlayerCombatComponent>(AIFBaseCharacter::CombatComponentName))
@@ -69,6 +70,7 @@ AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializ
 	}
 
 	SetGenericTeamId(FGenericTeamId(IFTeamIds::Player));
+	AutoPossessAI = EAutoPossessAI::Disabled;
 }
 
 void AIFPlayerCharacter::BeginPlay()
@@ -272,6 +274,7 @@ void AIFPlayerCharacter::EnterTacticalStandby()
 	{
 		if (Movement->IsFalling())
 		{
+			// Zero horizontal drift while preserving Z velocity so gravity still lands an airborne hero.
 			Movement->Velocity.X = 0.f;
 			Movement->Velocity.Y = 0.f;
 		}
@@ -301,7 +304,6 @@ void AIFPlayerCharacter::ExitTacticalStandby()
 		AddDefaultMappingContext();
 	}
 
-	UpdateRotationMode();
 	UpdateSprintState();
 	UpdateMovementSpeed();
 	RefreshInteractionPrompt();
@@ -315,7 +317,7 @@ void AIFPlayerCharacter::Move(const FInputActionValue& Value)
 	}
 
 	const UIFCombatComponent* const Combat = GetCombatComponent();
-	if (IsValid(Combat) && Combat->IsStunned())
+	if (IsValid(Combat) && (Combat->IsStunned() || Combat->IsInHitReact()))
 	{
 		CachedMovementInput = FVector2D::ZeroVector;
 		return;
@@ -335,7 +337,6 @@ void AIFPlayerCharacter::Move(const FInputActionValue& Value)
 
 void AIFPlayerCharacter::StopMoving()
 {
-	// Always clear cached input on release, even while dead.
 	CachedMovementInput = FVector2D::ZeroVector;
 	UpdateMovementSpeed();
 	UpdateSprintState();
@@ -345,7 +346,7 @@ void AIFPlayerCharacter::Look(const FInputActionValue& Value)
 {
 	const FVector2D LookInput = Value.Get<FVector2D>();
 	AddControllerYawInput(LookInput.X);
-	AddControllerPitchInput(bInvertLookPitch ? -LookInput.Y : LookInput.Y);
+	AddControllerPitchInput(LookInput.Y);
 }
 
 void AIFPlayerCharacter::Jump()
@@ -356,7 +357,7 @@ void AIFPlayerCharacter::Jump()
 	}
 
 	const UIFCombatComponent* const Combat = GetCombatComponent();
-	if (IsValid(Combat) && (Combat->IsStunned() || Combat->IsBlocking()))
+	if (IsValid(Combat) && (Combat->IsStunned() || Combat->IsInHitReact() || Combat->IsBlocking() || Combat->IsAttacking()))
 	{
 		return;
 	}
@@ -437,11 +438,6 @@ void AIFPlayerCharacter::HandleCombatStateChanged(EIFCombatState, EIFCombatState
 {
 	UpdateMovementSpeed();
 	UpdateSprintState();
-
-	if (!IsDead())
-	{
-		UpdateRotationMode();
-	}
 }
 
 void AIFPlayerCharacter::UpdateSprintState()
@@ -452,6 +448,7 @@ void AIFPlayerCharacter::UpdateSprintState()
 	if (bSprintRequested && !IsDead() && HasSprintInput()
 		&& IsValid(Combat) && Combat->IsIdle() && IsValid(StaminaComponent))
 	{
+		// Hysteresis prevents rapid walk/sprint oscillation when stamina hovers near zero.
 		bShouldSprint = bIsSprinting
 			? StaminaComponent->GetCurrentStamina() > 0.f
 			: StaminaComponent->HasStamina(MinimumStaminaToStartSprint);
@@ -495,25 +492,12 @@ void AIFPlayerCharacter::UpdateMovementSpeed()
 	}
 }
 
-void AIFPlayerCharacter::UpdateRotationMode()
-{
-	UCharacterMovementComponent* const Movement = GetCharacterMovement();
-	if (!IsValid(Movement))
-	{
-		return;
-	}
-
-	bUseControllerRotationYaw = false;
-	Movement->bOrientRotationToMovement = false;
-	Movement->bUseControllerDesiredRotation = true;
-}
-
 float AIFPlayerCharacter::CalculateDesiredMovementSpeed() const
 {
 	const UIFCombatComponent* const Combat = GetCombatComponent();
 	if (IsValid(Combat))
 	{
-		if (Combat->IsStunned())
+		if (Combat->IsStunned() || Combat->IsInHitReact())
 		{
 			return 0.f;
 		}
@@ -587,7 +571,6 @@ void AIFPlayerCharacter::RespawnAtCastle(const FVector& SpawnLocation, const FRo
 		Combat->HandleOwnerRevived();
 	}
 
-	UpdateRotationMode();
 	UpdateSprintState();
 	UpdateMovementSpeed();
 	RefreshInteractionPrompt();
@@ -665,23 +648,58 @@ void AIFPlayerCharacter::RefreshInteractionPrompt()
 		return !Ptr.IsValid();
 	});
 
+	UpdateInteractionPromptTimer();
+
 	AActor* const Nearest = GetNearestInteractable();
 	const FText PromptText = IsValid(Nearest)
 		? Cast<IIFInteractable>(Nearest)->GetInteractPromptText(this)
 		: FText::GetEmpty();
 
-	if (AIFPlayerController* const PC = Cast<AIFPlayerController>(GetController()))
+	if (!PromptText.EqualTo(LastDisplayedPromptText))
 	{
-		PC->SetInteractionPromptText(PromptText);
+		LastDisplayedPromptText = PromptText;
+		if (AIFPlayerController* const PC = Cast<AIFPlayerController>(GetController()))
+		{
+			PC->SetInteractionPromptText(PromptText);
+		}
 	}
 }
 
 void AIFPlayerCharacter::ClearNearbyInteractablesAndPrompt()
 {
 	NearbyInteractables.Reset();
+	if (UWorld* const World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(InteractionPromptTimerHandle);
+	}
+	LastDisplayedPromptText = FText::GetEmpty();
 	if (AIFPlayerController* const PC = Cast<AIFPlayerController>(GetController()))
 	{
 		PC->SetInteractionPromptText(FText::GetEmpty());
+	}
+}
+
+void AIFPlayerCharacter::UpdateInteractionPromptTimer()
+{
+	UWorld* const World = GetWorld();
+	if (!IsValid(World))
+	{
+		return;
+	}
+
+	const bool bShouldPoll = !NearbyInteractables.IsEmpty() && !IsDead();
+	if (bShouldPoll && !World->GetTimerManager().IsTimerActive(InteractionPromptTimerHandle))
+	{
+		World->GetTimerManager().SetTimer(
+			InteractionPromptTimerHandle,
+			this,
+			&AIFPlayerCharacter::RefreshInteractionPrompt,
+			0.15f,
+			true);
+	}
+	else if (!bShouldPoll)
+	{
+		World->GetTimerManager().ClearTimer(InteractionPromptTimerHandle);
 	}
 }
 

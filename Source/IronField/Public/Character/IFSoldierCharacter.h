@@ -7,7 +7,6 @@
 
 class AActor;
 class AIFSoldierAIController;
-class UIFMeleeCombatComponent;
 class UIFStaminaComponent;
 class UMaterialInterface;
 class UStaticMesh;
@@ -23,31 +22,10 @@ public:
 	AIFSoldierCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Components")
-	UIFMeleeCombatComponent* GetMeleeCombatComponent() const { return MeleeCombat; }
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Components")
 	UIFStaminaComponent* GetStaminaComponent() const { return StaminaComponent; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
 	AIFSoldierAIController* GetSoldierController() const;
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Combat")
-	void EnsureMeleeComboPlan();
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
-	bool HasEnoughStaminaForPlannedCombo() const;
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Combat")
-	bool TryExecuteNextPlannedMeleeStep();
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
-	bool HasRemainingPlannedMeleeSteps() const;
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Combat")
-	void ClearMeleeComboPlan();
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Combat")
-	bool IsAttacking() const;
 
 	float GetEffectiveAttackRange(const AActor* Target) const;
 	float GetMaxMeleeEngagementRange(const AActor* Target) const;
@@ -114,7 +92,6 @@ public:
 	bool IsTacticalSelected() const { return bIsTacticalSelected; }
 
 protected:
-	virtual void PostInitializeComponents() override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void HandleDeath(AActor* DeadActor) override;
@@ -125,7 +102,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Combat", meta = (ClampMin = "0.0"))
 	float AttackRangeBuffer = 25.f;
 
-	// Seconds before a corpse is destroyed (0 = never).
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Death", meta = (ClampMin = "0.0"))
 	float CorpseLifeSpan = 12.f;
 
@@ -184,9 +160,6 @@ protected:
 	float AnchorFacingToleranceDegrees = 1.5f;
 
 private:
-	UPROPERTY(Transient)
-	TObjectPtr<UIFMeleeCombatComponent> MeleeCombat;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Soldier|Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UIFStaminaComponent> StaminaComponent;
 

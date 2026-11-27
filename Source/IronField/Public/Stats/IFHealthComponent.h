@@ -5,8 +5,6 @@
 #include "IFHealthComponent.generated.h"
 
 class AActor;
-class AController;
-class UDamageType;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHealthChanged, float, Percent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDeath, AActor*, DeadActor);
@@ -33,6 +31,9 @@ public:
 	void InitializeHealth(float NewMaxHealth);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
+	float ApplyDamage(float Amount, AActor* InstigatorActor = nullptr);
+
+	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
 	void ApplyHealing(float Amount);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Health")
@@ -52,7 +53,6 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Health", meta = (ClampMin = "1.0"))
 	float MaxHealth = 150.f;
@@ -61,10 +61,6 @@ protected:
 	float ReviveHealth = 60.f;
 
 private:
-	UFUNCTION()
-	void HandleOwnerTakeAnyDamage(AActor* DamagedActor, float Damage, const UDamageType* DamageType, AController* InstigatedBy, AActor* DamageCauser);
-
-	float ApplyDamage(float Amount, AActor* InstigatorActor = nullptr);
 	void SetHealthClamped(float NewHealth);
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Health", meta = (AllowPrivateAccess = "true"))

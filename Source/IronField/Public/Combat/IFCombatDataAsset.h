@@ -103,62 +103,23 @@ struct FIFLeapSlamConfig
 {
 	GENERATED_BODY()
 
+	FIFLeapSlamConfig()
+	{
+		Attack.Damage = 45.f;
+		Attack.StaminaCost = 25.f;
+		Attack.bCausesHeavyStagger = true;
+		Attack.HitStartSocket = TEXT("FX_Sword_Bottom");
+		Attack.HitEndSocket = TEXT("FX_Sword_Top");
+		Attack.HitRadius = 50.f;
+		Attack.TraceSampleCount = 4;
+		Attack.HitstopSeconds = 0.04f;
+	}
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam")
-	TSoftObjectPtr<UAnimMontage> Montage;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "0.0"))
-	float Damage = 45.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "0.0"))
-	float StaminaCost = 25.f;
+	FIFMeleeAttackStep Attack;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "0.0"))
 	float CooldownSeconds = 4.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "0.0"))
-	float LeapSlamTraceRadius = 50.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam")
-	FName HitStartSocket = TEXT("FX_Sword_Bottom");
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam")
-	FName HitEndSocket = TEXT("FX_Sword_Top");
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam", meta = (ClampMin = "1", ClampMax = "16"))
-	int32 TraceSampleCount = 4;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|LeapSlam")
-	bool bCausesHeavyStagger = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
-	TSoftObjectPtr<UNiagaraSystem> HitVFX;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
-	TSoftObjectPtr<UParticleSystem> HitCascadeVFX;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback", meta = (ClampMin = "0.0", ClampMax = "0.15"))
-	float HitstopSeconds = 0.04f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "IronField|Combat|Feedback")
-	TSoftObjectPtr<USoundBase> HitSound;
-
-	FIFMeleeAttackStep ToAttackStep() const
-	{
-		FIFMeleeAttackStep Step;
-		Step.Montage = Montage;
-		Step.Damage = Damage;
-		Step.StaminaCost = StaminaCost;
-		Step.bCausesHeavyStagger = bCausesHeavyStagger;
-		Step.HitRadius = LeapSlamTraceRadius;
-		Step.HitStartSocket = HitStartSocket;
-		Step.HitEndSocket = HitEndSocket;
-		Step.TraceSampleCount = TraceSampleCount;
-		Step.HitVFX = HitVFX;
-		Step.HitCascadeVFX = HitCascadeVFX;
-		Step.HitstopSeconds = HitstopSeconds;
-		Step.HitSound = HitSound;
-		return Step;
-	}
 };
 
 USTRUCT(BlueprintType)

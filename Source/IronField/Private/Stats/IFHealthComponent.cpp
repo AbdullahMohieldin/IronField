@@ -1,8 +1,6 @@
 #include "Stats/IFHealthComponent.h"
 
 #include "GameFramework/Actor.h"
-#include "GameFramework/Controller.h"
-#include "GameFramework/Pawn.h"
 
 UIFHealthComponent::UIFHealthComponent()
 {
@@ -17,21 +15,6 @@ void UIFHealthComponent::BeginPlay()
 	{
 		InitializeHealth(MaxHealth);
 	}
-
-	if (AActor* const Owner = GetOwner(); IsValid(Owner))
-	{
-		Owner->OnTakeAnyDamage.AddUniqueDynamic(this, &UIFHealthComponent::HandleOwnerTakeAnyDamage);
-	}
-}
-
-void UIFHealthComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	if (AActor* const Owner = GetOwner(); IsValid(Owner))
-	{
-		Owner->OnTakeAnyDamage.RemoveDynamic(this, &UIFHealthComponent::HandleOwnerTakeAnyDamage);
-	}
-
-	Super::EndPlay(EndPlayReason);
 }
 
 void UIFHealthComponent::InitializeHealth(float NewMaxHealth)
@@ -104,16 +87,6 @@ void UIFHealthComponent::Revive()
 float UIFHealthComponent::GetHealthPercent() const
 {
 	return MaxHealth > 0.f ? CurrentHealth / MaxHealth : 0.f;
-}
-
-void UIFHealthComponent::HandleOwnerTakeAnyDamage(AActor*, float Damage, const UDamageType*, AController* InstigatedBy, AActor* DamageCauser)
-{
-	AActor* InstigatorActor = IsValid(InstigatedBy) ? InstigatedBy->GetPawn() : nullptr;
-	if (!IsValid(InstigatorActor))
-	{
-		InstigatorActor = DamageCauser;
-	}
-	ApplyDamage(Damage, InstigatorActor);
 }
 
 void UIFHealthComponent::SetHealthClamped(float NewHealth)

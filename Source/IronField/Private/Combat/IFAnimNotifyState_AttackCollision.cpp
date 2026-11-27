@@ -3,12 +3,12 @@
 #include "Animation/ActiveMontageInstanceScope.h"
 #include "Animation/AnimNotifyQueue.h"
 #include "Character/IFBaseCharacter.h"
-#include "Combat/IFMeleeCombatComponent.h"
+#include "Combat/IFCombatComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 
 namespace
 {
-	UIFMeleeCombatComponent* ResolveMeleeCombat(USkeletalMeshComponent* MeshComp)
+	UIFCombatComponent* ResolveCombatComponent(USkeletalMeshComponent* MeshComp)
 	{
 		if (!IsValid(MeshComp))
 		{
@@ -16,16 +16,12 @@ namespace
 		}
 
 		const AIFBaseCharacter* const Character = Cast<AIFBaseCharacter>(MeshComp->GetOwner());
-		if (!IsValid(Character))
-		{
-			return nullptr;
-		}
-
-		return Cast<UIFMeleeCombatComponent>(Character->GetCombatComponent());
+		return IsValid(Character) ? Character->GetCombatComponent() : nullptr;
 	}
 
 	int32 GetAttackCollisionNotifyInstanceID(const FAnimNotifyEventReference& EventReference)
 	{
+		// Blending-out montages still fire NotifyEnd after a combo cancel, so match the active instance ID.
 		const UE::Anim::FAnimNotifyMontageInstanceContext* Context =
 			EventReference.GetContextData<UE::Anim::FAnimNotifyMontageInstanceContext>();
 		return Context ? Context->MontageInstanceID : INDEX_NONE;
@@ -34,7 +30,7 @@ namespace
 
 void UIFAnimNotifyState_AttackCollision::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, float, const FAnimNotifyEventReference& EventReference)
 {
-	UIFMeleeCombatComponent* const Combat = ResolveMeleeCombat(MeshComp);
+	UIFCombatComponent* const Combat = ResolveCombatComponent(MeshComp);
 	if (Combat && GetAttackCollisionNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->OpenHitWindow();
@@ -43,7 +39,7 @@ void UIFAnimNotifyState_AttackCollision::NotifyBegin(USkeletalMeshComponent* Mes
 
 void UIFAnimNotifyState_AttackCollision::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
-	UIFMeleeCombatComponent* const Combat = ResolveMeleeCombat(MeshComp);
+	UIFCombatComponent* const Combat = ResolveCombatComponent(MeshComp);
 	if (Combat && GetAttackCollisionNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->UpdateHitWindow(FrameDeltaTime);
@@ -52,7 +48,7 @@ void UIFAnimNotifyState_AttackCollision::NotifyTick(USkeletalMeshComponent* Mesh
 
 void UIFAnimNotifyState_AttackCollision::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase*, const FAnimNotifyEventReference& EventReference)
 {
-	UIFMeleeCombatComponent* const Combat = ResolveMeleeCombat(MeshComp);
+	UIFCombatComponent* const Combat = ResolveCombatComponent(MeshComp);
 	if (Combat && GetAttackCollisionNotifyInstanceID(EventReference) == Combat->GetCurrentMontageInstanceID())
 	{
 		Combat->CloseHitWindow();

@@ -80,6 +80,7 @@ void AIFGameMode::ExecuteHeroRespawn(TWeakObjectPtr<AIFPlayerCharacter> DeadHero
 		return;
 	}
 
+	// Hero permadeath when no friendly territory has a standing Keep.
 	EndMatch(EIFGameResult::Defeat);
 }
 

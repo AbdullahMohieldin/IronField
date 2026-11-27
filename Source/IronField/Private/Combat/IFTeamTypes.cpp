@@ -19,6 +19,7 @@ namespace IFTeamUtils
 	FGenericTeamId GetActorTeamId(const AActor* Actor)
 	{
 		const AActor* CurrentActor = Actor;
+		// Walk up the instigator chain (Projectile -> Weapon/Tower -> Pawn -> Controller) with a cycle bound.
 		for (int32 Hop = 0; Hop < 4 && IsValid(CurrentActor); ++Hop)
 		{
 			if (const IGenericTeamAgentInterface* const TeamAgent = Cast<const IGenericTeamAgentInterface>(CurrentActor))

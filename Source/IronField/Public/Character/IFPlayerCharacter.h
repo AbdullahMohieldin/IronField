@@ -111,9 +111,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Camera", meta = (ClampMin = "-89.0", ClampMax = "89.0"))
 	float CameraMaxPitch = 25.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Camera")
-	bool bInvertLookPitch = false;
-
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Player|Stamina", meta = (ClampMin = "0.0"))
 	float SprintStaminaDrainRate = 12.f;
 
@@ -143,6 +140,8 @@ private:
 	FVector2D CachedMovementInput = FVector2D::ZeroVector;
 
 	TArray<TWeakObjectPtr<AActor>> NearbyInteractables;
+	FTimerHandle InteractionPromptTimerHandle;
+	FText LastDisplayedPromptText;
 
 	void Move(const FInputActionValue& Value);
 	void StopMoving();
@@ -176,13 +175,13 @@ private:
 
 	AActor* GetNearestInteractable() const;
 	void ClearNearbyInteractablesAndPrompt();
+	void UpdateInteractionPromptTimer();
 	void BindInputActions();
 	void AddDefaultMappingContext();
 	void RemoveDefaultMappingContext();
 
 	void UpdateMovementSpeed();
 	void UpdateSprintState();
-	void UpdateRotationMode();
 	bool HasSprintInput() const;
 	float CalculateDesiredMovementSpeed() const;
 

@@ -5,6 +5,7 @@
 #include "Castle/IFStructure.h"
 #include "Character/IFBaseCharacter.h"
 #include "Character/IFSoldierCharacter.h"
+#include "Combat/IFCombatComponent.h"
 #include "Combat/IFTeamTypes.h"
 #include "Core/IFLog.h"
 #include "Engine/AssetManager.h"
@@ -883,7 +884,8 @@ void AIFSoldierAIController::UpdateMoveGoalForAction()
 	// Uses exact box-surface distance for AIFStructure targets so soldiers stop flush against wall faces.
 	const float StopDistance = Soldier->GetEffectiveAttackRange(Target);
 	const float MaxHoldDistance = Soldier->GetMaxMeleeEngagementRange(Target);
-	const bool bActivelyChasingTarget = bHasMoveGoal && (MoveGoalActor.Get() == Target) && !Soldier->IsAttacking();
+	const UIFCombatComponent* const Combat = Soldier->GetCombatComponent();
+	const bool bActivelyChasingTarget = bHasMoveGoal && (MoveGoalActor.Get() == Target) && !(IsValid(Combat) && Combat->IsAttacking());
 	const float InReachThreshold = bActivelyChasingTarget ? StopDistance : MaxHoldDistance;
 	if (Soldier->GetHorizontalDistanceToTarget(Target) <= InReachThreshold)
 	{

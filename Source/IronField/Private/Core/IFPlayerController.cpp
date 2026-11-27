@@ -5,8 +5,11 @@
 #include "Character/IFPlayerCharacter.h"
 #include "Core/IFGameState.h"
 #include "Core/IFLog.h"
+#include "Engine/LocalPlayer.h"
 #include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
 #include "InputAction.h"
+#include "InputMappingContext.h"
 #include "Kismet/GameplayStatics.h"
 #include "Tactical/IFTacticalCommandComponent.h"
 #include "UI/IFTacticalHUDWidget.h"
@@ -29,6 +32,15 @@ void AIFPlayerController::BeginPlay()
 
 	ApplyGameplayInputMode();
 
+	if (IsValid(ControllerMappingContext))
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* const InputSubsystem =
+			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+		{
+			InputSubsystem->AddMappingContext(ControllerMappingContext, ControllerMappingPriority);
+		}
+	}
+
 	if (APawn* const CurrentPawn = GetPawn())
 	{
 		EnsurePlayerHUDCreatedAndBound(CurrentPawn);
@@ -40,6 +52,7 @@ void AIFPlayerController::BeginPlay()
 		{
 			ObservedGameState = GameState;
 			GameState->OnGameResultChanged.AddUniqueDynamic(this, &AIFPlayerController::HandleMatchResultChanged);
+			// Catch match results applied before BeginPlay bound the delegate.
 			if (GameState->GetMatchResult() != EIFGameResult::None)
 			{
 				HandleMatchResultChanged(GameState->GetMatchResult());
@@ -50,6 +63,15 @@ void AIFPlayerController::BeginPlay()
 
 void AIFPlayerController::EndPlay(const EEndPlayReason::Type Reason)
 {
+	if (IsValid(ControllerMappingContext))
+	{
+		if (UEnhancedInputLocalPlayerSubsystem* const InputSubsystem =
+			ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+		{
+			InputSubsystem->RemoveMappingContext(ControllerMappingContext);
+		}
+	}
+
 	if (AIFGameState* const GameState = ObservedGameState.Get(); IsValid(GameState))
 	{
 		GameState->OnGameResultChanged.RemoveDynamic(this, &AIFPlayerController::HandleMatchResultChanged);
@@ -231,23 +253,28 @@ void AIFPlayerController::ShowGameOverScreen(EIFGameResult Result)
 		return;
 	}
 
-	bIsGameOver = true;
 	if (IsValid(TacticalCommandComponent))
 	{
 		TacticalCommandComponent->ExitTacticalMode(true);
 	}
 	ClosePauseMenu();
-	ApplyUIInputMode();
-	UGameplayStatics::SetGamePaused(this, true);
 
 	if (GameOverScreenWidgetClass)
 	{
 		GameOverScreenWidget = CreateWidget<UUserWidget>(this, GameOverScreenWidgetClass);
-		if (IsValid(GameOverScreenWidget))
-		{
-			GameOverScreenWidget->AddToViewport();
-		}
 	}
+
+	if (!IsValid(GameOverScreenWidget))
+	{
+		UE_LOG(LogIronField, Error, TEXT("[IF-Flow] GameOverScreenWidgetClass is unset or failed to create on %s; keeping input recoverable (result=%d)."),
+			*GetName(), static_cast<int32>(Result));
+		return;
+	}
+
+	bIsGameOver = true;
+	ApplyUIInputMode();
+	UGameplayStatics::SetGamePaused(this, true);
+	GameOverScreenWidget->AddToViewport();
 
 	UE_LOG(LogIronField, Log, TEXT("[IF-Flow] Game over (result=%d)."), static_cast<int32>(Result));
 }
@@ -260,8 +287,7 @@ void AIFPlayerController::RestartMatch()
 		TacticalCommandComponent->ExitTacticalMode(true);
 	}
 	UGameplayStatics::SetGamePaused(this, false);
-	const FName LevelName = FName(*UGameplayStatics::GetCurrentLevelName(this, true));
-	UGameplayStatics::OpenLevel(this, LevelName);
+	RestartLevel();
 }
 
 void AIFPlayerController::ApplyGameplayInputMode(bool bFlushKeys)
@@ -286,7 +312,7 @@ void AIFPlayerController::ApplyTacticalInputMode()
 
 void AIFPlayerController::ApplyPauseInputMode()
 {
-	// GameAndUI keeps player input alive so IA_Pause can resume; UIOnly would swallow it.
+	// Use GameAndUI instead of UIOnly so Enhanced Input still receives IA_Pause while paused.
 	FInputModeGameAndUI InputMode;
 	InputMode.SetHideCursorDuringCapture(false);
 	SetInputMode(InputMode);
@@ -300,18 +326,14 @@ void AIFPlayerController::ApplyUIInputMode()
 	bShowMouseCursor = true;
 }
 
-bool AIFPlayerController::IsGameOverActive() const
-{
-	return bIsGameOver;
-}
-
 void AIFPlayerController::SetInteractionPromptText(const FText& PromptText)
 {
+	CachedInteractionPrompt = PromptText;
 	if (IsValid(TacticalCommandComponent))
 	{
 		if (UIFTacticalHUDWidget* const HUD = TacticalCommandComponent->GetTacticalHUDWidget())
 		{
-			HUD->SetInteractionPrompt(PromptText);
+			HUD->SetInteractionPrompt(CachedInteractionPrompt);
 		}
 	}
 }

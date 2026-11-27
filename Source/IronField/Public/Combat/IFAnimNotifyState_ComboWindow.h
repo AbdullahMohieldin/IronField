@@ -4,7 +4,7 @@
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "IFAnimNotifyState_ComboWindow.generated.h"
 
-// Shared across all actors playing the montage; keep stateless.
+// AnimNotifyState instances live on the shared montage asset and must remain stateless.
 UCLASS(meta = (DisplayName = "IF Combo Window"))
 class IRONFIELD_API UIFAnimNotifyState_ComboWindow : public UAnimNotifyState
 {

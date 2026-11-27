@@ -8,6 +8,7 @@
 class APawn;
 class AIFGameState;
 class UInputAction;
+class UInputMappingContext;
 class UIFBuildingComponent;
 class UIFTacticalCommandComponent;
 class UUserWidget;
@@ -40,7 +41,7 @@ public:
 
 	void ApplyGameplayInputMode(bool bFlushKeys = true);
 	void ApplyTacticalInputMode();
-	bool IsGameOverActive() const;
+	bool IsGameOverActive() const { return bIsGameOver; }
 
 	UFUNCTION(Exec)
 	void DebugTogglePause();
@@ -63,6 +64,12 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Input")
 	TObjectPtr<UInputAction> PauseInputAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Input")
+	TObjectPtr<UInputMappingContext> ControllerMappingContext;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Input", meta = (ClampMin = "0"))
+	int32 ControllerMappingPriority = 2;
 
 private:
 	UPROPERTY(Transient)
@@ -91,6 +98,7 @@ private:
 	TObjectPtr<UIFBuildingComponent> BuildingSystem;
 
 	TWeakObjectPtr<AIFGameState> ObservedGameState;
+	FText CachedInteractionPrompt;
 
 	bool bIsGameOver = false;
 };

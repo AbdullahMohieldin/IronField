@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "Combat/IFTeamTypes.h"
-#include "Engine/EngineTypes.h"
 #include "GameFramework/Character.h"
 #include "IFBaseCharacter.generated.h"
 
@@ -44,7 +43,6 @@ public:
 
 	virtual float TakeDamage(float DamageAmount, struct FDamageEvent const& DamageEvent, class AController* EventInstigator, AActor* DamageCauser) override;
 
-	// IGenericTeamAgentInterface
 	virtual void SetGenericTeamId(const FGenericTeamId& InTeamID) override { TeamID = InTeamID; }
 	virtual FGenericTeamId GetGenericTeamId() const override { return TeamID; }
 	virtual ETeamAttitude::Type GetTeamAttitudeTowards(const AActor& Other) const override;
@@ -79,17 +77,6 @@ private:
 	void DisableCollisionForDeath();
 
 	bool bHasDied = false;
-
-	FName CapsuleCollisionProfile;
-	ECollisionEnabled::Type CapsuleCollisionEnabled = ECollisionEnabled::QueryAndPhysics;
-	FCollisionResponseContainer SavedCapsuleResponses;
-	FName MeshCollisionProfile;
-	ECollisionEnabled::Type MeshCollisionEnabled = ECollisionEnabled::NoCollision;
-	bool bCapsuleAffectsNavigation = true;
-	bool bMeshAffectsNavigation = false;
-	bool bSavedOrientRotationToMovement = false;
-	bool bSavedUseControllerDesiredRotation = false;
-	bool bSavedUseRVOAvoidance = false;
 
 	FVector LastDamageDirection = FVector::ZeroVector;
 	FTimerHandle HitstopTimerHandle;

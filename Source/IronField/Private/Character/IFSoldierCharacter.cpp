@@ -5,7 +5,7 @@
 #include "Animation/AnimInstance.h"
 #include "BrainComponent.h"
 #include "Castle/IFStructure.h"
-#include "Combat/IFMeleeCombatComponent.h"
+#include "Combat/IFCombatComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -23,7 +23,7 @@
 #include "UI/IFVitalBarsWidget.h"
 
 AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer.SetDefaultSubobjectClass<UIFMeleeCombatComponent>(AIFBaseCharacter::CombatComponentName))
+	: Super(ObjectInitializer)
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = false;
@@ -83,12 +83,6 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 	UpdateSelectionRingTransform();
 
 	SetGenericTeamId(FGenericTeamId(IFTeamIds::Enemy));
-}
-
-void AIFSoldierCharacter::PostInitializeComponents()
-{
-	Super::PostInitializeComponents();
-	MeleeCombat = Cast<UIFMeleeCombatComponent>(GetCombatComponent());
 }
 
 void AIFSoldierCharacter::BeginPlay()
@@ -156,7 +150,8 @@ void AIFSoldierCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	if (!bIsAligningToAnchorFacing || !bHasAnchorFacing || IsDead() || IsAttacking()
+	const UIFCombatComponent* const Combat = GetCombatComponent();
+	if (!bIsAligningToAnchorFacing || !bHasAnchorFacing || IsDead() || (IsValid(Combat) && Combat->IsAttacking())
 		|| GetVelocity().SizeSquared2D() > FMath::Square(15.f))
 	{
 		CancelAnchorFacingAlignment();
@@ -210,7 +205,6 @@ void AIFSoldierCharacter::HandleDeath(AActor* DeadActor)
 		AIController->StopMovement();
 	}
 
-	// DetachFromControllerPendingDestroy unpossesses without destroying the AIController.
 	DetachFromControllerPendingDestroy();
 
 	if (IsValid(AIController))
@@ -303,16 +297,10 @@ void AIFSoldierCharacter::ActivateRagdollDeath()
 
 	if (RagdollDeathImpulse > 0.f)
 	{
-		FVector ImpulseDir = GetLastDamageDirection();
-		ImpulseDir.Z = 0.f;
-		if (!ImpulseDir.Normalize())
+		FVector ImpulseDir = GetLastDamageDirection().GetSafeNormal2D();
+		if (ImpulseDir.IsNearlyZero())
 		{
-			ImpulseDir = -GetActorForwardVector();
-			ImpulseDir.Z = 0.f;
-			if (!ImpulseDir.Normalize())
-			{
-				ImpulseDir = FVector::BackwardVector;
-			}
+			ImpulseDir = (-GetActorForwardVector()).GetSafeNormal2D();
 		}
 
 		ImpulseDir = (ImpulseDir + FVector(0.f, 0.f, 0.25f)).GetSafeNormal();
@@ -353,7 +341,8 @@ void AIFSoldierCharacter::ClearAnchorFacing()
 
 void AIFSoldierCharacter::BeginAnchorFacingAlignment()
 {
-	if (!bHasAnchorFacing || IsDead() || IsAttacking() || GetVelocity().SizeSquared2D() > FMath::Square(15.f))
+	const UIFCombatComponent* const Combat = GetCombatComponent();
+	if (!bHasAnchorFacing || IsDead() || (IsValid(Combat) && Combat->IsAttacking()) || GetVelocity().SizeSquared2D() > FMath::Square(15.f))
 	{
 		return;
 	}
@@ -430,50 +419,6 @@ FVector AIFSoldierCharacter::GetCombatApproachPoint(const AActor* Target) const
 	}
 
 	return Target->GetActorLocation();
-}
-
-void AIFSoldierCharacter::EnsureMeleeComboPlan()
-{
-	if (IsValid(MeleeCombat) && !IsDead())
-	{
-		MeleeCombat->EnsureAIComboPlan();
-	}
-}
-
-bool AIFSoldierCharacter::HasEnoughStaminaForPlannedCombo() const
-{
-	if (!IsValid(MeleeCombat) || IsDead())
-	{
-		return false;
-	}
-	return MeleeCombat->HasEnoughStaminaForPlannedCombo();
-}
-
-bool AIFSoldierCharacter::TryExecuteNextPlannedMeleeStep()
-{
-	if (!IsValid(MeleeCombat) || IsDead())
-	{
-		return false;
-	}
-	return MeleeCombat->TryExecuteNextPlannedAIStep();
-}
-
-bool AIFSoldierCharacter::HasRemainingPlannedMeleeSteps() const
-{
-	return IsValid(MeleeCombat) && !IsDead() && MeleeCombat->HasRemainingPlannedAISteps();
-}
-
-void AIFSoldierCharacter::ClearMeleeComboPlan()
-{
-	if (IsValid(MeleeCombat))
-	{
-		MeleeCombat->ClearAIComboPlan();
-	}
-}
-
-bool AIFSoldierCharacter::IsAttacking() const
-{
-	return IsValid(MeleeCombat) && MeleeCombat->IsAttacking();
 }
 
 void AIFSoldierCharacter::SetTacticalSelected(bool bSelected, bool bShowRingNow)

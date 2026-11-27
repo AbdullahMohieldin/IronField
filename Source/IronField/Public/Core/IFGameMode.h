@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "Core/IFGameTypes.h"
-#include "Engine/EngineTypes.h"
 #include "GameFramework/GameModeBase.h"
 #include "IFGameMode.generated.h"
 

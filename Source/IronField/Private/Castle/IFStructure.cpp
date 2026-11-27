@@ -631,7 +631,7 @@ float AIFStructure::TakeDamage(
 	{
 		return 0.f;
 	}
-	if (IsValid(EventInstigator) && IFTeamUtils::AreFriendly(this, EventInstigator->GetPawn()))
+	if (IsValid(EventInstigator) && IFTeamUtils::AreFriendly(this, EventInstigator))
 	{
 		return 0.f;
 	}
@@ -651,9 +651,8 @@ float AIFStructure::TakeDamage(
 		LastDamageInstigator = InstigatorActor;
 	}
 
-	const float PrevHealth = HealthComponent->GetCurrentHealth();
 	Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
-	return PrevHealth - HealthComponent->GetCurrentHealth();
+	return HealthComponent->ApplyDamage(DamageAmount, InstigatorActor);
 }
 
 void AIFStructure::SetGenericTeamId(const FGenericTeamId& InTeamID)

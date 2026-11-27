@@ -4,16 +4,11 @@
 #include "Animation/AnimMontage.h"
 #include "Character/IFPlayerCharacter.h"
 #include "Combat/IFCombatDataAsset.h"
-#include "Combat/IFTeamTypes.h"
 #include "Core/IFLog.h"
 #include "Engine/World.h"
 #include "GameFramework/Controller.h"
-#include "GameFramework/DamageType.h"
 #include "Kismet/GameplayStatics.h"
-#include "NiagaraFunctionLibrary.h"
-#include "NiagaraSystem.h"
 #include "Particles/ParticleSystem.h"
-#include "Sound/SoundBase.h"
 #include "Stats/IFStaminaComponent.h"
 #include "TimerManager.h"
 
@@ -25,34 +20,20 @@ void UIFPlayerCombatComponent::RequestAttack()
 		return;
 	}
 
-	if (IsIdle() || GetCombatState() == EIFCombatState::Blocking)
+	if (IsIdle() || IsBlocking())
 	{
-		const bool bWasBlocking = (GetCombatState() == EIFCombatState::Blocking);
-		if (bWasBlocking)
+		if (IsBlocking() && IsValid(LoadedCombatData) && !LoadedCombatData->ShieldBlock.GuardAttack.Montage.IsNull())
 		{
-			SetCombatState(EIFCombatState::Idle);
-		}
-
-		bool bAttackStarted = false;
-		if (bWasBlocking && IsValid(LoadedCombatData) && !LoadedCombatData->ShieldBlock.GuardAttack.Montage.IsNull())
-		{
-			bAttackStarted = PlayGuardAttack();
-		}
-
-		if (!bAttackStarted)
-		{
-			bAttackStarted = TryStartAttack();
-		}
-
-		if (!bAttackStarted)
-		{
-			if (bWasBlocking && bBlockInputHeld)
+			if (PlayGuardAttack())
 			{
-				TryResumeBlock();
+				return;
 			}
 		}
+
+		TryStartAttack();
 		return;
 	}
+
 	if (!IsAttacking())
 	{
 		return;
@@ -90,6 +71,7 @@ void UIFPlayerCombatComponent::StartBlock()
 
 	bAttackBuffered = false;
 	CurrentStepIndex = INDEX_NONE;
+	LastFinishedStepIndex = INDEX_NONE;
 	SetCombatState(EIFCombatState::Blocking);
 	UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] Block started."));
 }
@@ -98,7 +80,7 @@ void UIFPlayerCombatComponent::StopBlock()
 {
 	bBlockInputHeld = false;
 
-	if (GetCombatState() == EIFCombatState::Blocking)
+	if (IsBlocking())
 	{
 		SetCombatState(EIFCombatState::Idle);
 		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] Block stopped."));
@@ -119,12 +101,7 @@ bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor
 	}
 
 	const AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
-	if (!IsValid(Player) || Player->IsDead())
-	{
-		return false;
-	}
-
-	if (!IsValid(LoadedCombatData))
+	if (!IsValid(Player) || Player->IsDead() || !IsValid(LoadedCombatData))
 	{
 		return false;
 	}
@@ -138,7 +115,6 @@ bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor
 	}
 
 	const FVector OwnerForward2D = Player->GetActorForwardVector().GetSafeNormal2D();
-
 	FVector ToAttacker2D = OwnerForward2D;
 	if (IsValid(Attacker) && Attacker != Player)
 	{
@@ -185,12 +161,31 @@ bool UIFPlayerCombatComponent::TryBlockIncomingDamage(float DamageAmount, AActor
 		return true;
 	}
 
+	// Guard-breaking hit is still health-absorbed by the shield while zeroing stamina into Stunned.
 	if (IsValid(Stamina))
 	{
 		Stamina->TryConsumeStamina(CurrentStaminaVal);
 	}
 
 	TriggerGuardBreak();
+	return true;
+}
+
+bool UIFPlayerCombatComponent::PlayGuardAttack()
+{
+	if (!bCombatReady || !IsValid(LoadedCombatData))
+	{
+		return false;
+	}
+
+	LastFinishedStepIndex = INDEX_NONE;
+	bIsExecutingGuardAttack = true;
+	if (!ExecuteAttackStep(LoadedCombatData->ShieldBlock.GuardAttack, INDEX_NONE))
+	{
+		bIsExecutingGuardAttack = false;
+		return false;
+	}
+
 	return true;
 }
 
@@ -201,6 +196,7 @@ void UIFPlayerCombatComponent::TriggerGuardBreak()
 	ClearComboWindowState();
 	CloseHitWindow();
 	CurrentStepIndex = INDEX_NONE;
+	LastFinishedStepIndex = INDEX_NONE;
 	bIsLeapSlamming = false;
 	bIsExecutingGuardAttack = false;
 
@@ -220,7 +216,12 @@ void UIFPlayerCombatComponent::TriggerGuardBreak()
 
 	if (UWorld* const World = GetWorld())
 	{
-		World->GetTimerManager().SetTimer(GuardBreakTimerHandle, this, &UIFPlayerCombatComponent::HandleGuardBreakEnded, Duration, false);
+		World->GetTimerManager().SetTimer(
+			GuardBreakTimerHandle,
+			this,
+			&UIFPlayerCombatComponent::HandleGuardBreakEnded,
+			Duration,
+			false);
 	}
 }
 
@@ -237,7 +238,7 @@ void UIFPlayerCombatComponent::HandleGuardBreakEnded()
 		return;
 	}
 
-	if (GetCombatState() == EIFCombatState::Stunned)
+	if (IsStunned())
 	{
 		SetCombatState(EIFCombatState::Idle);
 		TryResumeBlock();
@@ -253,10 +254,9 @@ bool UIFPlayerCombatComponent::RequestLeapSlam()
 		return false;
 	}
 
-	const EIFCombatState CurrentState = GetCombatState();
-	if (CurrentState != EIFCombatState::Idle && CurrentState != EIFCombatState::Blocking)
+	if (!IsIdle() && !IsBlocking())
 	{
-		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored (state=%d)."), static_cast<int32>(CurrentState));
+		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored (state=%d)."), static_cast<int32>(GetCombatState()));
 		return false;
 	}
 
@@ -274,63 +274,18 @@ bool UIFPlayerCombatComponent::RequestLeapSlam()
 		return false;
 	}
 
-	if (IsValid(Stamina) && !Stamina->HasStamina(LeapSlamConfig.StaminaCost))
+	LastFinishedStepIndex = INDEX_NONE;
+	bAttackBuffered = false;
+	bIsExecutingGuardAttack = false;
+	bIsLeapSlamming = true;
+
+	if (!ExecuteAttackStep(LeapSlamConfig.Attack, INDEX_NONE))
 	{
-		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored: stamina below cost %.0f."), LeapSlamConfig.StaminaCost);
-		return false;
-	}
-
-	UAnimMontage* const LeapSlamMontage = LeapSlamConfig.Montage.Get();
-	if (!IsValid(LeapSlamMontage) || !IsValid(CachedAnimInstance))
-	{
-		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam ignored: montage or anim instance missing."));
-		return false;
-	}
-
-	const EIFCombatState StartingState = GetCombatState();
-	CloseHitWindow();
-
-	if (!PlayAttackMontage(LeapSlamMontage))
-	{
-		UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam aborted: montage playback failed."));
-		return false;
-	}
-
-	const int32 StartedInstanceID = CurrentMontageInstanceID;
-
-	if (IsValid(Stamina))
-	{
-		Stamina->TryConsumeStamina(LeapSlamConfig.StaminaCost);
-	}
-
-	if (CurrentMontageInstanceID != StartedInstanceID || GetCombatState() != StartingState)
-	{
+		bIsLeapSlamming = false;
 		return false;
 	}
 
 	NextLeapSlamAllowedTime = World->GetTimeSeconds() + LeapSlamConfig.CooldownSeconds;
-
-	if (const AController* const Controller = Player->GetController())
-	{
-		FRotator AimRotation = Player->GetActorRotation();
-		AimRotation.Yaw = Controller->GetControlRotation().Yaw;
-		Player->SetActorRotation(AimRotation);
-	}
-
-	bAttackBuffered = false;
-	ClearComboWindowState();
-	CurrentStepIndex = INDEX_NONE;
-	bIsExecutingGuardAttack = false;
-
-	LeapSlamAttackStep = LeapSlamConfig.ToAttackStep();
-
-	bIsLeapSlamming = true;
-	SetCombatState(EIFCombatState::Attacking);
-	if (CurrentMontageInstanceID != StartedInstanceID || !IsAttacking())
-	{
-		return false;
-	}
-
 	UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] LeapSlam attack started."));
 	return true;
 }
@@ -338,12 +293,7 @@ bool UIFPlayerCombatComponent::RequestLeapSlam()
 float UIFPlayerCombatComponent::GetLeapSlamCooldownRemaining() const
 {
 	const UWorld* const World = GetWorld();
-	if (!IsValid(World))
-	{
-		return 0.f;
-	}
-
-	return FMath::Max(0.f, NextLeapSlamAllowedTime - World->GetTimeSeconds());
+	return IsValid(World) ? FMath::Max(0.f, NextLeapSlamAllowedTime - World->GetTimeSeconds()) : 0.f;
 }
 
 void UIFPlayerCombatComponent::OpenComboWindow()
@@ -369,20 +319,32 @@ void UIFPlayerCombatComponent::CloseComboWindow()
 	bComboWindowOpen = false;
 }
 
+void UIFPlayerCombatComponent::SnapOwnerYawToController()
+{
+	AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
+	if (!IsValid(Player))
+	{
+		return;
+	}
+
+	if (const AController* const Controller = Player->GetController())
+	{
+		FRotator AimRotation = Player->GetActorRotation();
+		AimRotation.Yaw = Controller->GetControlRotation().Yaw;
+		Player->SetActorRotation(AimRotation);
+	}
+}
+
 void UIFPlayerCombatComponent::HandleStepStarted()
 {
 	ClearComboWindowState();
 
 	// Snap facing to camera yaw so swings align with aim.
-	AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
-	if (IsValid(Player))
+	SnapOwnerYawToController();
+
+	if (bIsLeapSlamming)
 	{
-		if (const AController* const Controller = Player->GetController())
-		{
-			FRotator AimRotation = Player->GetActorRotation();
-			AimRotation.Yaw = Controller->GetControlRotation().Yaw;
-			Player->SetActorRotation(AimRotation);
-		}
+		return;
 	}
 
 	const FIFMeleeAttackStep* const Step = GetCurrentStep();
@@ -393,10 +355,16 @@ void UIFPlayerCombatComponent::HandleStepStarted()
 		return;
 	}
 
-	const float FallbackDelay = Montage->GetPlayLength() * FMath::Clamp(Step->FallbackComboWindowStartNormalized, 0.f, 1.f);
+	const float EffectiveDuration = Montage->GetPlayLength() / FMath::Max(KINDA_SMALL_NUMBER, Montage->RateScale);
+	const float FallbackDelay = EffectiveDuration * FMath::Clamp(Step->FallbackComboWindowStartNormalized, 0.f, 1.f);
 	if (FallbackDelay > 0.f)
 	{
-		World->GetTimerManager().SetTimer(FallbackComboWindowHandle, this, &UIFPlayerCombatComponent::HandleFallbackComboWindow, FallbackDelay, false);
+		World->GetTimerManager().SetTimer(
+			FallbackComboWindowHandle,
+			this,
+			&UIFPlayerCombatComponent::HandleFallbackComboWindow,
+			FallbackDelay,
+			false);
 	}
 	else
 	{
@@ -440,6 +408,10 @@ void UIFPlayerCombatComponent::GatherRequiredAssetPaths(TArray<FSoftObjectPath>&
 		return;
 	}
 
+	if (!LoadedCombatData->BlockCascadeVFX.IsNull())
+	{
+		OutAssetPaths.Add(LoadedCombatData->BlockCascadeVFX.ToSoftObjectPath());
+	}
 	if (!LoadedCombatData->ShieldBlock.DeflectMontage.IsNull())
 	{
 		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.DeflectMontage.ToSoftObjectPath());
@@ -464,29 +436,56 @@ void UIFPlayerCombatComponent::GatherRequiredAssetPaths(TArray<FSoftObjectPath>&
 	{
 		OutAssetPaths.Add(LoadedCombatData->ShieldBlock.GuardAttack.HitSound.ToSoftObjectPath());
 	}
-	if (!LoadedCombatData->LeapSlam.Montage.IsNull())
+	if (!LoadedCombatData->LeapSlam.Attack.Montage.IsNull())
 	{
-		OutAssetPaths.Add(LoadedCombatData->LeapSlam.Montage.ToSoftObjectPath());
+		OutAssetPaths.Add(LoadedCombatData->LeapSlam.Attack.Montage.ToSoftObjectPath());
 	}
-	if (!LoadedCombatData->LeapSlam.HitVFX.IsNull())
+	if (!LoadedCombatData->LeapSlam.Attack.HitVFX.IsNull())
 	{
-		OutAssetPaths.Add(LoadedCombatData->LeapSlam.HitVFX.ToSoftObjectPath());
+		OutAssetPaths.Add(LoadedCombatData->LeapSlam.Attack.HitVFX.ToSoftObjectPath());
 	}
-	if (!LoadedCombatData->LeapSlam.HitCascadeVFX.IsNull())
+	if (!LoadedCombatData->LeapSlam.Attack.HitCascadeVFX.IsNull())
 	{
-		OutAssetPaths.Add(LoadedCombatData->LeapSlam.HitCascadeVFX.ToSoftObjectPath());
+		OutAssetPaths.Add(LoadedCombatData->LeapSlam.Attack.HitCascadeVFX.ToSoftObjectPath());
 	}
-	if (!LoadedCombatData->LeapSlam.HitSound.IsNull())
+	if (!LoadedCombatData->LeapSlam.Attack.HitSound.IsNull())
 	{
-		OutAssetPaths.Add(LoadedCombatData->LeapSlam.HitSound.ToSoftObjectPath());
+		OutAssetPaths.Add(LoadedCombatData->LeapSlam.Attack.HitSound.ToSoftObjectPath());
+	}
+}
+
+void UIFPlayerCombatComponent::HandleCombatStateTransition(EIFCombatState PreviousState, EIFCombatState NewState)
+{
+	Super::HandleCombatStateTransition(PreviousState, NewState);
+
+	if (PreviousState == EIFCombatState::Attacking && NewState != EIFCombatState::Attacking)
+	{
+		bAttackBuffered = false;
+		bIsLeapSlamming = false;
+		bIsExecutingGuardAttack = false;
+		ClearComboWindowState();
+	}
+
+	if (NewState == EIFCombatState::Blocking && IsValid(Stamina))
+	{
+		Stamina->SetRegenRateMultiplier(BlockingStaminaRegenMultiplier);
 	}
 }
 
 const FIFMeleeAttackStep* UIFPlayerCombatComponent::GetCurrentStep() const
 {
-	if (bIsLeapSlamming && IsValid(LoadedCombatData))
+	if (!IsValid(LoadedCombatData))
 	{
-		return &LeapSlamAttackStep;
+		return nullptr;
+	}
+
+	if (bIsLeapSlamming)
+	{
+		return &LoadedCombatData->LeapSlam.Attack;
+	}
+	if (bIsExecutingGuardAttack)
+	{
+		return &LoadedCombatData->ShieldBlock.GuardAttack;
 	}
 
 	return Super::GetCurrentStep();
@@ -494,9 +493,10 @@ const FIFMeleeAttackStep* UIFPlayerCombatComponent::GetCurrentStep() const
 
 void UIFPlayerCombatComponent::HandleMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
 {
-	if (bIsLeapSlamming)
+	if (bIsLeapSlamming || bIsExecutingGuardAttack)
 	{
 		bIsLeapSlamming = false;
+		bIsExecutingGuardAttack = false;
 		FinishCombo();
 		TryResumeBlock();
 		return;
@@ -518,30 +518,13 @@ void UIFPlayerCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, ACo
 		return;
 	}
 
-	if (!bIsHeavyStagger || (GetCombatState() == EIFCombatState::Attacking && bIsLeapSlamming))
+	if (!bIsHeavyStagger || (IsAttacking() && bIsLeapSlamming))
 	{
 		Super::PlayDirectionalHitReact(DamageCauser, EventInstigator, false);
 		return;
 	}
 
-	const EIFCombatState CurrentState = GetCombatState();
-	const bool bCanHitReact = (CurrentState == EIFCombatState::Idle)
-		|| (CurrentState == EIFCombatState::Blocking)
-		|| (CurrentState == EIFCombatState::HitReact)
-		|| (CurrentState == EIFCombatState::Attacking && !bIsLeapSlamming);
-
-	if (!bCanHitReact)
-	{
-		return;
-	}
-
 	Super::PlayDirectionalHitReact(DamageCauser, EventInstigator, true);
-
-	if (!IsAttacking())
-	{
-		bAttackBuffered = false;
-		ClearComboWindowState();
-	}
 
 	if (IsIdle())
 	{
@@ -561,17 +544,7 @@ void UIFPlayerCombatComponent::OnHitReactFinished()
 void UIFPlayerCombatComponent::TryResumeBlock()
 {
 	const AIFPlayerCharacter* const Player = Cast<AIFPlayerCharacter>(GetOwner());
-	if (!IsValid(Player) || Player->IsDead() || !IsIdle())
-	{
-		return;
-	}
-
-	if (!bBlockInputHeld)
-	{
-		return;
-	}
-
-	if (!IsValid(LoadedCombatData))
+	if (!IsValid(Player) || Player->IsDead() || !IsIdle() || !bBlockInputHeld || !IsValid(LoadedCombatData))
 	{
 		return;
 	}
@@ -583,6 +556,7 @@ void UIFPlayerCombatComponent::TryResumeBlock()
 
 	bAttackBuffered = false;
 	CurrentStepIndex = INDEX_NONE;
+	LastFinishedStepIndex = INDEX_NONE;
 	bIsExecutingGuardAttack = false;
 	SetCombatState(EIFCombatState::Blocking);
 	UE_LOG(LogIronField, Verbose, TEXT("[IF-Combat] Block resumed."));
@@ -625,6 +599,7 @@ void UIFPlayerCombatComponent::HandleOwnerRevived()
 	bAttackBuffered = false;
 	bIsLeapSlamming = false;
 	bIsExecutingGuardAttack = false;
+	NextLeapSlamAllowedTime = 0.f;
 	ClearComboWindowState();
 	Super::HandleOwnerRevived();
 }

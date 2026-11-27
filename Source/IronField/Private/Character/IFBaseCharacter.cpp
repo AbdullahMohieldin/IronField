@@ -38,28 +38,6 @@ void AIFBaseCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Custom collision presets have no named profile to reapply, so save channel responses too.
-	if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
-	{
-		CapsuleCollisionProfile = Capsule->GetCollisionProfileName();
-		CapsuleCollisionEnabled = Capsule->GetCollisionEnabled();
-		SavedCapsuleResponses = Capsule->GetCollisionResponseToChannels();
-		bCapsuleAffectsNavigation = Capsule->CanEverAffectNavigation();
-	}
-	if (USkeletalMeshComponent* const MeshComp = GetMesh())
-	{
-		MeshCollisionProfile = MeshComp->GetCollisionProfileName();
-		MeshCollisionEnabled = MeshComp->GetCollisionEnabled();
-		bMeshAffectsNavigation = MeshComp->CanEverAffectNavigation();
-	}
-
-	if (const UCharacterMovementComponent* const Movement = GetCharacterMovement())
-	{
-		bSavedOrientRotationToMovement = Movement->bOrientRotationToMovement;
-		bSavedUseControllerDesiredRotation = Movement->bUseControllerDesiredRotation;
-		bSavedUseRVOAvoidance = Movement->bUseRVOAvoidance;
-	}
-
 	if (IsValid(HealthComponent))
 	{
 		HealthComponent->OnDeath.AddUniqueDynamic(this, &AIFBaseCharacter::HandleDeath);
@@ -109,7 +87,7 @@ float AIFBaseCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const
 	{
 		return 0.f;
 	}
-	if (IsValid(EventInstigator) && IFTeamUtils::AreFriendly(this, EventInstigator->GetPawn()))
+	if (IsValid(EventInstigator) && IFTeamUtils::AreFriendly(this, EventInstigator))
 	{
 		return 0.f;
 	}
@@ -124,31 +102,26 @@ float AIFBaseCharacter::TakeDamage(float DamageAmount, struct FDamageEvent const
 		return 0.f;
 	}
 
-	const AActor* Attacker = DamageCauser;
-	if (!IsValid(Attacker) && IsValid(EventInstigator))
+	AActor* InstigatorActor = IsValid(EventInstigator) ? static_cast<AActor*>(EventInstigator->GetPawn()) : nullptr;
+	if (!IsValid(InstigatorActor))
 	{
-		Attacker = EventInstigator->GetPawn();
+		InstigatorActor = DamageCauser;
 	}
 
-	FVector PushDir = (IsValid(Attacker) && Attacker != this)
-		? (GetActorLocation() - Attacker->GetActorLocation()).GetSafeNormal2D()
+	FVector PushDir = (IsValid(InstigatorActor) && InstigatorActor != this)
+		? (GetActorLocation() - InstigatorActor->GetActorLocation()).GetSafeNormal2D()
 		: FVector::ZeroVector;
 	if (PushDir.IsNearlyZero())
 	{
 		PushDir = (-GetActorForwardVector()).GetSafeNormal2D();
-	}
-	if (PushDir.IsNearlyZero())
-	{
-		PushDir = FVector::ForwardVector;
 	}
 	LastDamageDirection = PushDir;
 
 	const bool bIsHeavyStagger = DamageEvent.DamageTypeClass != nullptr
 		&& DamageEvent.DamageTypeClass->IsChildOf(UIFHeavyMeleeDamageType::StaticClass());
 
-	const float PrevHealth = HealthComponent->GetCurrentHealth();
 	Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
-	const float ActualDamage = PrevHealth - HealthComponent->GetCurrentHealth();
+	const float ActualDamage = HealthComponent->ApplyDamage(DamageAmount, InstigatorActor);
 
 	if (ActualDamage > 0.f && IsAlive() && IsValid(CombatComponent))
 	{
@@ -242,29 +215,40 @@ void AIFBaseCharacter::RestoreAliveState()
 	ClearLocalHitstop();
 	LastDamageDirection = FVector::ZeroVector;
 
+	const AIFBaseCharacter* const DefaultChar = GetClass()->GetDefaultObject<AIFBaseCharacter>();
+
 	if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
 	{
-		Capsule->SetCollisionProfileName(CapsuleCollisionProfile);
-		Capsule->SetCollisionResponseToChannels(SavedCapsuleResponses);
-		Capsule->SetCollisionEnabled(CapsuleCollisionEnabled);
-		Capsule->SetCanEverAffectNavigation(bCapsuleAffectsNavigation);
+		if (const UCapsuleComponent* const DefaultCapsule = DefaultChar ? DefaultChar->GetCapsuleComponent() : nullptr)
+		{
+			Capsule->SetCollisionProfileName(DefaultCapsule->GetCollisionProfileName());
+			Capsule->SetCollisionResponseToChannels(DefaultCapsule->GetCollisionResponseToChannels());
+			Capsule->SetCollisionEnabled(DefaultCapsule->GetCollisionEnabled());
+			Capsule->SetCanEverAffectNavigation(DefaultCapsule->CanEverAffectNavigation());
+		}
 	}
 
 	if (USkeletalMeshComponent* const MeshComp = GetMesh())
 	{
-		MeshComp->SetCollisionProfileName(MeshCollisionProfile);
-		// SetCollisionProfileName resets CollisionEnabled, so reapply the saved mode after it.
-		MeshComp->SetCollisionEnabled(MeshCollisionEnabled);
-		MeshComp->SetCanEverAffectNavigation(bMeshAffectsNavigation);
+		if (const USkeletalMeshComponent* const DefaultMesh = DefaultChar ? DefaultChar->GetMesh() : nullptr)
+		{
+			MeshComp->SetCollisionProfileName(DefaultMesh->GetCollisionProfileName());
+			// SetCollisionProfileName resets CollisionEnabled, so reapply the CDO mode after it.
+			MeshComp->SetCollisionEnabled(DefaultMesh->GetCollisionEnabled());
+			MeshComp->SetCanEverAffectNavigation(DefaultMesh->CanEverAffectNavigation());
+		}
 	}
 
 	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
 	{
 		Movement->SetMovementMode(MOVE_Walking);
 		Movement->FindFloor(GetActorLocation(), Movement->CurrentFloor, false);
-		Movement->bOrientRotationToMovement = bSavedOrientRotationToMovement;
-		Movement->bUseControllerDesiredRotation = bSavedUseControllerDesiredRotation;
-		Movement->SetAvoidanceEnabled(bSavedUseRVOAvoidance);
+		if (const UCharacterMovementComponent* const DefaultMovement = DefaultChar ? DefaultChar->GetCharacterMovement() : nullptr)
+		{
+			Movement->bOrientRotationToMovement = DefaultMovement->bOrientRotationToMovement;
+			Movement->bUseControllerDesiredRotation = DefaultMovement->bUseControllerDesiredRotation;
+			Movement->SetAvoidanceEnabled(DefaultMovement->bUseRVOAvoidance);
+		}
 	}
 }
 
@@ -281,6 +265,7 @@ void AIFBaseCharacter::ApplyLocalHitstop(float DurationSeconds, float TimeDilati
 		return;
 	}
 
+	// Per-actor dilation freezes only the attacker and victim without slowing global world time.
 	CustomTimeDilation = FMath::Clamp(TimeDilation, 0.01f, 1.f);
 	bInLocalHitstop = true;
 	World->GetTimerManager().SetTimer(HitstopTimerHandle, this, &AIFBaseCharacter::ClearLocalHitstop, DurationSeconds, false);

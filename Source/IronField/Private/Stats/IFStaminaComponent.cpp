@@ -139,6 +139,7 @@ void UIFStaminaComponent::RegenerateStamina(float DeltaTime)
 void UIFStaminaComponent::UpdateTickEnabled()
 {
 	const bool bNeedsTick = (IsDraining() && CurrentStamina > 0.f) || CanRegenerate();
+	// Keep component tick disabled at full idle stamina so 60+ soldiers cost zero tick overhead.
 	SetComponentTickEnabled(bNeedsTick);
 }
 
