@@ -30,6 +30,7 @@ public:
 	float GetEffectiveAttackRange(const AActor* Target) const;
 	float GetMaxMeleeEngagementRange(const AActor* Target) const;
 	float GetHorizontalDistanceToTarget(const AActor* Target) const;
+	bool IsTargetInMeleeReach(const AActor* Target, bool bAllowHoldBuffer = false) const;
 	FVector GetCombatApproachPoint(const AActor* Target) const;
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
@@ -101,6 +102,9 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Combat", meta = (ClampMin = "0.0"))
 	float AttackRangeBuffer = 25.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Combat", meta = (ClampMin = "20.0"))
+	float MaxMeleeVerticalDistance = 120.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Death", meta = (ClampMin = "0.0"))
 	float CorpseLifeSpan = 12.f;

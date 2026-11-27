@@ -399,6 +399,29 @@ float AIFSoldierCharacter::GetHorizontalDistanceToTarget(const AActor* Target) c
 	return FVector::Dist2D(GetActorLocation(), Target->GetActorLocation());
 }
 
+bool AIFSoldierCharacter::IsTargetInMeleeReach(const AActor* Target, bool bAllowHoldBuffer) const
+{
+	if (!IsValid(Target))
+	{
+		return false;
+	}
+
+	const float MaxHorizRange = bAllowHoldBuffer ? GetMaxMeleeEngagementRange(Target) : GetEffectiveAttackRange(Target);
+	if (GetHorizontalDistanceToTarget(Target) > MaxHorizRange)
+	{
+		return false;
+	}
+
+	const float SelfZ = GetActorLocation().Z;
+	if (const AIFStructure* const Structure = Cast<AIFStructure>(Target))
+	{
+		const FVector SurfacePoint3D = Structure->GetClosestSurfacePoint(GetActorLocation());
+		return FMath::Abs(SurfacePoint3D.Z - SelfZ) <= MaxMeleeVerticalDistance;
+	}
+
+	return FMath::Abs(Target->GetActorLocation().Z - SelfZ) <= MaxMeleeVerticalDistance;
+}
+
 FVector AIFSoldierCharacter::GetCombatApproachPoint(const AActor* Target) const
 {
 	if (!IsValid(Target))
@@ -408,14 +431,9 @@ FVector AIFSoldierCharacter::GetCombatApproachPoint(const AActor* Target) const
 
 	if (const AIFStructure* const Structure = Cast<AIFStructure>(Target))
 	{
-		const FVector SurfacePoint = Structure->GetClosestSurfacePoint2D(GetActorLocation());
-		const FVector OutwardDir = (GetActorLocation() - SurfacePoint).GetSafeNormal2D();
-		if (OutwardDir.IsNearlyZero())
-		{
-			return SurfacePoint;
-		}
 		const float CapsuleRadius = IsValid(GetCapsuleComponent()) ? GetCapsuleComponent()->GetScaledCapsuleRadius() : 44.f;
-		return SurfacePoint + OutwardDir * (CapsuleRadius + 10.f);
+		const float LateralSpreadOffset = static_cast<float>(static_cast<int32>(GetUniqueID() % 5) - 2) * (CapsuleRadius * 1.15f);
+		return Structure->GetSpreadCombatApproachPoint(GetActorLocation(), CapsuleRadius, LateralSpreadOffset);
 	}
 
 	return Target->GetActorLocation();

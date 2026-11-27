@@ -13,7 +13,7 @@ struct IRONFIELD_API FIFFormationSolveParams
 	/** Click position for instant RMB orders, or drag origin for RMB hold-and-drag orders. */
 	FVector AnchorPoint = FVector::ZeroVector;
 
-	/** Drag endpoint when bIsDrag is true (right flank for Line; perimeter/extent handle for Square/Circle). */
+	/** Drag endpoint when bIsDrag is true (right flank for Line, or perimeter handle for Square/Circle). */
 	FVector DragEndPoint = FVector::ZeroVector;
 	bool bIsDrag = false;
 
@@ -21,7 +21,6 @@ struct IRONFIELD_API FIFFormationSolveParams
 	FVector SquadCentroid = FVector::ZeroVector;
 	FVector CameraForward = FVector::ForwardVector;
 
-	/** Formation spacing and geometry bounds. */
 	float LateralSpacing = 115.f;
 	float RankSpacing = 125.f;
 	float SquareSpacingScale = 0.92f;

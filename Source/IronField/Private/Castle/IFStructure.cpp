@@ -249,9 +249,28 @@ FVector AIFStructure::GetFootprintExtent() const
 
 FVector AIFStructure::GetClosestSurfacePoint2D(const FVector& FromLocation) const
 {
+	FVector Point = GetClosestSurfacePoint(FromLocation);
+	Point.Z = GetActorLocation().Z;
+	return Point;
+}
+
+FVector AIFStructure::GetClosestSurfacePoint(const FVector& FromLocation) const
+{
+	auto ProjectOntoBox3D = [&FromLocation](const UBoxComponent* Box) -> FVector
+	{
+		const FTransform BoxTransform = Box->GetComponentTransform();
+		const FVector LocalPoint = BoxTransform.InverseTransformPosition(FromLocation);
+		const FVector Extent = Box->GetUnscaledBoxExtent();
+		const FVector ClampedLocal(
+			FMath::Clamp(LocalPoint.X, -Extent.X, Extent.X),
+			FMath::Clamp(LocalPoint.Y, -Extent.Y, Extent.Y),
+			FMath::Clamp(LocalPoint.Z, -Extent.Z, Extent.Z));
+		return BoxTransform.TransformPosition(ClampedLocal);
+	};
+
 	if (!ExtraCollisionBoxes.IsEmpty())
 	{
-		auto FindClosestAmong = [this, &FromLocation](bool bGroundReachableOnly, FVector& OutPoint) -> bool
+		auto FindClosestAmong = [this, &FromLocation, &ProjectOntoBox3D](bool bGroundReachableOnly, FVector& OutPoint) -> bool
 		{
 			bool bHasAny = false;
 			float BestDistSq = MAX_flt;
@@ -267,15 +286,8 @@ FVector AIFStructure::GetClosestSurfacePoint2D(const FVector& FromLocation) cons
 					continue;
 				}
 
-				const FTransform BoxTransform = Box->GetComponentTransform();
-				const FVector LocalPoint = BoxTransform.InverseTransformPosition(FromLocation);
-				const FVector ClampedLocal(
-					FMath::Clamp(LocalPoint.X, -Extent.X, Extent.X),
-					FMath::Clamp(LocalPoint.Y, -Extent.Y, Extent.Y),
-					0.f);
-				FVector WorldSurface = BoxTransform.TransformPosition(ClampedLocal);
-				WorldSurface.Z = GetActorLocation().Z;
-				const float DistSq = FVector::DistSquared2D(FromLocation, WorldSurface);
+				const FVector WorldSurface = ProjectOntoBox3D(Box);
+				const float DistSq = FVector::DistSquared(FromLocation, WorldSurface);
 				if (!bHasAny || DistSq < BestDistSq)
 				{
 					bHasAny = true;
@@ -298,18 +310,95 @@ FVector AIFStructure::GetClosestSurfacePoint2D(const FVector& FromLocation) cons
 		return GetActorLocation();
 	}
 
-	const FTransform BoxTransform = BoundsCollision->GetComponentTransform();
-	const FVector LocalPoint = BoxTransform.InverseTransformPosition(FromLocation);
-	const FVector Extent = BoundsCollision->GetUnscaledBoxExtent();
+	return ProjectOntoBox3D(BoundsCollision);
+}
 
-	const FVector ClampedLocal(
+FVector AIFStructure::GetSpreadCombatApproachPoint(const FVector& FromLocation, float CapsuleRadius, float LateralOffset) const
+{
+	const UBoxComponent* BestBox = nullptr;
+	if (!ExtraCollisionBoxes.IsEmpty())
+	{
+		auto FindBestBox = [this, &FromLocation](bool bGroundReachableOnly) -> const UBoxComponent*
+		{
+			const UBoxComponent* Closest = nullptr;
+			float BestDistSq = MAX_flt;
+			for (const UBoxComponent* const Box : ExtraCollisionBoxes)
+			{
+				if (!IsValid(Box))
+				{
+					continue;
+				}
+				const FVector Extent = Box->GetUnscaledBoxExtent();
+				if (bGroundReachableOnly && (Box->GetRelativeLocation().Z - Extent.Z) >= 180.f)
+				{
+					continue;
+				}
+
+				const FTransform BoxTransform = Box->GetComponentTransform();
+				const FVector LocalPoint = BoxTransform.InverseTransformPosition(FromLocation);
+				const FVector ClampedLocal(
+					FMath::Clamp(LocalPoint.X, -Extent.X, Extent.X),
+					FMath::Clamp(LocalPoint.Y, -Extent.Y, Extent.Y),
+					FMath::Clamp(LocalPoint.Z, -Extent.Z, Extent.Z));
+				const FVector WorldSurface = BoxTransform.TransformPosition(ClampedLocal);
+				const float DistSq = FVector::DistSquared(FromLocation, WorldSurface);
+				if (!Closest || DistSq < BestDistSq)
+				{
+					BestDistSq = DistSq;
+					Closest = Box;
+				}
+			}
+			return Closest;
+		};
+
+		BestBox = FindBestBox(true);
+		if (!BestBox)
+		{
+			BestBox = FindBestBox(false);
+		}
+	}
+
+	if (!BestBox)
+	{
+		BestBox = BoundsCollision;
+	}
+
+	if (!IsValid(BestBox))
+	{
+		return GetActorLocation();
+	}
+
+	const FTransform BoxTransform = BestBox->GetComponentTransform();
+	const FVector LocalPoint = BoxTransform.InverseTransformPosition(FromLocation);
+	const FVector Extent = BestBox->GetUnscaledBoxExtent();
+
+	FVector ClampedLocal(
 		FMath::Clamp(LocalPoint.X, -Extent.X, Extent.X),
 		FMath::Clamp(LocalPoint.Y, -Extent.Y, Extent.Y),
 		0.f);
 
-	FVector WorldSurface = BoxTransform.TransformPosition(ClampedLocal);
-	WorldSurface.Z = GetActorLocation().Z;
-	return WorldSurface;
+	// Spread along whichever face (X or Y) is closest to the approaching soldier, clamped inside the face bounds.
+	const float DistToXFace = FMath::Abs(Extent.X - FMath::Abs(LocalPoint.X));
+	const float DistToYFace = FMath::Abs(Extent.Y - FMath::Abs(LocalPoint.Y));
+	if (DistToXFace <= DistToYFace)
+	{
+		const float MaxSpreadY = FMath::Max(0.f, Extent.Y - CapsuleRadius);
+		ClampedLocal.Y = FMath::Clamp(ClampedLocal.Y + LateralOffset, -MaxSpreadY, MaxSpreadY);
+	}
+	else
+	{
+		const float MaxSpreadX = FMath::Max(0.f, Extent.X - CapsuleRadius);
+		ClampedLocal.X = FMath::Clamp(ClampedLocal.X + LateralOffset, -MaxSpreadX, MaxSpreadX);
+	}
+
+	FVector SurfacePoint = BoxTransform.TransformPosition(ClampedLocal);
+	SurfacePoint.Z = GetActorLocation().Z;
+	const FVector OutwardDir = (FromLocation - SurfacePoint).GetSafeNormal2D();
+	if (OutwardDir.IsNearlyZero())
+	{
+		return SurfacePoint;
+	}
+	return SurfacePoint + OutwardDir * (CapsuleRadius + 10.f);
 }
 
 float AIFStructure::GetHorizontalSurfaceDistance(const FVector& FromLocation) const

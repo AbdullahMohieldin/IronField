@@ -31,7 +31,7 @@ namespace
 
 	FVector ComputeForwardFromRight(const FVector& Right)
 	{
-		// Dragging left-to-right across the viewport defines +Right; Right x Up = (Ry, -Rx, 0) faces away from camera.
+		// Dragging left-to-right across the viewport defines +Right, so Right x Up = (Ry, -Rx, 0) faces away from camera.
 		return FVector(Right.Y, -Right.X, 0.f).GetSafeNormal2D();
 	}
 
@@ -44,7 +44,12 @@ namespace
 		FVector FormationForward = ResolveFallbackForward(Params, ProjectedAnchor);
 		FVector FormationRight = ComputeRightFromForward(FormationForward);
 		FVector FrontRankCenter = ProjectedAnchor;
-		int32 Columns = 1;
+
+		const int32 MinCols = FMath::Min(Count, FMath::Max(1, Params.MinLineColumns));
+		const int32 MaxCols = FMath::Max(MinCols, Params.MaxLineColumns);
+		const float Aspect = FMath::Max(Params.LineAspectRatio, 1.f);
+		int32 Columns = FMath::Clamp(FMath::RoundToInt(FMath::Sqrt(static_cast<float>(Count) * Aspect)), MinCols, MaxCols);
+		Columns = FMath::Clamp(Columns, 1, Count);
 
 		if (Params.bIsDrag)
 		{
@@ -60,22 +65,6 @@ namespace
 				FrontRankCenter.Z = ProjectedAnchor.Z;
 				Columns = FMath::Clamp(FMath::FloorToInt(DragWidth / LateralSpacing) + 1, 1, Count);
 			}
-			else
-			{
-				const int32 MinCols = FMath::Min(Count, FMath::Max(1, Params.MinLineColumns));
-				const int32 MaxCols = FMath::Max(MinCols, Params.MaxLineColumns);
-				const float Aspect = FMath::Max(Params.LineAspectRatio, 1.f);
-				Columns = FMath::Clamp(FMath::RoundToInt(FMath::Sqrt(static_cast<float>(Count) * Aspect)), MinCols, MaxCols);
-				Columns = FMath::Clamp(Columns, 1, Count);
-			}
-		}
-		else
-		{
-			const int32 MinCols = FMath::Min(Count, FMath::Max(1, Params.MinLineColumns));
-			const int32 MaxCols = FMath::Max(MinCols, Params.MaxLineColumns);
-			const float Aspect = FMath::Max(Params.LineAspectRatio, 1.f);
-			Columns = FMath::Clamp(FMath::RoundToInt(FMath::Sqrt(static_cast<float>(Count) * Aspect)), MinCols, MaxCols);
-			Columns = FMath::Clamp(Columns, 1, Count);
 		}
 
 		OutCenter = FrontRankCenter;
@@ -177,7 +166,6 @@ namespace
 		OutSlots.Reserve(Count);
 		int32 Remaining = Count;
 
-		// 1. Fill outermost perimeter first, stepping inward concentrically.
 		float CurrentRadius = BaseRadius;
 		float InnermostPlacedRadius = BaseRadius;
 		while (Remaining > 0 && CurrentRadius >= LateralSpacing * 0.75f)
@@ -187,7 +175,6 @@ namespace
 			CurrentRadius -= RankSpacing;
 		}
 
-		// 2. If space remains at the center with sufficient clearance from the innermost ring, place 1 unit there.
 		if (Remaining > 0 && InnermostPlacedRadius >= LateralSpacing * 0.85f)
 		{
 			FIFFormationSlot CenterSlot;
@@ -197,7 +184,7 @@ namespace
 			--Remaining;
 		}
 
-		// 3. Anti-overlap safety: if dragged too small to hold all soldiers inside, expand outward cleanly.
+		// Expand outward if the dragged radius was too tight to hold every unit inside.
 		float OverflowRadius = BaseRadius + RankSpacing;
 		while (Remaining > 0)
 		{
@@ -340,16 +327,38 @@ bool FIFFormationSolver::SolveFormation(
 			OutFormationCenter = ProjectedCenter.Location;
 		}
 
-		for (FIFFormationSlot& Slot : OutSlots)
+		for (int32 SlotIdx = 0; SlotIdx < OutSlots.Num(); ++SlotIdx)
 		{
+			FIFFormationSlot& Slot = OutSlots[SlotIdx];
 			FNavLocation NavSlot;
 			if (NavSys->ProjectPointToNavigation(Slot.Location, NavSlot, Params.NavQueryExtent))
 			{
 				Slot.Location = NavSlot.Location;
+				continue;
 			}
-			else
+
+			// Step inward toward OutFormationCenter along the ray before falling back so blocked slots don't pile up on one point.
+			bool bResolved = false;
+			constexpr float StepAlphas[] = { 0.75f, 0.50f, 0.25f };
+			for (const float Alpha : StepAlphas)
 			{
-				Slot.Location = OutFormationCenter;
+				const FVector Sample = FMath::Lerp(OutFormationCenter, Slot.Location, Alpha);
+				if (NavSys->ProjectPointToNavigation(Sample, NavSlot, Params.NavQueryExtent))
+				{
+					Slot.Location = NavSlot.Location;
+					bResolved = true;
+					break;
+				}
+			}
+
+			if (!bResolved)
+			{
+				const float Angle = static_cast<float>(SlotIdx) * (2.f * PI / 8.f);
+				const float RingRadius = 45.f * static_cast<float>(1 + (SlotIdx / 8));
+				const FVector RingSample = OutFormationCenter + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.f) * RingRadius;
+				Slot.Location = NavSys->ProjectPointToNavigation(RingSample, NavSlot, Params.NavQueryExtent)
+					? NavSlot.Location
+					: OutFormationCenter;
 			}
 		}
 	}
@@ -371,7 +380,6 @@ void FIFFormationSolver::AssignSoldiersToSlots(
 
 	OutSoldierToSlotIndices.SetNum(Count);
 
-	// 1. Greedy nearest-slot seeding for a strong initial permutation.
 	TArray<bool> SlotTaken;
 	SlotTaken.Init(false, Count);
 
@@ -399,8 +407,7 @@ void FIFFormationSolver::AssignSoldiersToSlots(
 		OutSoldierToSlotIndices[SoldierIdx] = BestSlot;
 	}
 
-	// 2. Deterministic 2-opt swap pass minimizing total squared 2D travel distance.
-	// Any pair of crossing paths strictly increases DistSq(A, B') + DistSq(A', B), so convergence guarantees crossing-free paths.
+	// Minimize unsquared 2D distance so every crossing pair of paths is strictly uncrossed by the triangle inequality.
 	constexpr int32 MaxSwapPasses = 16;
 	for (int32 Pass = 0; Pass < MaxSwapPasses; ++Pass)
 	{
@@ -413,14 +420,14 @@ void FIFFormationSolver::AssignSoldiersToSlots(
 				const int32 SlotJ = OutSoldierToSlotIndices[j];
 
 				const float CurrentCost =
-					FVector::DistSquared2D(SoldierLocations[i], Slots[SlotI].Location) +
-					FVector::DistSquared2D(SoldierLocations[j], Slots[SlotJ].Location);
+					FVector::Dist2D(SoldierLocations[i], Slots[SlotI].Location) +
+					FVector::Dist2D(SoldierLocations[j], Slots[SlotJ].Location);
 
 				const float SwappedCost =
-					FVector::DistSquared2D(SoldierLocations[i], Slots[SlotJ].Location) +
-					FVector::DistSquared2D(SoldierLocations[j], Slots[SlotI].Location);
+					FVector::Dist2D(SoldierLocations[i], Slots[SlotJ].Location) +
+					FVector::Dist2D(SoldierLocations[j], Slots[SlotI].Location);
 
-				if (SwappedCost + 1.f < CurrentCost)
+				if (SwappedCost + 0.1f < CurrentCost)
 				{
 					OutSoldierToSlotIndices[i] = SlotJ;
 					OutSoldierToSlotIndices[j] = SlotI;

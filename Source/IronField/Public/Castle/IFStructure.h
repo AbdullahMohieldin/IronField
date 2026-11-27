@@ -86,6 +86,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Structure|Combat")
 	FVector GetClosestSurfacePoint2D(const FVector& FromLocation) const;
 
+	// Exact 3D box-surface point closest to FromLocation, preserving surface Z for vertical melee reach checks.
+	UFUNCTION(BlueprintPure, Category = "IronField|Structure|Combat")
+	FVector GetClosestSurfacePoint(const FVector& FromLocation) const;
+
+	// Approach point shifted laterally along the nearest box face so multiple attackers spread along walls/gates.
+	FVector GetSpreadCombatApproachPoint(const FVector& FromLocation, float CapsuleRadius, float LateralOffset) const;
+
 	// Horizontal distance from FromLocation to the nearest point on this structure's collision footprint.
 	UFUNCTION(BlueprintPure, Category = "IronField|Structure|Combat")
 	float GetHorizontalSurfaceDistance(const FVector& FromLocation) const;

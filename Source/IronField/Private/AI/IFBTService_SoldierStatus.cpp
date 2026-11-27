@@ -45,8 +45,7 @@ void UIFBTService_SoldierStatus::TickNode(UBehaviorTreeComponent& OwnerComp, uin
 		return;
 	}
 
-	// Authoritative decision refresh; idempotent, so the extra calls from perception
-	// and orders simply collapse into no-ops.
+	// Idempotent refresh so perception and order updates collapse into no-ops.
 	Controller->RefreshDecision();
 
 	UBlackboardComponent* const Blackboard = OwnerComp.GetBlackboardComponent();

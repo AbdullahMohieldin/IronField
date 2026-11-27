@@ -67,10 +67,11 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 		MoveReq.SetProjectGoalLocation(true);
 	}
 
-	MoveReq.SetAcceptanceRadius(IsValid(Cast<AIFStructure>(GoalActor)) ? 20.f : AcceptanceRadius);
+	MoveReq.SetAcceptanceRadius(AcceptanceRadius);
 	MoveReq.SetUsePathfinding(true);
 	MoveReq.SetAllowPartialPath(true);
 	MoveReq.SetCanStrafe(false);
+	// Disable Unreal's implicit radius padding because GetEffectiveAttackRange already accounts for both capsule radii.
 	MoveReq.SetReachTestIncludesAgentRadius(false);
 	MoveReq.SetReachTestIncludesGoalRadius(false);
 
@@ -151,7 +152,7 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 	const bool bGoalActorChanged = (CurrentGoalActor != Memory->TrackedGoalActor.Get())
 		|| (IsValid(CurrentGoalActor) != Memory->bTrackedActorGoal);
 	const bool bGoalPointMoved = !IsValid(CurrentGoalActor)
-		&& FVector::DistSquared(CurrentGoalLocation, Memory->TrackedGoalLocation) > FMath::Square(50.f);
+		&& FVector::DistSquared(CurrentGoalLocation, Memory->TrackedGoalLocation) > FMath::Square(10.f);
 
 	const bool bMovingWithSameActor = (Controller->GetMoveStatus() == EPathFollowingStatus::Moving)
 		&& IsValid(CurrentGoalActor)
@@ -179,30 +180,30 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 	const float Dist2D = (IsValid(CurrentGoalActor) && IsValid(Soldier))
 		? Soldier->GetHorizontalDistanceToTarget(CurrentGoalActor)
 		: FVector::Dist2D(PawnLocation, CurrentGoalLocation);
-	if (Dist2D <= Radius)
+	const bool bArrived = (IsValid(CurrentGoalActor) && IsValid(Soldier) && CurrentGoalActor == Controller->GetCurrentTarget())
+		? Soldier->IsTargetInMeleeReach(CurrentGoalActor, false)
+		: (Dist2D <= Radius);
+	if (bArrived)
 	{
 		FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
 		return;
 	}
 
-	if (!IsValid(CurrentGoalActor))
+	if (FVector::DistSquared2D(PawnLocation, Memory->LastProgressLocation) >= FMath::Square(MinStallProgressDistance))
 	{
-		if (FVector::DistSquared2D(PawnLocation, Memory->LastProgressLocation) >= FMath::Square(MinStallProgressDistance))
+		Memory->LastProgressLocation = PawnLocation;
+		Memory->StallElapsedSeconds = 0.f;
+		Memory->RepathRetryCount = 0;
+	}
+	else
+	{
+		Memory->StallElapsedSeconds += DeltaSeconds;
+		if (Memory->StallElapsedSeconds >= StallTimeoutSeconds)
 		{
-			Memory->LastProgressLocation = PawnLocation;
-			Memory->StallElapsedSeconds = 0.f;
-			Memory->RepathRetryCount = 0;
-		}
-		else
-		{
-			Memory->StallElapsedSeconds += DeltaSeconds;
-			if (Memory->StallElapsedSeconds >= StallTimeoutSeconds)
-			{
-				Controller->StopMovement();
-				Controller->NotifyMoveOrderBlockedOrStalled();
-				FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
-				return;
-			}
+			Controller->StopMovement();
+			Controller->NotifyMoveOrderBlockedOrStalled();
+			FinishLatentTask(OwnerComp, IsValid(CurrentGoalActor) ? EBTNodeResult::Failed : EBTNodeResult::Succeeded);
+			return;
 		}
 	}
 

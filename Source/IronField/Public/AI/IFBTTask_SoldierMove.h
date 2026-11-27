@@ -54,6 +54,5 @@ protected:
 	int32 MaxDynamicRepathRetries = 3;
 
 private:
-	// Issues one request for the controller's current goal and records what was requested.
 	EBTNodeResult::Type IssueMove(AIFSoldierAIController& Controller, FBTTask_SoldierMoveMemory& Memory);
 };

@@ -325,6 +325,10 @@ private:
 	EIFTacticalFormationType ActiveFormationType = EIFTacticalFormationType::Line;
 	FVector FormationDragStartPoint = FVector::ZeroVector;
 	FVector FormationDragCurrentPoint = FVector::ZeroVector;
+	FVector LastPreviewGroundPoint = FVector::ZeroVector;
+	EIFTacticalFormationType LastPreviewFormationType = EIFTacticalFormationType::Line;
+	int32 LastPreviewUnitCount = 0;
+	bool bHasPreviewCache = false;
 	TArray<FIFFormationSlot> PreviewFormationSlots;
 
 	bool bIsTacticalModeActive = false;

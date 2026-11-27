@@ -5,7 +5,7 @@
 
 class AActor;
 
-/** High-level behaviour selected by AIFSoldierAIController; drives BT branch selection. */
+/** High-level behaviour selected by AIFSoldierAIController. */
 UENUM(BlueprintType)
 enum class EIFSoldierAction : uint8
 {
@@ -19,10 +19,37 @@ enum class EIFSoldierAction : uint8
 	HoldPosition
 };
 
-/**
- * Explicit orders. Holding a position is not an order: IssueHoldPosition re-anchors
- * the soldier and lets normal Priority 2 self-defence take over at the new post.
- */
+/** Coarse Behavior Tree branch mapped from EIFSoldierAction and mirrored to the Blackboard. */
+UENUM(BlueprintType)
+enum class EIFSoldierBranch : uint8
+{
+	Idle,
+	Combat,
+	Move
+};
+
+inline EIFSoldierBranch ResolveSoldierBranch(EIFSoldierAction Action)
+{
+	switch (Action)
+	{
+	case EIFSoldierAction::AttackTarget:
+	case EIFSoldierAction::Defend:
+		return EIFSoldierBranch::Combat;
+
+	case EIFSoldierAction::MoveTo:
+	case EIFSoldierAction::FollowActor:
+	case EIFSoldierAction::HoldPosition:
+	case EIFSoldierAction::Advance:
+		return EIFSoldierBranch::Move;
+
+	case EIFSoldierAction::None:
+	case EIFSoldierAction::Idle:
+	default:
+		return EIFSoldierBranch::Idle;
+	}
+}
+
+/** Explicit player orders. Holding a position re-anchors the soldier and delegates defence to Priority 2. */
 UENUM(BlueprintType)
 enum class EIFSoldierOrderType : uint8
 {

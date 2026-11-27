@@ -14,6 +14,7 @@
 #include "Core/IFPlayerController.h"
 #include "Engine/AssetManager.h"
 #include "Engine/LocalPlayer.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/World.h"
@@ -451,6 +452,8 @@ void UIFTacticalCommandComponent::CancelFormationDragPreview()
 	bIsCommandPressed = false;
 	bCommandHandledOnPress = false;
 	bIsFormationDragging = false;
+	bHasPreviewCache = false;
+	LastPreviewUnitCount = 0;
 	PreviewFormationSlots.Reset();
 
 	if (IsValid(FormationPreviewISM))
@@ -1301,20 +1304,29 @@ void UIFTacticalCommandComponent::HandleCommandStarted()
 		}
 
 		const FVector PrimaryLoc = TargetActor->GetActorLocation();
-		const float ClusterRadiusSq = FMath::Square(FMath::Max(AttackOrderClusterRadius, 100.f));
+		const float ClusterRadius = FMath::Max(AttackOrderClusterRadius, 100.f);
 		if (UWorld* const World = GetWorld())
 		{
-			for (TActorIterator<AIFBaseCharacter> It(World); It; ++It)
+			TArray<FOverlapResult> Overlaps;
+			FCollisionObjectQueryParams PawnParams;
+			PawnParams.AddObjectTypesToQuery(ECC_Pawn);
+			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFTacticalClusterAttack), false);
+			if (World->OverlapMultiByObjectType(
+				Overlaps,
+				PrimaryLoc,
+				FQuat::Identity,
+				PawnParams,
+				FCollisionShape::MakeSphere(ClusterRadius),
+				QueryParams))
 			{
-				AIFBaseCharacter* const Candidate = *It;
-				if (!IsValid(Candidate) || Candidate == TargetActor || !Candidate->IsAlive()
-					|| !IFTeamUtils::AreHostile(PlayerPawn, Candidate))
+				for (const FOverlapResult& Overlap : Overlaps)
 				{
-					continue;
-				}
-				if (FVector::DistSquared2D(PrimaryLoc, Candidate->GetActorLocation()) <= ClusterRadiusSq)
-				{
-					ClusterTargets.Add(Candidate);
+					AIFBaseCharacter* const Candidate = Cast<AIFBaseCharacter>(Overlap.GetActor());
+					if (IsValid(Candidate) && Candidate != TargetActor && Candidate->IsAlive()
+						&& IFTeamUtils::AreHostile(PlayerPawn, Candidate))
+					{
+						ClusterTargets.AddUnique(Candidate);
+					}
 				}
 			}
 		}
@@ -1675,6 +1687,19 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 		CancelFormationDragPreview();
 		return;
 	}
+
+	if (bHasPreviewCache
+		&& LastPreviewFormationType == ActiveFormationType
+		&& LastPreviewUnitCount == ActiveSquad.Num()
+		&& FVector::DistSquared2D(CurrentGroundPoint, LastPreviewGroundPoint) < FMath::Square(8.f))
+	{
+		return;
+	}
+
+	LastPreviewGroundPoint = CurrentGroundPoint;
+	LastPreviewFormationType = ActiveFormationType;
+	LastPreviewUnitCount = ActiveSquad.Num();
+	bHasPreviewCache = true;
 
 	FIFFormationSolveParams Params;
 	Params.FormationType = ActiveFormationType;

@@ -5,9 +5,7 @@
 #include "Character/IFBaseCharacter.h"
 #include "Character/IFSoldierCharacter.h"
 #include "Combat/IFCombatComponent.h"
-#include "Combat/IFTeamTypes.h"
 #include "GameFramework/Actor.h"
-#include "Stats/IFHealthComponent.h"
 
 namespace
 {
@@ -60,40 +58,8 @@ namespace
 
 	bool IsTargetValidAndInRange(const AIFSoldierCharacter& Soldier, const AActor* Target)
 	{
-		if (!IsValid(Target) || Target->IsActorBeingDestroyed())
-		{
-			return false;
-		}
-
-		if (const AIFBaseCharacter* const TargetCharacter = Cast<AIFBaseCharacter>(Target))
-		{
-			if (TargetCharacter->IsDead())
-			{
-				return false;
-			}
-		}
-		else if (const AIFStructure* const TargetStructure = Cast<AIFStructure>(Target))
-		{
-			if (!TargetStructure->IsStructureAlive())
-			{
-				return false;
-			}
-		}
-		else if (const UIFHealthComponent* const TargetHealth = Target->FindComponentByClass<UIFHealthComponent>())
-		{
-			if (TargetHealth->IsDead())
-			{
-				return false;
-			}
-		}
-
-		if (!IFTeamUtils::AreHostile(&Soldier, Target))
-		{
-			return false;
-		}
-
-		const float MaxEngagementRange = Soldier.GetMaxMeleeEngagementRange(Target);
-		return Soldier.GetHorizontalDistanceToTarget(Target) <= MaxEngagementRange;
+		return AIFSoldierAIController::IsValidCombatTarget(&Soldier, Target)
+			&& Soldier.IsTargetInMeleeReach(Target, true);
 	}
 }
 
@@ -200,6 +166,7 @@ void UIFBTTask_MeleeAttack::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 			Memory->StaminaWaitElapsed += DeltaSeconds;
 		}
 
+		// Timed-out stamina wait falls through so a low-stamina unit attempts an opener or resets its combo plan instead of deadlocking.
 		const float MaxStaminaWait = Combat->GetAIMaxStaminaWaitSeconds();
 		const bool bStaminaTimedOut = Memory->StaminaWaitElapsed >= MaxStaminaWait;
 		if (!Combat->HasEnoughStaminaForPlannedCombo() && !bStaminaTimedOut)
@@ -289,21 +256,6 @@ void UIFBTTask_MeleeAttack::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 		return;
 	}
-}
-
-EBTNodeResult::Type UIFBTTask_MeleeAttack::AbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
-{
-	const FBTTask_MeleeAttackMemory* const Memory = CastInstanceNodeMemory<FBTTask_MeleeAttackMemory>(NodeMemory);
-	if (AIFSoldierCharacter* const Soldier = Memory->Soldier.Get())
-	{
-		if (UIFCombatComponent* const Combat = Soldier->GetCombatComponent();
-			IsValid(Combat) && Combat->GetPlannedAIExecutedHits() > 0)
-		{
-			Combat->ClearAIComboPlan();
-		}
-	}
-
-	return Super::AbortTask(OwnerComp, NodeMemory);
 }
 
 void UIFBTTask_MeleeAttack::OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTNodeResult::Type TaskResult)
