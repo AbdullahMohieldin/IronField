@@ -105,7 +105,12 @@ namespace
 			return;
 		}
 
-		const int32 RingCapacity = FMath::Max(1, FMath::FloorToInt((2.f * PI * Radius) / LateralSpacing));
+		int32 RingCapacity = 1;
+		if (2.f * Radius > LateralSpacing)
+		{
+			const float SinHalfAngle = FMath::Clamp(LateralSpacing / (2.f * Radius), 0.f, 1.f);
+			RingCapacity = FMath::Max(1, FMath::FloorToInt(PI / FMath::Asin(SinHalfAngle)));
+		}
 		const int32 UnitsOnRing = FMath::Min(InOutRemaining, RingCapacity);
 		const float AngleStep = (2.f * PI) / static_cast<float>(UnitsOnRing);
 
@@ -222,8 +227,8 @@ namespace
 
 		// Tight shoulder-to-shoulder Roman infantry square (filled Cols x Rows block with outward perimeter facing).
 		const float Scale = FMath::Clamp(Params.SquareSpacingScale, 0.75f, 1.25f);
-		const float ColSpacing = FMath::Max(Params.LateralSpacing * Scale, 92.f);
-		const float RowSpacing = FMath::Max(Params.RankSpacing * Scale, 96.f);
+		const float ColSpacing = FMath::Max(Params.LateralSpacing * Scale, 125.f);
+		const float RowSpacing = FMath::Max(Params.RankSpacing * Scale, 130.f);
 		const int32 Cols = FMath::Max(1, FMath::CeilToInt(FMath::Sqrt(static_cast<float>(Count))));
 		const int32 Rows = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Count) / static_cast<float>(Cols)));
 		const float RowCenterOffset = 0.5f * static_cast<float>(Rows - 1);
@@ -327,6 +332,19 @@ bool FIFFormationSolver::SolveFormation(
 			OutFormationCenter = ProjectedCenter.Location;
 		}
 
+		const float MinSlotClearance = FMath::Max(Params.LateralSpacing, 80.f) * 0.85f;
+		const float MinSlotClearanceSq = FMath::Square(MinSlotClearance);
+
+		auto GetMinDistSqToEarlier = [&OutSlots](const FVector& Candidate, int32 UpToIndex) -> float
+		{
+			float MinDistSq = TNumericLimits<float>::Max();
+			for (int32 PrevIdx = 0; PrevIdx < UpToIndex; ++PrevIdx)
+			{
+				MinDistSq = FMath::Min(MinDistSq, FVector::DistSquared2D(Candidate, OutSlots[PrevIdx].Location));
+			}
+			return MinDistSq;
+		};
+
 		for (int32 SlotIdx = 0; SlotIdx < OutSlots.Num(); ++SlotIdx)
 		{
 			FIFFormationSlot& Slot = OutSlots[SlotIdx];
@@ -334,31 +352,68 @@ bool FIFFormationSolver::SolveFormation(
 			if (NavSys->ProjectPointToNavigation(Slot.Location, NavSlot, Params.NavQueryExtent))
 			{
 				Slot.Location = NavSlot.Location;
-				continue;
 			}
-
-			// Step inward toward OutFormationCenter along the ray before falling back so blocked slots don't pile up on one point.
-			bool bResolved = false;
-			constexpr float StepAlphas[] = { 0.75f, 0.50f, 0.25f };
-			for (const float Alpha : StepAlphas)
+			else
 			{
-				const FVector Sample = FMath::Lerp(OutFormationCenter, Slot.Location, Alpha);
-				if (NavSys->ProjectPointToNavigation(Sample, NavSlot, Params.NavQueryExtent))
+				// Step inward toward OutFormationCenter along the ray before falling back so blocked slots don't pile up on one point.
+				bool bResolved = false;
+				constexpr float StepAlphas[] = { 0.75f, 0.50f, 0.25f };
+				for (const float Alpha : StepAlphas)
 				{
-					Slot.Location = NavSlot.Location;
-					bResolved = true;
-					break;
+					const FVector Sample = FMath::Lerp(OutFormationCenter, Slot.Location, Alpha);
+					if (NavSys->ProjectPointToNavigation(Sample, NavSlot, Params.NavQueryExtent))
+					{
+						Slot.Location = NavSlot.Location;
+						bResolved = true;
+						break;
+					}
+				}
+
+				if (!bResolved)
+				{
+					const float Angle = static_cast<float>(SlotIdx) * (2.f * PI / 8.f);
+					const float RingRadius = 45.f * static_cast<float>(1 + (SlotIdx / 8));
+					const FVector RingSample = OutFormationCenter + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.f) * RingRadius;
+					Slot.Location = NavSys->ProjectPointToNavigation(RingSample, NavSlot, Params.NavQueryExtent)
+						? NavSlot.Location
+						: OutFormationCenter;
 				}
 			}
 
-			if (!bResolved)
+			if (SlotIdx > 0 && GetMinDistSqToEarlier(Slot.Location, SlotIdx) < MinSlotClearanceSq)
 			{
-				const float Angle = static_cast<float>(SlotIdx) * (2.f * PI / 8.f);
-				const float RingRadius = 45.f * static_cast<float>(1 + (SlotIdx / 8));
-				const FVector RingSample = OutFormationCenter + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.f) * RingRadius;
-				Slot.Location = NavSys->ProjectPointToNavigation(RingSample, NavSlot, Params.NavQueryExtent)
-					? NavSlot.Location
-					: OutFormationCenter;
+				FVector BestCandidate = Slot.Location;
+				float BestClearanceSq = GetMinDistSqToEarlier(BestCandidate, SlotIdx);
+				bool bFoundClearSlot = false;
+
+				constexpr int32 MaxRings = 4;
+				constexpr int32 AngularSamples = 12;
+				for (int32 Ring = 1; Ring <= MaxRings && !bFoundClearSlot; ++Ring)
+				{
+					const float SearchRadius = MinSlotClearance * 0.6f * static_cast<float>(Ring);
+					for (int32 SampleIdx = 0; SampleIdx < AngularSamples; ++SampleIdx)
+					{
+						const float Angle = (static_cast<float>(SampleIdx) / static_cast<float>(AngularSamples)) * 2.f * PI;
+						const FVector CandidateSample = Slot.Location + FVector(FMath::Cos(Angle), FMath::Sin(Angle), 0.f) * SearchRadius;
+						if (NavSys->ProjectPointToNavigation(CandidateSample, NavSlot, Params.NavQueryExtent))
+						{
+							const float ClearanceSq = GetMinDistSqToEarlier(NavSlot.Location, SlotIdx);
+							if (ClearanceSq >= MinSlotClearanceSq)
+							{
+								BestCandidate = NavSlot.Location;
+								bFoundClearSlot = true;
+								break;
+							}
+							if (ClearanceSq > BestClearanceSq)
+							{
+								BestClearanceSq = ClearanceSq;
+								BestCandidate = NavSlot.Location;
+							}
+						}
+					}
+				}
+
+				Slot.Location = BestCandidate;
 			}
 		}
 	}

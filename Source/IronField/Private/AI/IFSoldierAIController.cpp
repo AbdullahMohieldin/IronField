@@ -32,7 +32,7 @@ AIFSoldierAIController::AIFSoldierAIController(const FObjectInitializer& ObjectI
 	{
 		CrowdComp->SetCrowdAvoidanceQuality(ECrowdAvoidanceQuality::Good);
 		CrowdComp->SetCrowdSeparation(true);
-		CrowdComp->SetCrowdSeparationWeight(2.0f);
+		CrowdComp->SetCrowdSeparationWeight(1.15f);
 		CrowdComp->SetCrowdObstacleAvoidance(true);
 		CrowdComp->SetCrowdAnticipateTurns(true);
 		CrowdComp->SetCrowdOptimizeVisibility(true);

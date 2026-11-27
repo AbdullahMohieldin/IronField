@@ -21,9 +21,9 @@ struct IRONFIELD_API FIFFormationSolveParams
 	FVector SquadCentroid = FVector::ZeroVector;
 	FVector CameraForward = FVector::ForwardVector;
 
-	float LateralSpacing = 115.f;
-	float RankSpacing = 125.f;
-	float SquareSpacingScale = 0.92f;
+	float LateralSpacing = 140.f;
+	float RankSpacing = 150.f;
+	float SquareSpacingScale = 1.0f;
 	float LineAspectRatio = 2.5f;
 	int32 MinLineColumns = 3;
 	int32 MaxLineColumns = 10;

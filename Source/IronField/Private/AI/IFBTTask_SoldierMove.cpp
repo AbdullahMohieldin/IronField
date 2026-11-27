@@ -152,7 +152,7 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 	const bool bGoalActorChanged = (CurrentGoalActor != Memory->TrackedGoalActor.Get())
 		|| (IsValid(CurrentGoalActor) != Memory->bTrackedActorGoal);
 	const bool bGoalPointMoved = !IsValid(CurrentGoalActor)
-		&& FVector::DistSquared(CurrentGoalLocation, Memory->TrackedGoalLocation) > FMath::Square(10.f);
+		&& FVector::DistSquared(CurrentGoalLocation, Memory->TrackedGoalLocation) > FMath::Square(15.f);
 
 	const bool bMovingWithSameActor = (Controller->GetMoveStatus() == EPathFollowingStatus::Moving)
 		&& IsValid(CurrentGoalActor)
@@ -197,8 +197,9 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 	}
 	else
 	{
+		const float EffectiveStallTimeout = IsValid(CurrentGoalActor) ? StallTimeoutSeconds : PointMoveStallTimeoutSeconds;
 		Memory->StallElapsedSeconds += DeltaSeconds;
-		if (Memory->StallElapsedSeconds >= StallTimeoutSeconds)
+		if (Memory->StallElapsedSeconds >= EffectiveStallTimeout)
 		{
 			Controller->StopMovement();
 			Controller->NotifyMoveOrderBlockedOrStalled();

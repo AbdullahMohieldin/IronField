@@ -33,7 +33,7 @@ public:
 
 	// Prefixed with Issue to avoid colliding with AAIController::MoveToLocation.
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Orders")
-	bool IssueMoveToLocation(const FVector& Location, float AcceptanceRadius = 20.f, float DesiredFacingYaw = 0.f, bool bUseFacingYaw = false);
+	bool IssueMoveToLocation(const FVector& Location, float AcceptanceRadius = 35.f, float DesiredFacingYaw = 0.f, bool bUseFacingYaw = false);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Orders")
 	bool IssueAttackTarget(AActor* Target);

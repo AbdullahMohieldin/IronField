@@ -47,6 +47,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0.3"))
 	float StallTimeoutSeconds = 1.85f;
 
+	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0.5"))
+	float PointMoveStallTimeoutSeconds = 3.25f;
+
 	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "5.0"))
 	float MinStallProgressDistance = 25.f;
 
