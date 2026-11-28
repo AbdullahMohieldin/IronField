@@ -27,25 +27,27 @@ public:
 
 	void BeginPreview(
 		const UIFStructureDataAsset* InStructureData,
-		UStaticMesh* InPreviewMesh,
+		UStaticMesh* InFallbackCubeMesh,
 		UMaterialInterface* InValidMaterial,
 		UMaterialInterface* InInvalidMaterial);
 
 	void EndPreview();
+
+	void SetPreviewMeshVisible(bool bVisible);
 
 	void UpdatePreviewTransformAndValidity(const FVector& WorldLocation, float YawDegrees, bool bIsValidPlacement);
 
 	virtual void Tick(float DeltaSeconds) override;
 
 protected:
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Tactical|Placement")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Build|Ghost")
 	TObjectPtr<USceneComponent> GhostRoot;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Tactical|Placement")
-	TObjectPtr<UStaticMeshComponent> FootprintPreviewMesh;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Build|Ghost")
+	TObjectPtr<UStaticMeshComponent> PrimaryPreviewMesh;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Tactical|Placement")
-	TObjectPtr<UStaticMeshComponent> SecondaryPreviewMesh;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Build|Ghost")
+	TObjectPtr<UStaticMeshComponent> MirroredPreviewMesh;
 
 private:
 	UPROPERTY(Transient)
@@ -56,7 +58,11 @@ private:
 	TWeakObjectPtr<UMaterialInterface> InvalidMaterial;
 
 	FVector CurrentFootprintExtent = FVector(150.f, 150.f, 150.f);
+	FVector LastAppliedLocation = FVector::ZeroVector;
+	float LastAppliedYaw = 0.f;
 	bool bPreviewActive = false;
+	bool bUseMirroredMesh = false;
+	bool bHasAppliedTransform = false;
 	bool bLastValidityState = false;
 	bool bHasAppliedMaterial = false;
 };

@@ -36,23 +36,6 @@ enum class EIFTerritoryCaptureState : uint8
 	Decaying
 };
 
-UENUM(BlueprintType)
-enum class EIFPlacementInvalidReason : uint8
-{
-	None,
-	OutsideOwnedTerritory,
-	HeroNotInTerritory,
-	KeepAlreadyExists,
-	TooCloseToFlag,
-	BlockedByObstacle,
-	BlockedByUnit,
-	RequiresWallAttachment,
-	RequiresCornerAttachment,
-	RequiresGateArchway,
-	GateAlreadyHasDoor,
-	InvalidLocation
-};
-
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
 	FOnStructureStateChanged,
 	AIFStructure*,

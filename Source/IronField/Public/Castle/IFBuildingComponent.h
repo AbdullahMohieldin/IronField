@@ -1,14 +1,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Castle/IFBuildingSnapSolver.h"
 #include "Castle/IFBuildingTypes.h"
 #include "Castle/IFCastleTypes.h"
 #include "Components/ActorComponent.h"
+#include "Engine/HitResult.h"
+#include "GenericTeamAgentInterface.h"
 #include "Tactical/IFTacticalTypes.h"
 #include "UObject/SoftObjectPtr.h"
 #include "IFBuildingComponent.generated.h"
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnBuildPlacementRejected, EIFPlacementInvalidReason, InvalidReason);
 
 class AActor;
 class AIFPlacementGhost;
@@ -42,7 +43,7 @@ public:
 	FOnBuildPlacementRejected OnBuildPlacementRejected;
 
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Build|Events")
-	FOnTacticalStructureSelectionChanged OnSelectedStructureChanged;
+	FOnSelectedStructureChanged OnSelectedStructureChanged;
 
 	UPROPERTY(BlueprintAssignable, Category = "IronField|Build|Events")
 	FOnTacticalOrderIssued OnStructureActionCompleted;
@@ -52,9 +53,6 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Build")
 	bool BeginBuildPlacementByType(EIFStructureType StructureType);
-
-	UFUNCTION(BlueprintCallable, Category = "IronField|Build")
-	bool BeginBuildPlacementByIndex(int32 BuildIndex);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Build")
 	void CancelBuildPlacement();
@@ -69,16 +67,10 @@ public:
 	bool IsInBuildPlacementMode() const { return bIsInBuildPlacementMode && ActiveBuildData.IsValid(); }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Build")
-	bool IsRelocatingStructure() const { return bIsInBuildPlacementMode && RelocatingStructure.IsValid(); }
+	bool IsRelocatingStructure() const { return bIsInBuildPlacementMode && bIsRelocatingMode; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Build")
 	bool IsCurrentPlacementValid() const { return bIsCurrentPlacementValid; }
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Build")
-	EIFPlacementInvalidReason GetLastInvalidReason() const { return LastInvalidReason; }
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Build")
-	EIFPlacementSnapState GetCurrentSnapState() const { return CurrentSnapState; }
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Build")
 	FText GetPlacementStatusText() const;
@@ -108,9 +100,7 @@ public:
 	bool DemolishSelectedStructure();
 
 	// Invoked by AIFPlacementGhost::Tick ONLY while placement mode is active.
-	void UpdatePlacementPreview();
-
-	void RequestBuildAssets();
+	void UpdatePlacementPreview(bool bForceFullRefresh = false);
 
 protected:
 	virtual void BeginPlay() override;
@@ -120,7 +110,7 @@ protected:
 	TArray<TSoftObjectPtr<UIFStructureDataAsset>> BuildableStructures;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Build")
-	TSoftObjectPtr<UStaticMesh> PlacementGhostMesh;
+	TSoftObjectPtr<UStaticMesh> FallbackGhostCubeMesh;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Build")
 	TSoftObjectPtr<UMaterialInterface> PlacementGhostValidMaterial;
@@ -137,6 +127,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Build", meta = (ClampMin = "1000.0"))
 	float GroundTraceDistance = 15000.f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Build", meta = (ClampMin = "0.0", ClampMax = "89.0"))
+	float MaxPlacementSlopeDegrees = 25.f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Build")
 	bool bRequireHeroInTerritory = false;
 
@@ -144,10 +137,17 @@ private:
 	UFUNCTION()
 	void HandleSelectedStructureDestroyed(AIFStructure* DestroyedStructure, AActor* KillerActor);
 
+	UFUNCTION()
+	void HandleRelocatingStructureDestroyed(AIFStructure* DestroyedStructure, AActor* KillerActor);
+
+	void RequestBuildAssets();
 	void HandleBuildAssetsLoaded();
+	void ResolveGhostMaterials();
+	void UnbindRelocatingStructureDelegate();
+	bool HasLivingMountedDependents(const AIFStructure* HostStructure) const;
 	bool BeginBuildPlacementInternal(UIFStructureDataAsset* StructureData, AIFStructure* InRelocatingStructure);
 	AIFPlacementGhost* EnsurePlacementGhostSpawned();
-	bool TraceGroundUnderCursor(const FVector& RayOrigin, const FVector& RayDir, FHitResult& OutHit) const;
+	FGenericTeamId ResolveBuilderTeamId() const;
 	AIFPlayerController* GetOwningPlayerController() const;
 
 	UPROPERTY(Transient)
@@ -155,6 +155,12 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UIFStructureDataAsset>> LoadedBuildableStructures;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> CachedValidGhostMaterial;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInterface> CachedInvalidGhostMaterial;
 
 	TSharedPtr<FStreamableHandle> BuildAssetsLoadHandle;
 	TSharedPtr<FStreamableHandle> BuildClassLoadHandle;
@@ -164,18 +170,40 @@ private:
 	TWeakObjectPtr<AIFStructure> RelocatingStructure;
 	TWeakObjectPtr<AIFStructure> LastSnapHostStructure;
 	TWeakObjectPtr<AIFTerritory> LastValidBuildTerritory;
+	TWeakObjectPtr<AActor> LastGroundActor;
 
+	TArray<FHitResult> GroundTraceScratchHits;
+	FIFSnapSolverScratch SolverScratch;
+
+	FIFSnapResult CachedSnapResult;
+	FVector LastGroundNormal = FVector::UpVector;
 	FVector CurrentPreviewLocation = FVector::ZeroVector;
 	float CurrentPreviewYaw = 0.f;
+
+	FVector2D LastPreviewMousePos = FVector2D::ZeroVector;
+	FVector LastPreviewRayOrigin = FVector::ZeroVector;
+	FVector LastPreviewRayDir = FVector::ForwardVector;
+	int32 LastPreviewFreeYawIndex = INDEX_NONE;
+	int32 LastPreviewConnectorFlipIndex = INDEX_NONE;
+	int32 LastPreviewStairMountMode = INDEX_NONE;
+	int32 LastKnownStructureCount = INDEX_NONE;
+	double LastValidationRealTime = 0.0;
+	TWeakObjectPtr<UIFStructureDataAsset> LastPreviewBuildData;
+	TWeakObjectPtr<AIFStructure> LastPreviewRelocatingStructure;
 
 	int32 FreeYawIndex = 0;
 	int32 ConnectorFlipIndex = 0;
 	int32 StairMountMode = 0;
+	int8 LastSnapSideSign = 0;
 
+	bool bBuildableStructuresInitialized = false;
 	bool bIsInBuildPlacementMode = false;
+	bool bIsRelocatingMode = false;
 	bool bIsCurrentlySnapped = false;
 	bool bIsCurrentPlacementValid = false;
 	bool bHasBroadcastValidity = false;
+	bool bHasPreviewCache = false;
+	bool bLastGroundTraceHit = false;
 	EIFPlacementInvalidReason LastInvalidReason = EIFPlacementInvalidReason::None;
 	EIFPlacementSnapState CurrentSnapState = EIFPlacementSnapState::Free;
 };

@@ -17,6 +17,7 @@ class AIFStructure;
 class AIFTacticalCameraRig;
 class AIFTacticalHUD;
 class UIFBuildingComponent;
+class UIFStructureDataAsset;
 class UIFTacticalHUDWidget;
 class UInputAction;
 class UInputComponent;
@@ -267,6 +268,9 @@ private:
 
 	UFUNCTION()
 	void HandleHighlightedStructureDestroyed(AIFStructure* DestroyedStructure, AActor* KillerActor);
+
+	UFUNCTION()
+	void HandleBuildPlacementModeChanged(bool bIsPlacementActive, UIFStructureDataAsset* ActiveStructureData);
 
 	void PerformSingleClickSelection();
 	void PerformMarqueeSelection(const FVector2D& StartPos, const FVector2D& EndPos);

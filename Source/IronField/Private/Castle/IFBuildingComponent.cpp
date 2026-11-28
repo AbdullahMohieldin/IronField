@@ -1,7 +1,7 @@
 #include "Castle/IFBuildingComponent.h"
 
 #include "Castle/IFBuildingSnapSolver.h"
-#include "Castle/IFGateDoor.h"
+#include "Castle/IFPlacementGhost.h"
 #include "Castle/IFStructure.h"
 #include "Castle/IFStructureDataAsset.h"
 #include "Castle/IFTerritory.h"
@@ -12,10 +12,17 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
+#include "HAL/PlatformTime.h"
 #include "Materials/MaterialInterface.h"
-#include "Tactical/IFPlacementGhost.h"
 #include "Tactical/IFTacticalCommandComponent.h"
+#include "Tactical/IFTacticalCursorQuery.h"
+
+namespace
+{
+	constexpr double StationaryValidationIntervalSeconds = 0.08;
+}
 
 UIFBuildingComponent::UIFBuildingComponent()
 {
@@ -44,6 +51,9 @@ void UIFBuildingComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	CancelBuildPlacement();
 	ClearSelectedStructure();
 
+	CachedValidGhostMaterial = nullptr;
+	CachedInvalidGhostMaterial = nullptr;
+
 	if (IsValid(PlacementGhost))
 	{
 		PlacementGhost->Destroy();
@@ -64,7 +74,7 @@ void UIFBuildingComponent::RequestBuildAssets()
 		}
 	};
 
-	AddIfValid(PlacementGhostMesh);
+	AddIfValid(FallbackGhostCubeMesh);
 	AddIfValid(PlacementGhostValidMaterial);
 	AddIfValid(PlacementGhostInvalidMaterial);
 
@@ -85,19 +95,43 @@ void UIFBuildingComponent::RequestBuildAssets()
 
 void UIFBuildingComponent::HandleBuildAssetsLoaded()
 {
-	BuildAssetsLoadHandle.Reset();
+	// Retain BuildAssetsLoadHandle until EndPlay so soft-referenced ghost materials and cube mesh stay resident.
+	ResolveGhostMaterials();
 	EnsureBuildableStructuresLoaded();
+}
+
+void UIFBuildingComponent::ResolveGhostMaterials()
+{
+	if (!IsValid(CachedValidGhostMaterial) && !PlacementGhostValidMaterial.IsNull())
+	{
+		CachedValidGhostMaterial = PlacementGhostValidMaterial.Get();
+		if (!IsValid(CachedValidGhostMaterial))
+		{
+			CachedValidGhostMaterial = PlacementGhostValidMaterial.LoadSynchronous();
+		}
+	}
+
+	if (!IsValid(CachedInvalidGhostMaterial) && !PlacementGhostInvalidMaterial.IsNull())
+	{
+		CachedInvalidGhostMaterial = PlacementGhostInvalidMaterial.Get();
+		if (!IsValid(CachedInvalidGhostMaterial))
+		{
+			CachedInvalidGhostMaterial = PlacementGhostInvalidMaterial.LoadSynchronous();
+		}
+	}
 }
 
 void UIFBuildingComponent::EnsureBuildableStructuresLoaded()
 {
-	if (LoadedBuildableStructures.Num() == BuildableStructures.Num() && !LoadedBuildableStructures.IsEmpty())
+	if (bBuildableStructuresInitialized)
 	{
 		return;
 	}
 
+	bBuildableStructuresInitialized = true;
 	LoadedBuildableStructures.Reset();
 	TArray<FSoftObjectPath> StructureClassPaths;
+
 	for (const TSoftObjectPtr<UIFStructureDataAsset>& BuildSoftRef : BuildableStructures)
 	{
 		UIFStructureDataAsset* LoadedData = BuildSoftRef.Get();
@@ -118,6 +152,12 @@ void UIFBuildingComponent::EnsureBuildableStructuresLoaded()
 				StructureClassPaths.AddUnique(LoadedData->PreviewMesh.ToSoftObjectPath());
 			}
 		}
+	}
+
+	if (BuildClassLoadHandle.IsValid())
+	{
+		BuildClassLoadHandle->CancelHandle();
+		BuildClassLoadHandle.Reset();
 	}
 
 	if (!StructureClassPaths.IsEmpty())
@@ -179,26 +219,27 @@ bool UIFBuildingComponent::BeginBuildPlacementByType(EIFStructureType StructureT
 	return BeginBuildPlacement(Data);
 }
 
-bool UIFBuildingComponent::BeginBuildPlacementByIndex(int32 BuildIndex)
+bool UIFBuildingComponent::HasLivingMountedDependents(const AIFStructure* HostStructure) const
 {
-	if (!LoadedBuildableStructures.IsValidIndex(BuildIndex))
+	const UWorld* const World = GetWorld();
+	if (!IsValid(World) || !IsValid(HostStructure))
 	{
 		return false;
 	}
 
-	UIFStructureDataAsset* const Data = LoadedBuildableStructures[BuildIndex].Get();
-	if (!IsValid(Data))
+	for (TActorIterator<AIFStructure> It(World); It; ++It)
 	{
-		return false;
+		const AIFStructure* const Struct = *It;
+		if (IsValid(Struct)
+			&& Struct != HostStructure
+			&& Struct->IsStructureAlive()
+			&& Struct->GetHostStructure() == HostStructure)
+		{
+			return true;
+		}
 	}
 
-	if (IsInBuildPlacementMode() && !IsRelocatingStructure() && ActiveBuildData.Get() == Data)
-	{
-		CancelBuildPlacement();
-		return false;
-	}
-
-	return BeginBuildPlacement(Data);
+	return false;
 }
 
 bool UIFBuildingComponent::BeginRelocateSelectedStructure()
@@ -212,8 +253,16 @@ bool UIFBuildingComponent::BeginRelocateSelectedStructure()
 	{
 		return false;
 	}
-	if (IsValid(PlayerPawn) && !IFTeamUtils::AreFriendly(PlayerPawn, TargetStructure))
+	if (!IsValid(PlayerPawn) || !IFTeamUtils::AreFriendly(PlayerPawn, TargetStructure))
 	{
+		return false;
+	}
+
+	if (HasLivingMountedDependents(TargetStructure))
+	{
+		LastInvalidReason = EIFPlacementInvalidReason::HostHasMountedChildren;
+		OnBuildPlacementRejected.Broadcast(EIFPlacementInvalidReason::HostHasMountedChildren);
+		UE_LOG(LogIronField, Log, TEXT("[IF-Build] Blocked relocate of %s because mounted pieces depend on it."), *TargetStructure->GetName());
 		return false;
 	}
 
@@ -241,7 +290,7 @@ bool UIFBuildingComponent::DemolishSelectedStructure()
 	{
 		return false;
 	}
-	if (IsValid(PlayerPawn) && !IFTeamUtils::AreFriendly(PlayerPawn, TargetStructure))
+	if (!IsValid(PlayerPawn) || !IFTeamUtils::AreFriendly(PlayerPawn, TargetStructure))
 	{
 		return false;
 	}
@@ -253,6 +302,14 @@ bool UIFBuildingComponent::DemolishSelectedStructure()
 	return true;
 }
 
+void UIFBuildingComponent::UnbindRelocatingStructureDelegate()
+{
+	if (AIFStructure* const PrevRelocating = RelocatingStructure.Get(); IsValid(PrevRelocating))
+	{
+		PrevRelocating->OnStructureDestroyed.RemoveDynamic(this, &UIFBuildingComponent::HandleRelocatingStructureDestroyed);
+	}
+}
+
 bool UIFBuildingComponent::BeginBuildPlacementInternal(UIFStructureDataAsset* StructureData, AIFStructure* InRelocatingStructure)
 {
 	if (!IsValid(StructureData))
@@ -260,40 +317,38 @@ bool UIFBuildingComponent::BeginBuildPlacementInternal(UIFStructureDataAsset* St
 		return false;
 	}
 
-	if (const AIFPlayerController* const PC = GetOwningPlayerController())
-	{
-		if (UIFTacticalCommandComponent* const Tactical = PC->GetTacticalCommandComponent())
-		{
-			Tactical->CancelMarqueeSelection();
-			Tactical->CancelFormationDragPreview();
-		}
-	}
+	UnbindRelocatingStructureDelegate();
 
 	ActiveBuildData = StructureData;
 	RelocatingStructure = InRelocatingStructure;
+	bIsRelocatingMode = IsValid(InRelocatingStructure);
 	bIsInBuildPlacementMode = true;
 	bIsCurrentPlacementValid = false;
 	bHasBroadcastValidity = false;
+	bHasPreviewCache = false;
+	bLastGroundTraceHit = false;
 	bIsCurrentlySnapped = false;
 	ConnectorFlipIndex = 0;
 	StairMountMode = 0;
+	LastSnapSideSign = 0;
+	LastKnownStructureCount = INDEX_NONE;
+	LastValidationRealTime = 0.0;
 	LastInvalidReason = EIFPlacementInvalidReason::None;
 	CurrentSnapState = EIFPlacementSnapState::Free;
 	LastSnapHostStructure.Reset();
 	LastValidBuildTerritory.Reset();
+	LastGroundActor.Reset();
+
+	if (bIsRelocatingMode && IsValid(InRelocatingStructure))
+	{
+		InRelocatingStructure->OnStructureDestroyed.AddUniqueDynamic(this, &UIFBuildingComponent::HandleRelocatingStructureDestroyed);
+	}
 
 	if (!StructureData->StructureClass.IsNull() && !IsValid(StructureData->StructureClass.Get()))
 	{
 		StructureData->StructureClass.LoadSynchronous();
 	}
-	if (!PlacementGhostValidMaterial.IsNull() && !IsValid(PlacementGhostValidMaterial.Get()))
-	{
-		PlacementGhostValidMaterial.LoadSynchronous();
-	}
-	if (!PlacementGhostInvalidMaterial.IsNull() && !IsValid(PlacementGhostInvalidMaterial.Get()))
-	{
-		PlacementGhostInvalidMaterial.LoadSynchronous();
-	}
+	ResolveGhostMaterials();
 
 	if (AIFPlacementGhost* const Ghost = EnsurePlacementGhostSpawned())
 	{
@@ -303,38 +358,50 @@ bool UIFBuildingComponent::BeginBuildPlacementInternal(UIFStructureDataAsset* St
 			{
 				if (AActor* const CameraRig = Tactical->GetTacticalCameraRigActor())
 				{
+					// Pair CameraRig tick prerequisite with TG_PostUpdateWork so mouse deprojection uses the current frame's camera transform.
 					Ghost->AddTickPrerequisiteActor(CameraRig);
 				}
 			}
 		}
 		Ghost->BeginPreview(
 			StructureData,
-			PlacementGhostMesh.Get(),
-			PlacementGhostValidMaterial.Get(),
-			PlacementGhostInvalidMaterial.Get());
+			FallbackGhostCubeMesh.Get(),
+			CachedValidGhostMaterial,
+			CachedInvalidGhostMaterial);
 	}
 
 	OnBuildPlacementModeChanged.Broadcast(true, StructureData);
-	UpdatePlacementPreview();
+	UpdatePlacementPreview(/*bForceFullRefresh=*/true);
 	return true;
 }
 
 void UIFBuildingComponent::CancelBuildPlacement()
 {
-	const bool bWasActive = bIsInBuildPlacementMode || ActiveBuildData.IsValid() || RelocatingStructure.IsValid();
+	const bool bWasActive = bIsInBuildPlacementMode || bIsRelocatingMode || ActiveBuildData.IsValid() || RelocatingStructure.IsValid();
+
+	UnbindRelocatingStructureDelegate();
 
 	bIsInBuildPlacementMode = false;
+	bIsRelocatingMode = false;
 	bIsCurrentPlacementValid = false;
 	bHasBroadcastValidity = false;
+	bHasPreviewCache = false;
+	bLastGroundTraceHit = false;
 	bIsCurrentlySnapped = false;
 	ConnectorFlipIndex = 0;
 	StairMountMode = 0;
+	LastSnapSideSign = 0;
+	LastKnownStructureCount = INDEX_NONE;
+	LastValidationRealTime = 0.0;
 	LastInvalidReason = EIFPlacementInvalidReason::None;
 	CurrentSnapState = EIFPlacementSnapState::Free;
 	ActiveBuildData.Reset();
 	RelocatingStructure.Reset();
 	LastSnapHostStructure.Reset();
 	LastValidBuildTerritory.Reset();
+	LastGroundActor.Reset();
+	LastPreviewBuildData.Reset();
+	LastPreviewRelocatingStructure.Reset();
 
 	if (IsValid(PlacementGhost))
 	{
@@ -364,28 +431,28 @@ void UIFBuildingComponent::RotateBuildPreview(bool bReverse)
 	{
 		if (Data->PlacementRule == EIFPlacementRule::WallWalkwayOnly || Data->PlacementRule == EIFPlacementRule::CornerWalkwayOnly)
 		{
-			// Side/corner lock is strictly driven by the mouse cursor; R never jumps across.
+			// Cursor side selects the walkway face, so rotate input is ignored while mounted.
 			return;
 		}
 		if (Data->PlacementRule == EIFPlacementRule::StairMountOrFree)
 		{
 			StairMountMode = (StairMountMode + (bReverse ? 2 : 1)) % 3;
-			UpdatePlacementPreview();
+			UpdatePlacementPreview(/*bForceFullRefresh=*/true);
 			return;
 		}
 		if (Data->Connectors.Num() >= 2)
 		{
 			ConnectorFlipIndex = (ConnectorFlipIndex + (bReverse ? Data->Connectors.Num() - 1 : 1)) % Data->Connectors.Num();
-			UpdatePlacementPreview();
+			UpdatePlacementPreview(/*bForceFullRefresh=*/true);
 			return;
 		}
 	}
 
 	FreeYawIndex = (FreeYawIndex + (bReverse ? 3 : 1)) % 4;
-	UpdatePlacementPreview();
+	UpdatePlacementPreview(/*bForceFullRefresh=*/true);
 }
 
-void UIFBuildingComponent::UpdatePlacementPreview()
+void UIFBuildingComponent::UpdatePlacementPreview(bool bForceFullRefresh)
 {
 	const AIFPlayerController* const PC = GetOwningPlayerController();
 	const UIFTacticalCommandComponent* const Tactical = IsValid(PC) ? PC->GetTacticalCommandComponent() : nullptr;
@@ -395,11 +462,28 @@ void UIFBuildingComponent::UpdatePlacementPreview()
 		return;
 	}
 
+	if (bIsRelocatingMode)
+	{
+		const AIFStructure* const MovingStruct = RelocatingStructure.Get();
+		if (!IsValid(MovingStruct) || !MovingStruct->IsStructureAlive())
+		{
+			CancelBuildPlacement();
+			return;
+		}
+	}
+
 	const UIFStructureDataAsset* const Data = ActiveBuildData.Get();
-	if (!IsValid(Data) || !IsValid(PC))
+	UWorld* const World = GetWorld();
+	if (!IsValid(Data) || !IsValid(PC) || !IsValid(World))
 	{
 		return;
 	}
+
+	float MouseX = 0.f;
+	float MouseY = 0.f;
+	const FVector2D CurrentMousePos = PC->GetMousePosition(MouseX, MouseY)
+		? FVector2D(MouseX, MouseY)
+		: LastPreviewMousePos;
 
 	FVector RayOrigin = FVector::ZeroVector;
 	FVector RayDir = FVector::ForwardVector;
@@ -408,53 +492,131 @@ void UIFBuildingComponent::UpdatePlacementPreview()
 		return;
 	}
 
-	FHitResult GroundHit;
-	if (!TraceGroundUnderCursor(RayOrigin, RayDir, GroundHit))
+	const bool bInputsUnchanged = !bForceFullRefresh
+		&& bHasPreviewCache
+		&& LastPreviewFreeYawIndex == FreeYawIndex
+		&& LastPreviewConnectorFlipIndex == ConnectorFlipIndex
+		&& LastPreviewStairMountMode == StairMountMode
+		&& LastPreviewBuildData.Get() == Data
+		&& LastPreviewRelocatingStructure.Get() == RelocatingStructure.Get()
+		&& FVector2D::DistSquared(CurrentMousePos, LastPreviewMousePos) <= FMath::Square(0.5f)
+		&& FVector::DistSquared(RayOrigin, LastPreviewRayOrigin) <= FMath::Square(0.1f)
+		&& FVector::DotProduct(RayDir, LastPreviewRayDir) >= 0.9999996f;
+
+	const double NowRealSeconds = FPlatformTime::Seconds();
+	if (bInputsUnchanged && (NowRealSeconds - LastValidationRealTime) < StationaryValidationIntervalSeconds)
 	{
-		bIsCurrentPlacementValid = false;
-		LastValidBuildTerritory.Reset();
-		if (!bHasBroadcastValidity || LastInvalidReason != EIFPlacementInvalidReason::InvalidLocation)
-		{
-			bHasBroadcastValidity = true;
-			LastInvalidReason = EIFPlacementInvalidReason::InvalidLocation;
-			OnBuildPlacementValidityChanged.Broadcast(false, LastInvalidReason);
-		}
 		return;
 	}
 
-	const FIFSnapResult SnapResult = FIFBuildingSnapSolver::SolvePlacementTransform(
-		GetWorld(),
-		Data,
-		GroundHit.ImpactPoint,
-		FreeYawIndex,
-		ConnectorFlipIndex,
-		StairMountMode,
-		SnapRadiusCm,
-		MountSnapRadiusCm,
-		RelocatingStructure.Get());
+	const FGenericTeamId BuilderTeamId = ResolveBuilderTeamId();
+	FIFBuildingSnapSolver::GatherAliveStructures(
+		World,
+		BuilderTeamId,
+		RelocatingStructure.Get(),
+		SolverScratch.AllAliveStructures,
+		SolverScratch.FriendlyStructures);
+
+	const bool bStructureSetChanged = (SolverScratch.AllAliveStructures.Num() != LastKnownStructureCount);
+	LastKnownStructureCount = SolverScratch.AllAliveStructures.Num();
+	LastValidationRealTime = NowRealSeconds;
+
+	const bool bNeedFullSolve = !bInputsUnchanged || bStructureSetChanged || !bLastGroundTraceHit;
+	if (bNeedFullSolve)
+	{
+		LastPreviewMousePos = CurrentMousePos;
+		LastPreviewRayOrigin = RayOrigin;
+		LastPreviewRayDir = RayDir;
+		LastPreviewFreeYawIndex = FreeYawIndex;
+		LastPreviewConnectorFlipIndex = ConnectorFlipIndex;
+		LastPreviewStairMountMode = StairMountMode;
+		LastPreviewBuildData = const_cast<UIFStructureDataAsset*>(Data);
+		LastPreviewRelocatingStructure = RelocatingStructure;
+		bHasPreviewCache = true;
+
+		FHitResult GroundHit;
+		if (!FIFTacticalCursorQuery::TraceGroundUnderCursor(
+			World,
+			RayOrigin,
+			RayDir,
+			GroundTraceDistance,
+			Tactical->GetTacticalCameraRigActor(),
+			GroundHit,
+			&GroundTraceScratchHits))
+		{
+			bLastGroundTraceHit = false;
+			bIsCurrentPlacementValid = false;
+			LastValidBuildTerritory.Reset();
+			LastGroundActor.Reset();
+
+			if (IsValid(PlacementGhost))
+			{
+				PlacementGhost->SetPreviewMeshVisible(false);
+			}
+
+			if (!bHasBroadcastValidity || LastInvalidReason != EIFPlacementInvalidReason::InvalidLocation)
+			{
+				bHasBroadcastValidity = true;
+				LastInvalidReason = EIFPlacementInvalidReason::InvalidLocation;
+				OnBuildPlacementValidityChanged.Broadcast(false, LastInvalidReason);
+			}
+			return;
+		}
+
+		bLastGroundTraceHit = true;
+		LastGroundNormal = GroundHit.ImpactNormal;
+		LastGroundActor = GroundHit.GetActor();
+
+		FIFSnapQuery SnapQuery;
+		SnapQuery.World = World;
+		SnapQuery.Data = Data;
+		SnapQuery.CursorGroundLocation = GroundHit.ImpactPoint;
+		SnapQuery.FreeYawIndex = FreeYawIndex;
+		SnapQuery.ConnectorFlipIndex = ConnectorFlipIndex;
+		SnapQuery.StairMountMode = StairMountMode;
+		SnapQuery.SnapRadiusCm = SnapRadiusCm;
+		SnapQuery.MountSnapRadiusCm = MountSnapRadiusCm;
+		SnapQuery.PreviousSnapHost = LastSnapHostStructure.Get();
+		SnapQuery.PreviousSideSign = LastSnapSideSign;
+
+		CachedSnapResult = FIFBuildingSnapSolver::SolvePlacementTransform(
+			SnapQuery,
+			SolverScratch.FriendlyStructures,
+			SolverScratch);
+	}
 
 	const EIFPlacementSnapState PrevSnapState = CurrentSnapState;
 	const bool PrevValidState = bIsCurrentPlacementValid;
-	bIsCurrentlySnapped = SnapResult.bSnapped;
-	CurrentSnapState = SnapResult.bSnapped ? SnapResult.SnapState : EIFPlacementSnapState::Free;
-	CurrentPreviewLocation = SnapResult.Location;
-	CurrentPreviewYaw = SnapResult.YawDegrees;
+	bIsCurrentlySnapped = CachedSnapResult.bSnapped;
+	CurrentSnapState = CachedSnapResult.bSnapped ? CachedSnapResult.SnapState : EIFPlacementSnapState::Free;
+	CurrentPreviewLocation = CachedSnapResult.Location;
+	CurrentPreviewYaw = CachedSnapResult.YawDegrees;
+	LastSnapSideSign = CachedSnapResult.bSnapped ? CachedSnapResult.SideSign : 0;
+
+	FIFPlacementValidationContext ValidationCtx;
+	ValidationCtx.World = World;
+	ValidationCtx.Data = Data;
+	ValidationCtx.Candidate = &CachedSnapResult;
+	ValidationCtx.PlayerPawn = PC->GetPawn();
+	ValidationCtx.GroundActor = LastGroundActor.Get();
+	ValidationCtx.GroundNormal = LastGroundNormal;
+	ValidationCtx.MaxPlacementSlopeDegrees = MaxPlacementSlopeDegrees;
+	ValidationCtx.BuilderTeamId = BuilderTeamId;
+	ValidationCtx.bRequireHeroInTerritory = bRequireHeroInTerritory;
+	ValidationCtx.RelocatingStructure = RelocatingStructure.Get();
+	ValidationCtx.PlacementGhost = PlacementGhost;
 
 	AIFTerritory* ValidTerritory = nullptr;
 	EIFPlacementInvalidReason InvalidReason = EIFPlacementInvalidReason::None;
 	const bool bIsValidPlacement = FIFBuildingSnapSolver::ValidatePlacement(
-		GetWorld(),
-		Data,
-		SnapResult,
-		PC->GetPawn(),
-		bRequireHeroInTerritory,
-		RelocatingStructure.Get(),
-		PlacementGhost,
+		ValidationCtx,
+		SolverScratch.AllAliveStructures,
+		SolverScratch,
 		ValidTerritory,
 		InvalidReason);
 
 	bIsCurrentPlacementValid = bIsValidPlacement;
-	LastSnapHostStructure = const_cast<AIFStructure*>(SnapResult.HostStructure.Get());
+	LastSnapHostStructure = const_cast<AIFStructure*>(CachedSnapResult.HostStructure.Get());
 	LastValidBuildTerritory = ValidTerritory;
 
 	if (IsValid(PlacementGhost))
@@ -503,6 +665,8 @@ FText UIFBuildingComponent::GetPlacementStatusText() const
 		return NSLOCTEXT("IronFieldTactical", "BuildReqGate", "ATTACH INSIDE A GATE ARCHWAY");
 	case EIFPlacementInvalidReason::GateAlreadyHasDoor:
 		return NSLOCTEXT("IronFieldTactical", "BuildGateHasDoor", "GATE ALREADY HAS A DOOR");
+	case EIFPlacementInvalidReason::HostHasMountedChildren:
+		return NSLOCTEXT("IronFieldTactical", "BuildHostHasChildren", "REMOVE MOUNTED PIECES FIRST");
 	case EIFPlacementInvalidReason::OutsideOwnedTerritory:
 		return NSLOCTEXT("IronFieldTactical", "BuildOutsideTerr", "OUTSIDE TERRITORY");
 	case EIFPlacementInvalidReason::HeroNotInTerritory:
@@ -511,6 +675,8 @@ FText UIFBuildingComponent::GetPlacementStatusText() const
 		return NSLOCTEXT("IronFieldTactical", "BuildKeepExists", "TERRITORY ALREADY HAS A KEEP");
 	case EIFPlacementInvalidReason::TooCloseToFlag:
 		return NSLOCTEXT("IronFieldTactical", "BuildFlag", "TOO CLOSE TO FLAG");
+	case EIFPlacementInvalidReason::SlopeTooSteep:
+		return NSLOCTEXT("IronFieldTactical", "BuildSlopeSteep", "TERRAIN TOO STEEP");
 	case EIFPlacementInvalidReason::BlockedByObstacle:
 		return NSLOCTEXT("IronFieldTactical", "BuildBlockedStruct", "BLOCKED BY STRUCTURE");
 	case EIFPlacementInvalidReason::BlockedByUnit:
@@ -523,7 +689,17 @@ FText UIFBuildingComponent::GetPlacementStatusText() const
 
 bool UIFBuildingComponent::TryConfirmPlacement()
 {
-	UpdatePlacementPreview();
+	UpdatePlacementPreview(/*bForceFullRefresh=*/true);
+
+	if (bIsRelocatingMode)
+	{
+		AIFStructure* const MovingStruct = RelocatingStructure.Get();
+		if (!IsValid(MovingStruct) || !MovingStruct->IsStructureAlive())
+		{
+			CancelBuildPlacement();
+			return false;
+		}
+	}
 
 	if (!bIsCurrentPlacementValid || !ActiveBuildData.IsValid())
 	{
@@ -539,14 +715,21 @@ bool UIFBuildingComponent::TryConfirmPlacement()
 		return false;
 	}
 
-	if (AIFStructure* const MovingStruct = RelocatingStructure.Get(); IsValid(MovingStruct) && MovingStruct->IsStructureAlive())
-	{
-		const bool bIsMountedSnap = (Data->PlacementRule == EIFPlacementRule::WallWalkwayOnly)
-			|| (Data->PlacementRule == EIFPlacementRule::CornerWalkwayOnly)
-			|| (Data->PlacementRule == EIFPlacementRule::GateOpeningOnly)
-			|| (Data->PlacementRule == EIFPlacementRule::StairMountOrFree && bIsCurrentlySnapped);
-		AIFStructure* const HostToBind = bIsMountedSnap ? LastSnapHostStructure.Get() : nullptr;
+	const bool bIsMountedSnap = (Data->PlacementRule == EIFPlacementRule::WallWalkwayOnly)
+		|| (Data->PlacementRule == EIFPlacementRule::CornerWalkwayOnly)
+		|| (Data->PlacementRule == EIFPlacementRule::GateOpeningOnly)
+		|| (Data->PlacementRule == EIFPlacementRule::StairMountOrFree && bIsCurrentlySnapped);
 
+	if (bIsRelocatingMode)
+	{
+		AIFStructure* const MovingStruct = RelocatingStructure.Get();
+		if (!IsValid(MovingStruct) || !MovingStruct->IsStructureAlive())
+		{
+			CancelBuildPlacement();
+			return false;
+		}
+
+		AIFStructure* const HostToBind = bIsMountedSnap ? LastSnapHostStructure.Get() : nullptr;
 		MovingStruct->RelocateStructure(CurrentPreviewLocation, CurrentPreviewYaw, Territory);
 		MovingStruct->SetHostStructure(HostToBind);
 		CancelBuildPlacement();
@@ -577,24 +760,19 @@ bool UIFBuildingComponent::TryConfirmPlacement()
 		return false;
 	}
 
-	const bool bIsMountedSnap = (Data->PlacementRule == EIFPlacementRule::WallWalkwayOnly)
-		|| (Data->PlacementRule == EIFPlacementRule::CornerWalkwayOnly)
-		|| (Data->PlacementRule == EIFPlacementRule::GateOpeningOnly)
-		|| (Data->PlacementRule == EIFPlacementRule::StairMountOrFree && bIsCurrentlySnapped);
-
-	NewStructure->InitializeStructure(Data, FGenericTeamId(IFTeamIds::Dawn), Territory, Data->bInstantBuild);
+	// InitializeStructure and SetHostStructure must run before FinishSpawning because AIFStructure::BeginPlay reads data, team, and territory.
+	NewStructure->InitializeStructure(Data, ResolveBuilderTeamId(), Territory, Data->bInstantBuild);
 	if (bIsMountedSnap)
 	{
 		NewStructure->SetHostStructure(LastSnapHostStructure.Get());
 	}
 	NewStructure->FinishSpawning(SpawnTransform);
-	Territory->RegisterStructure(NewStructure);
 
 	OnStructureActionCompleted.Broadcast(EIFTacticalOrderType::BuildStructure, CurrentPreviewLocation);
 
 	if (Data->bContinuousPlacement)
 	{
-		UpdatePlacementPreview();
+		UpdatePlacementPreview(/*bForceFullRefresh=*/true);
 	}
 	else
 	{
@@ -651,6 +829,10 @@ void UIFBuildingComponent::HandleSelectedStructureDestroyed(AIFStructure* Destro
 	{
 		ClearSelectedStructure();
 	}
+}
+
+void UIFBuildingComponent::HandleRelocatingStructureDestroyed(AIFStructure* DestroyedStructure, AActor*)
+{
 	if (RelocatingStructure.Get() == DestroyedStructure)
 	{
 		CancelBuildPlacement();
@@ -682,45 +864,20 @@ AIFPlacementGhost* UIFBuildingComponent::EnsurePlacementGhostSpawned()
 	return PlacementGhost;
 }
 
-bool UIFBuildingComponent::TraceGroundUnderCursor(const FVector& RayOrigin, const FVector& RayDir, FHitResult& OutHit) const
+FGenericTeamId UIFBuildingComponent::ResolveBuilderTeamId() const
 {
-	UWorld* const World = GetWorld();
-	if (!IsValid(World))
-	{
-		return false;
-	}
-
-	FCollisionObjectQueryParams GroundObjectParams;
-	GroundObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
-
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFBuildGroundTrace), false);
 	if (const AIFPlayerController* const PC = GetOwningPlayerController())
 	{
-		if (const UIFTacticalCommandComponent* const Tactical = PC->GetTacticalCommandComponent())
+		if (const APawn* const PlayerPawn = PC->GetPawn())
 		{
-			if (AActor* const CameraRig = Tactical->GetTacticalCameraRigActor())
+			const FGenericTeamId PawnTeam = IFTeamUtils::GetActorTeamId(PlayerPawn);
+			if (PawnTeam != FGenericTeamId::NoTeam)
 			{
-				QueryParams.AddIgnoredActor(CameraRig);
+				return PawnTeam;
 			}
 		}
 	}
-
-	TArray<FHitResult> Hits;
-	if (!World->LineTraceMultiByObjectType(Hits, RayOrigin, RayOrigin + RayDir * GroundTraceDistance, GroundObjectParams, QueryParams))
-	{
-		return false;
-	}
-
-	for (const FHitResult& Hit : Hits)
-	{
-		if (Hit.bBlockingHit && !Cast<APawn>(Hit.GetActor()))
-		{
-			OutHit = Hit;
-			return true;
-		}
-	}
-
-	return false;
+	return FGenericTeamId(IFTeamIds::Dawn);
 }
 
 AIFPlayerController* UIFBuildingComponent::GetOwningPlayerController() const

@@ -45,7 +45,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|UI", meta = (ClampMin = "50.0"))
 	float OverheadBarZOffset = 340.f;
 
-	// --- Placement & Modular Snapping ---------------------------------------
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement")
 	bool bContinuousPlacement = false;
 
@@ -58,10 +57,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "1.0"))
 	float AttachmentDepthHalfExtent = 62.5f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "10.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "10.0", EditCondition = "PlacementRule == EIFPlacementRule::StairMountOrFree"))
 	float StairHalfLength = 172.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "0.0", EditCondition = "PlacementRule == EIFPlacementRule::StairMountOrFree"))
 	float StairParallelLandingShift = 52.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Footprint")
@@ -79,7 +78,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement")
 	FTransform PreviewMeshRelativeTransform = FTransform::Identity;
 
-	// --- Destruction & VFX --------------------------------------------------
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Build|Preview")
+	bool bMirrorPreviewMeshX = false;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Destruction", meta = (ClampMin = "0.0"))
 	float DebrisLifeSpan = 4.f;
 
@@ -106,16 +107,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Destruction")
 	TSoftObjectPtr<UParticleSystem> BuildCompleteCascadeVFX;
-
-	// --- Economy & Civilians Hooks ------------------------------------------
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Economy", meta = (ClampMin = "0"))
-	int32 FoodCost = 0;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Economy", meta = (ClampMin = "0"))
-	int32 GoldCost = 0;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Economy", meta = (ClampMin = "0.0"))
-	float BuildTimeSeconds = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Economy")
 	bool bInstantBuild = true;

@@ -4,6 +4,7 @@
 #include "IFBuildingTypes.generated.h"
 
 class AIFStructure;
+class UIFStructureDataAsset;
 
 UENUM(BlueprintType)
 enum class EIFPlacementRule : uint8
@@ -26,9 +27,27 @@ enum class EIFPlacementSnapState : uint8
 };
 
 UENUM(BlueprintType)
-enum class EIFConnectorChannel : uint8
+enum class EIFPlacementInvalidReason : uint8
 {
 	None,
+	OutsideOwnedTerritory,
+	HeroNotInTerritory,
+	KeepAlreadyExists,
+	TooCloseToFlag,
+	SlopeTooSteep,
+	BlockedByObstacle,
+	BlockedByUnit,
+	RequiresWallAttachment,
+	RequiresCornerAttachment,
+	RequiresGateArchway,
+	GateAlreadyHasDoor,
+	HostHasMountedChildren,
+	InvalidLocation
+};
+
+UENUM(BlueprintType)
+enum class EIFConnectorChannel : uint8
+{
 	StoneWall,
 	WoodWalkway
 };
@@ -48,6 +67,30 @@ enum class EIFMountSurfaceKind : uint8
 	CornerArc,
 	WalkwayOuterEdge
 };
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnBuildPlacementModeChanged,
+	bool,
+	bIsPlacementActive,
+	UIFStructureDataAsset*,
+	ActiveStructureData);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnBuildPlacementValidityChanged,
+	bool,
+	bIsValid,
+	EIFPlacementInvalidReason,
+	InvalidReason);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnBuildPlacementRejected,
+	EIFPlacementInvalidReason,
+	InvalidReason);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnSelectedStructureChanged,
+	AIFStructure*,
+	SelectedStructure);
 
 USTRUCT(BlueprintType)
 struct IRONFIELD_API FIFCollisionBox
@@ -102,13 +145,13 @@ struct IRONFIELD_API FIFLateralMountSurface
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "1.0"))
 	float HalfThickness = 13.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "0.0", EditCondition = "Kind == EIFMountSurfaceKind::CornerArc"))
 	float ArcMidRadius = 240.5f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "0.0", EditCondition = "Kind == EIFMountSurfaceKind::CornerArc"))
 	float InnerWalkwayBackRadius = 218.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement", meta = (ClampMin = "0.0", EditCondition = "Kind == EIFMountSurfaceKind::CornerArc"))
 	float OuterWalkwayBackRadius = 253.5f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Structure|Placement")
@@ -136,5 +179,6 @@ struct IRONFIELD_API FIFSnapResult
 	TWeakObjectPtr<const AIFStructure> HostStructure;
 	bool bIsCornerInnerWalkway = false;
 	bool bBackedByStoneWall = false;
+	int8 SideSign = 0;
 	EIFPlacementSnapState SnapState = EIFPlacementSnapState::Free;
 };

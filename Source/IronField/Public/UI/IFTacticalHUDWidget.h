@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Castle/IFBuildingTypes.h"
 #include "Castle/IFCastleTypes.h"
 #include "Tactical/IFTacticalTypes.h"
 #include "IFTacticalHUDWidget.generated.h"

@@ -1,11 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Castle/IFCastleTypes.h"
 #include "IFTacticalTypes.generated.h"
-
-class AIFStructure;
-class UIFStructureDataAsset;
 
 UENUM(BlueprintType)
 enum class EIFTacticalOrderType : uint8
@@ -51,6 +47,3 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTacticalModeChanged, bool, bIsTac
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTacticalSelectionChanged, int32, SelectedUnitCount);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTacticalOrderIssued, EIFTacticalOrderType, OrderType, FVector, TargetLocation);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTacticalFormationChanged, EIFTacticalFormationType, NewFormationType);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnBuildPlacementModeChanged, bool, bIsPlacementActive, UIFStructureDataAsset*, ActiveStructureData);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnBuildPlacementValidityChanged, bool, bIsValid, EIFPlacementInvalidReason, InvalidReason);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTacticalStructureSelectionChanged, AIFStructure*, SelectedStructure);

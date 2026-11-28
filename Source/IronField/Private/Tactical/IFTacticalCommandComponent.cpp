@@ -50,6 +50,11 @@ void UIFTacticalCommandComponent::BeginPlay()
 			this, &UIFTacticalCommandComponent::HandleApplicationActivationChanged);
 	}
 
+	if (UIFBuildingComponent* const Building = GetBuildingComponent())
+	{
+		Building->OnBuildPlacementModeChanged.AddUniqueDynamic(this, &UIFTacticalCommandComponent::HandleBuildPlacementModeChanged);
+	}
+
 	RequestTacticalAssets();
 }
 
@@ -70,6 +75,7 @@ void UIFTacticalCommandComponent::EndPlay(const EEndPlayReason::Type EndPlayReas
 	CleanupOrderMarkerVFX();
 	if (UIFBuildingComponent* const Building = GetBuildingComponent())
 	{
+		Building->OnBuildPlacementModeChanged.RemoveDynamic(this, &UIFTacticalCommandComponent::HandleBuildPlacementModeChanged);
 		Building->CancelBuildPlacement();
 		Building->ClearSelectedStructure();
 	}
@@ -1067,6 +1073,15 @@ void UIFTacticalCommandComponent::HandleHighlightedStructureDestroyed(AIFStructu
 	if (SelectionState.GetHighlightedHostileStructure() == DestroyedStructure)
 	{
 		ClearHighlightedHostileStructure();
+	}
+}
+
+void UIFTacticalCommandComponent::HandleBuildPlacementModeChanged(bool bIsPlacementActive, UIFStructureDataAsset*)
+{
+	if (bIsPlacementActive)
+	{
+		CancelMarqueeSelection();
+		CancelFormationDragPreview();
 	}
 }
 
