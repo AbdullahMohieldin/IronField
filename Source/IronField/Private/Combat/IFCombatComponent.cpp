@@ -78,6 +78,7 @@ void UIFCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	CloseHitWindow();
+	RestoreAnimTickOption();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -252,6 +253,7 @@ bool UIFCombatComponent::PlayAttackMontage(UAnimMontage* Montage)
 	const EIFCombatState StartingState = GetCombatState();
 	// Clear active ID first because Montage_Play synchronously fires blend-out on the outgoing montage.
 	InvalidateMontageExecution();
+	EnableAttackAnimTickOption();
 
 	const float PlayLength = CachedAnimInstance->Montage_Play(Montage, 1.f);
 	FAnimMontageInstance* const Instance = PlayLength > 0.f && IsValid(CachedAnimInstance)
@@ -261,6 +263,10 @@ bool UIFCombatComponent::PlayAttackMontage(UAnimMontage* Montage)
 	if (!bCombatReady || !OwnerCharacter.IsValid() || OwnerCharacter->IsDead()
 		|| GetCombatState() != StartingState || CurrentMontageInstanceID != INDEX_NONE)
 	{
+		if (!IsAttacking())
+		{
+			RestoreAnimTickOption();
+		}
 		return false;
 	}
 
@@ -275,6 +281,10 @@ bool UIFCombatComponent::PlayAttackMontage(UAnimMontage* Montage)
 		if (IsAttacking() && CurrentMontageInstanceID == INDEX_NONE)
 		{
 			FinishCombo();
+		}
+		else if (!IsAttacking())
+		{
+			RestoreAnimTickOption();
 		}
 		return false;
 	}
@@ -369,6 +379,7 @@ void UIFCombatComponent::FinishCombo()
 	InvalidateMontageExecution();
 	CurrentStepIndex = INDEX_NONE;
 	CloseHitWindow();
+	RestoreAnimTickOption();
 	SetCombatState(EIFCombatState::Idle);
 	StartComboResetTimer();
 }
@@ -626,6 +637,7 @@ void UIFCombatComponent::HandleOwnerDeath()
 	LastFinishedStepIndex = INDEX_NONE;
 	ActiveFlinchMontage.Reset();
 	CloseHitWindow();
+	RestoreAnimTickOption();
 
 	if (UWorld* const World = GetWorld())
 	{
@@ -672,6 +684,7 @@ void UIFCombatComponent::HandleCombatStateTransition(EIFCombatState PreviousStat
 	if (PreviousState == EIFCombatState::Attacking && NewState != EIFCombatState::Attacking)
 	{
 		CloseHitWindow();
+		RestoreAnimTickOption();
 		if (IsValid(Stamina))
 		{
 			Stamina->ResetRegenDelay();
@@ -712,21 +725,6 @@ void UIFCombatComponent::OpenHitWindow()
 	if (!Step || !IsValid(World))
 	{
 		return;
-	}
-
-	if (USkeletalMeshComponent* const MeshComp = OwnerCharacter.IsValid() ? OwnerCharacter->GetMesh() : nullptr)
-	{
-		if (!bHasSavedAnimTickOption)
-		{
-			SavedAnimTickOption = MeshComp->VisibilityBasedAnimTickOption;
-			bHasSavedAnimTickOption = true;
-		}
-		// Refresh bones even off-screen so blade socket sweeps never read stale poses.
-		MeshComp->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
-		if (!MeshComp->WasRecentlyRendered())
-		{
-			MeshComp->RefreshBoneTransforms();
-		}
 	}
 
 	HitActorsThisWindow.Reset();
@@ -816,7 +814,20 @@ void UIFCombatComponent::CloseHitWindow()
 	HitActorsThisWindow.Reset();
 	PreviousSamplePoints.Reset();
 	CurrentSamplePoints.Reset();
-	RestoreAnimTickOption();
+}
+
+void UIFCombatComponent::EnableAttackAnimTickOption()
+{
+	if (USkeletalMeshComponent* const MeshComp = OwnerCharacter.IsValid() ? OwnerCharacter->GetMesh() : nullptr)
+	{
+		if (!bHasSavedAnimTickOption)
+		{
+			SavedAnimTickOption = MeshComp->VisibilityBasedAnimTickOption;
+			bHasSavedAnimTickOption = true;
+		}
+		// Refresh bones off-screen during attacks so melee socket sweeps stay accurate without calling RefreshBoneTransforms inside AnimNotifies.
+		MeshComp->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	}
 }
 
 void UIFCombatComponent::RestoreAnimTickOption()

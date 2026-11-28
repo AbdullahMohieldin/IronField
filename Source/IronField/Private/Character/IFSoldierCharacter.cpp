@@ -48,6 +48,8 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 		MeshComp->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 		MeshComp->SetCustomNavigableGeometry(EHasCustomNavigableGeometry::No);
 		MeshComp->SetCanEverAffectNavigation(false);
+		// Keep pose ticking off-screen so attack AnimNotifies still fire outside the camera frustum.
+		MeshComp->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPose;
 	}
 
 	if (UCharacterMovementComponent* const Movement = GetCharacterMovement())

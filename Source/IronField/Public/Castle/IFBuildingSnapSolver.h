@@ -36,6 +36,10 @@ struct IRONFIELD_API FIFSnapQuery
 	float MountSnapRadiusCm = 320.f;
 	const AIFStructure* PreviousSnapHost = nullptr;
 	int8 PreviousSideSign = 0;
+	const AIFStructure* HoveredStructure = nullptr;
+	FVector HoveredImpactPoint = FVector::ZeroVector;
+	FVector HoveredImpactNormal = FVector::UpVector;
+	FVector ViewRayOrigin = FVector::ZeroVector;
 };
 
 struct IRONFIELD_API FIFPlacementValidationContext

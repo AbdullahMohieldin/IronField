@@ -6,6 +6,7 @@
 #include "Castle/IFStructureDataAsset.h"
 #include "Castle/IFTerritory.h"
 #include "Combat/IFTeamTypes.h"
+#include "Core/IFGameTypes.h"
 #include "Core/IFLog.h"
 #include "Core/IFPlayerController.h"
 #include "Engine/AssetManager.h"
@@ -22,6 +23,14 @@
 namespace
 {
 	constexpr double StationaryValidationIntervalSeconds = 0.08;
+
+	bool UsesStructureMountedPlacement(EIFPlacementRule Rule)
+	{
+		return Rule == EIFPlacementRule::WallWalkwayOnly
+			|| Rule == EIFPlacementRule::CornerWalkwayOnly
+			|| Rule == EIFPlacementRule::GateOpeningOnly
+			|| Rule == EIFPlacementRule::StairMountOrFree;
+	}
 }
 
 UIFBuildingComponent::UIFBuildingComponent()
@@ -242,6 +251,76 @@ bool UIFBuildingComponent::HasLivingMountedDependents(const AIFStructure* HostSt
 	return false;
 }
 
+bool UIFBuildingComponent::TraceFriendlyStructureUnderCursor(
+	const FVector& RayOrigin,
+	const FVector& RayDir,
+	FGenericTeamId BuilderTeamId,
+	const AActor* CameraRig,
+	float MaxDistance,
+	const AIFStructure*& OutStructure,
+	FVector& OutImpactPoint,
+	FVector& OutImpactNormal)
+{
+	OutStructure = nullptr;
+	OutImpactPoint = FVector::ZeroVector;
+	OutImpactNormal = FVector::UpVector;
+
+	const UWorld* const World = GetWorld();
+	if (!IsValid(World))
+	{
+		return false;
+	}
+
+	FCollisionObjectQueryParams StructObjectParams;
+	StructObjectParams.AddObjectTypesToQuery(IFCollision::Damageable);
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFBuildStructureTrace), false);
+	if (IsValid(CameraRig))
+	{
+		QueryParams.AddIgnoredActor(CameraRig);
+	}
+	if (IsValid(PlacementGhost))
+	{
+		QueryParams.AddIgnoredActor(PlacementGhost);
+	}
+	if (IsValid(RelocatingStructure.Get()))
+	{
+		QueryParams.AddIgnoredActor(RelocatingStructure.Get());
+	}
+
+	StructureTraceScratchHits.Reset();
+	if (!World->LineTraceMultiByObjectType(
+		StructureTraceScratchHits,
+		RayOrigin,
+		RayOrigin + RayDir * MaxDistance,
+		StructObjectParams,
+		QueryParams))
+	{
+		return false;
+	}
+
+	const uint8 BuilderTeamRaw = BuilderTeamId.GetId();
+	for (const FHitResult& Hit : StructureTraceScratchHits)
+	{
+		const AIFStructure* const Candidate = Cast<AIFStructure>(Hit.GetActor());
+		if (!IsValid(Candidate) || !Candidate->IsStructureAlive())
+		{
+			continue;
+		}
+		if (Candidate->GetGenericTeamId().GetId() != BuilderTeamRaw)
+		{
+			continue;
+		}
+
+		OutStructure = Candidate;
+		OutImpactPoint = Hit.ImpactPoint;
+		OutImpactNormal = Hit.ImpactNormal;
+		return true;
+	}
+
+	return false;
+}
+
 bool UIFBuildingComponent::BeginRelocateSelectedStructure()
 {
 	AIFStructure* const TargetStructure = SelectedStructure.Get();
@@ -326,7 +405,7 @@ bool UIFBuildingComponent::BeginBuildPlacementInternal(UIFStructureDataAsset* St
 	bIsCurrentPlacementValid = false;
 	bHasBroadcastValidity = false;
 	bHasPreviewCache = false;
-	bLastGroundTraceHit = false;
+	bLastCursorTraceHit = false;
 	bIsCurrentlySnapped = false;
 	ConnectorFlipIndex = 0;
 	StairMountMode = 0;
@@ -386,7 +465,7 @@ void UIFBuildingComponent::CancelBuildPlacement()
 	bIsCurrentPlacementValid = false;
 	bHasBroadcastValidity = false;
 	bHasPreviewCache = false;
-	bLastGroundTraceHit = false;
+	bLastCursorTraceHit = false;
 	bIsCurrentlySnapped = false;
 	ConnectorFlipIndex = 0;
 	StairMountMode = 0;
@@ -521,7 +600,7 @@ void UIFBuildingComponent::UpdatePlacementPreview(bool bForceFullRefresh)
 	LastKnownStructureCount = SolverScratch.AllAliveStructures.Num();
 	LastValidationRealTime = NowRealSeconds;
 
-	const bool bNeedFullSolve = !bInputsUnchanged || bStructureSetChanged || !bLastGroundTraceHit;
+	const bool bNeedFullSolve = !bInputsUnchanged || bStructureSetChanged || !bLastCursorTraceHit;
 	if (bNeedFullSolve)
 	{
 		LastPreviewMousePos = CurrentMousePos;
@@ -534,17 +613,38 @@ void UIFBuildingComponent::UpdatePlacementPreview(bool bForceFullRefresh)
 		LastPreviewRelocatingStructure = RelocatingStructure;
 		bHasPreviewCache = true;
 
+		const AActor* const CameraRig = Tactical->GetTacticalCameraRigActor();
 		FHitResult GroundHit;
-		if (!FIFTacticalCursorQuery::TraceGroundUnderCursor(
+		const bool bHitGround = FIFTacticalCursorQuery::TraceGroundUnderCursor(
 			World,
 			RayOrigin,
 			RayDir,
 			GroundTraceDistance,
-			Tactical->GetTacticalCameraRigActor(),
+			CameraRig,
 			GroundHit,
-			&GroundTraceScratchHits))
+			&GroundTraceScratchHits);
+
+		const AIFStructure* HoveredStructure = nullptr;
+		FVector HoveredImpactPoint = FVector::ZeroVector;
+		FVector HoveredImpactNormal = FVector::UpVector;
+		bool bHitStructure = false;
+		if (UsesStructureMountedPlacement(Data->PlacementRule))
 		{
-			bLastGroundTraceHit = false;
+			const float StructureTraceMaxDist = bHitGround ? (GroundHit.Distance + 10.f) : GroundTraceDistance;
+			bHitStructure = TraceFriendlyStructureUnderCursor(
+				RayOrigin,
+				RayDir,
+				BuilderTeamId,
+				CameraRig,
+				StructureTraceMaxDist,
+				HoveredStructure,
+				HoveredImpactPoint,
+				HoveredImpactNormal);
+		}
+
+		if (!bHitGround && !bHitStructure)
+		{
+			bLastCursorTraceHit = false;
 			bIsCurrentPlacementValid = false;
 			LastValidBuildTerritory.Reset();
 			LastGroundActor.Reset();
@@ -563,14 +663,14 @@ void UIFBuildingComponent::UpdatePlacementPreview(bool bForceFullRefresh)
 			return;
 		}
 
-		bLastGroundTraceHit = true;
-		LastGroundNormal = GroundHit.ImpactNormal;
-		LastGroundActor = GroundHit.GetActor();
+		bLastCursorTraceHit = true;
+		LastGroundNormal = bHitGround ? GroundHit.ImpactNormal : FVector::UpVector;
+		LastGroundActor = bHitGround ? GroundHit.GetActor() : nullptr;
 
 		FIFSnapQuery SnapQuery;
 		SnapQuery.World = World;
 		SnapQuery.Data = Data;
-		SnapQuery.CursorGroundLocation = GroundHit.ImpactPoint;
+		SnapQuery.CursorGroundLocation = bHitGround ? GroundHit.ImpactPoint : HoveredImpactPoint;
 		SnapQuery.FreeYawIndex = FreeYawIndex;
 		SnapQuery.ConnectorFlipIndex = ConnectorFlipIndex;
 		SnapQuery.StairMountMode = StairMountMode;
@@ -578,6 +678,10 @@ void UIFBuildingComponent::UpdatePlacementPreview(bool bForceFullRefresh)
 		SnapQuery.MountSnapRadiusCm = MountSnapRadiusCm;
 		SnapQuery.PreviousSnapHost = LastSnapHostStructure.Get();
 		SnapQuery.PreviousSideSign = LastSnapSideSign;
+		SnapQuery.HoveredStructure = HoveredStructure;
+		SnapQuery.HoveredImpactPoint = HoveredImpactPoint;
+		SnapQuery.HoveredImpactNormal = HoveredImpactNormal;
+		SnapQuery.ViewRayOrigin = RayOrigin;
 
 		CachedSnapResult = FIFBuildingSnapSolver::SolvePlacementTransform(
 			SnapQuery,

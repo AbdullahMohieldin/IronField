@@ -103,6 +103,56 @@ namespace
 		return (SignedValue >= 0.f) ? 1 : -1;
 	}
 
+	int8 ResolveHoveredStraightWallSideSign(
+		const FStraightWallBasis& Basis,
+		const FVector& HoveredImpactNormal,
+		const FVector& ViewRayOrigin,
+		const AIFStructure* Host,
+		const AIFStructure* PreviousHost,
+		int8 PreviousSideSign)
+	{
+		// Prefer the aimed side face normal so cursor hits on a wall face never flip to the opposite side.
+		const float NormalDot = FVector2D::DotProduct(FVector2D(HoveredImpactNormal), Basis.Right);
+		if (FMath::Abs(NormalDot) > 0.25f)
+		{
+			return (NormalDot > 0.f) ? 1 : -1;
+		}
+
+		// When aiming at the horizontal top edge, fall back to which side of the wall plane the camera sits on.
+		const float CameraSignedPerp = FVector2D::DotProduct(FVector2D(ViewRayOrigin) - Basis.Anchor, Basis.Right);
+		return ResolveStickySideSign(CameraSignedPerp, Host, PreviousHost, PreviousSideSign);
+	}
+
+	int8 ResolveHoveredCornerArcSideSign(
+		const FVector2D& WorldArcCenter,
+		const FVector2D& MidRadial,
+		const FVector2D& ArcMidPoint,
+		const FVector& HoveredImpactPoint,
+		const FVector& HoveredImpactNormal,
+		const FVector& ViewRayOrigin,
+		const AIFStructure* Host,
+		const AIFStructure* PreviousHost,
+		int8 PreviousSideSign)
+	{
+		const FVector2D LocalRadial = (FVector2D(HoveredImpactPoint) - WorldArcCenter).GetSafeNormal();
+		if (!LocalRadial.IsNearlyZero())
+		{
+			const float RadialDot = FVector2D::DotProduct(FVector2D(HoveredImpactNormal), LocalRadial);
+			if (RadialDot < -0.25f)
+			{
+				return 1;
+			}
+			if (RadialDot > 0.25f)
+			{
+				return -1;
+			}
+		}
+
+		// Fall back to camera side of the corner arc's tangent plane when aiming at the top parapet.
+		const float CameraInwardDist = -FVector2D::DotProduct(FVector2D(ViewRayOrigin) - ArcMidPoint, MidRadial);
+		return ResolveStickySideSign(CameraInwardDist, Host, PreviousHost, PreviousSideSign);
+	}
+
 	FVector2D GetEffectiveHorizontalHalfExtent(const FIFWorldCollisionBox& Box)
 	{
 		const float PitchRad = FMath::DegreesToRadians(Box.WorldRotation.Pitch);
@@ -484,6 +534,35 @@ namespace
 		TArrayView<const AIFStructure* const> FriendlyStructures,
 		FIFSnapResult& OutResult)
 	{
+		if (IsValid(Query.HoveredStructure) && FriendlyStructures.Contains(Query.HoveredStructure))
+		{
+			const UIFStructureDataAsset* const HoveredDA = Query.HoveredStructure->GetStructureData();
+			if (IsValid(HoveredDA))
+			{
+				const FVector HostLoc = Query.HoveredStructure->GetActorLocation();
+				const FVector2D HostLoc2D(HostLoc);
+				const float HostYaw = Query.HoveredStructure->GetActorRotation().Yaw;
+
+				for (const FIFLateralMountSurface& Surf : HoveredDA->MountSurfaces)
+				{
+					if (Surf.Kind == EIFMountSurfaceKind::CornerArc)
+					{
+						const FVector2D WorldArcCenter = HostLoc2D + Rotate2D(Surf.LocalCenter, HostYaw);
+						OutResult = FIFSnapResult();
+						OutResult.bSnapped = true;
+						OutResult.Location = FVector(WorldArcCenter.X, WorldArcCenter.Y, HostLoc.Z);
+						OutResult.YawDegrees = FRotator::NormalizeAxis(HostYaw + 135.f);
+						OutResult.HostStructure = Query.HoveredStructure;
+						OutResult.bIsCornerInnerWalkway = true;
+						OutResult.bBackedByStoneWall = true;
+						OutResult.SideSign = 1;
+						OutResult.SnapState = EIFPlacementSnapState::SnappedToCorner;
+						return true;
+					}
+				}
+			}
+		}
+
 		const FVector2D Cursor2D(Query.CursorGroundLocation);
 		const float ClampedRadius = FMath::Max(100.f, Query.MountSnapRadiusCm);
 		float BestScoreDistSq = FMath::Square(ClampedRadius);
@@ -555,6 +634,33 @@ namespace
 		TArrayView<const AIFStructure* const> FriendlyStructures,
 		FIFSnapResult& OutResult)
 	{
+		if (IsValid(Query.HoveredStructure) && FriendlyStructures.Contains(Query.HoveredStructure))
+		{
+			const AIFStructure* TargetGate = Query.HoveredStructure;
+			if (const AIFGateDoor* const HoveredDoor = Cast<AIFGateDoor>(TargetGate))
+			{
+				TargetGate = HoveredDoor->GetHostGate();
+			}
+
+			if (IsValid(TargetGate) && FriendlyStructures.Contains(TargetGate))
+			{
+				const UIFStructureDataAsset* const HostDA = TargetGate->GetStructureData();
+				if (IsValid(HostDA) && HostDA->bSupportsGateDoor)
+				{
+					const FVector HostLoc = TargetGate->GetActorLocation();
+					OutResult = FIFSnapResult();
+					OutResult.bSnapped = true;
+					OutResult.Location = FVector(HostLoc.X, HostLoc.Y, HostLoc.Z);
+					OutResult.YawDegrees = TargetGate->GetActorRotation().Yaw;
+					OutResult.HostStructure = TargetGate;
+					OutResult.bBackedByStoneWall = true;
+					OutResult.SideSign = 0;
+					OutResult.SnapState = EIFPlacementSnapState::SnappedToGate;
+					return true;
+				}
+			}
+		}
+
 		const FVector2D Cursor2D(Query.CursorGroundLocation);
 		const float ClampedRadius = FMath::Max(120.f, Query.MountSnapRadiusCm);
 		float BestScoreDistSq = FMath::Square(ClampedRadius);
@@ -603,6 +709,150 @@ namespace
 		FIFSnapSolverScratch& Scratch,
 		FIFSnapResult& OutResult)
 	{
+		if (IsValid(Query.HoveredStructure) && FriendlyStructures.Contains(Query.HoveredStructure))
+		{
+			const AIFStructure* const Hovered = Query.HoveredStructure;
+			const UIFStructureDataAsset* const HoveredDA = Hovered->GetStructureData();
+			if (IsValid(HoveredDA))
+			{
+				const FVector HostLoc = Hovered->GetActorLocation();
+				const FVector2D HostLoc2D(HostLoc);
+				const float HostYaw = Hovered->GetActorRotation().Yaw;
+				const FVector2D Impact2D(Query.HoveredImpactPoint);
+
+				FIFSnapResult HoveredWallSnap;
+				float BestHoveredSurfDistSq = MAX_flt;
+
+				for (const FIFLateralMountSurface& Surf : HoveredDA->MountSurfaces)
+				{
+					if (Surf.Kind == EIFMountSurfaceKind::StraightWall)
+					{
+						const FStraightWallBasis Basis = ComputeStraightWallBasis(HostLoc2D, HostYaw, Surf);
+						const int8 SideSign = ResolveHoveredStraightWallSideSign(
+							Basis,
+							Query.HoveredImpactNormal,
+							Query.ViewRayOrigin,
+							Hovered,
+							Query.PreviousSnapHost,
+							Query.PreviousSideSign);
+						if ((SideSign > 0 && !Surf.bAllowPositiveSide) || (SideSign < 0 && !Surf.bAllowNegativeSide))
+						{
+							continue;
+						}
+
+						const float SurfDistSq = FVector2D::DistSquared(Impact2D, Basis.Anchor);
+						if (SurfDistSq < BestHoveredSurfDistSq)
+						{
+							BestHoveredSurfDistSq = SurfDistSq;
+							const FVector2D CandPos2D = Basis.Anchor + Basis.Right * (static_cast<float>(SideSign) * (Surf.HalfThickness + Query.Data->AttachmentDepthHalfExtent));
+							HoveredWallSnap = FIFSnapResult();
+							HoveredWallSnap.bSnapped = true;
+							HoveredWallSnap.Location = FVector(CandPos2D.X, CandPos2D.Y, HostLoc.Z);
+							HoveredWallSnap.YawDegrees = (SideSign > 0) ? Basis.SurfYaw : FRotator::NormalizeAxis(Basis.SurfYaw + 180.f);
+							HoveredWallSnap.HostStructure = Hovered;
+							HoveredWallSnap.bIsCornerInnerWalkway = false;
+							HoveredWallSnap.bBackedByStoneWall = true;
+							HoveredWallSnap.SideSign = SideSign;
+							HoveredWallSnap.SnapState = EIFPlacementSnapState::SnappedToWall;
+						}
+					}
+					else if (Surf.Kind == EIFMountSurfaceKind::CornerArc)
+					{
+						const FVector2D WorldArcCenter = HostLoc2D + Rotate2D(Surf.LocalCenter, HostYaw);
+						const FVector2D MidRadial = ComputeCornerArcMidRadial(HostYaw);
+						const FVector2D ArcMidPoint = WorldArcCenter + MidRadial * Surf.ArcMidRadius;
+						const int8 SideSign = ResolveHoveredCornerArcSideSign(
+							WorldArcCenter,
+							MidRadial,
+							ArcMidPoint,
+							Query.HoveredImpactPoint,
+							Query.HoveredImpactNormal,
+							Query.ViewRayOrigin,
+							Hovered,
+							Query.PreviousSnapHost,
+							Query.PreviousSideSign);
+						const bool bInnerSide = (SideSign > 0);
+						if ((bInnerSide && !Surf.bAllowPositiveSide) || (!bInnerSide && !Surf.bAllowNegativeSide))
+						{
+							continue;
+						}
+
+						const float SurfDistSq = FVector2D::DistSquared(Impact2D, ArcMidPoint);
+						if (SurfDistSq < BestHoveredSurfDistSq)
+						{
+							BestHoveredSurfDistSq = SurfDistSq;
+							HoveredWallSnap = FIFSnapResult();
+							HoveredWallSnap.bSnapped = true;
+							if (bInnerSide)
+							{
+								const FVector2D CandPos2D = WorldArcCenter + MidRadial * (Surf.InnerWalkwayBackRadius - Query.Data->AttachmentDepthHalfExtent);
+								HoveredWallSnap.Location = FVector(CandPos2D.X, CandPos2D.Y, HostLoc.Z);
+								HoveredWallSnap.YawDegrees = FRotator::NormalizeAxis(HostYaw + 45.f);
+								HoveredWallSnap.bIsCornerInnerWalkway = true;
+							}
+							else
+							{
+								const FVector2D CandPos2D = WorldArcCenter + MidRadial * (Surf.OuterWalkwayBackRadius + Query.Data->AttachmentDepthHalfExtent);
+								HoveredWallSnap.Location = FVector(CandPos2D.X, CandPos2D.Y, HostLoc.Z);
+								HoveredWallSnap.YawDegrees = FRotator::NormalizeAxis(HostYaw - 135.f);
+								HoveredWallSnap.bIsCornerInnerWalkway = false;
+							}
+							HoveredWallSnap.HostStructure = Hovered;
+							HoveredWallSnap.bBackedByStoneWall = true;
+							HoveredWallSnap.SideSign = SideSign;
+							HoveredWallSnap.SnapState = EIFPlacementSnapState::SnappedToCorner;
+						}
+					}
+				}
+
+				if (HoveredWallSnap.bSnapped)
+				{
+					OutResult = HoveredWallSnap;
+					return true;
+				}
+
+				if (HoveredDA->PlacementRule == EIFPlacementRule::WallWalkwayOnly)
+				{
+					FIFSnapResult ChainSnap;
+					const FVector HoveredChainAnchor(Query.HoveredImpactPoint.X, Query.HoveredImpactPoint.Y, HostLoc.Z);
+					if (TrySnapEndToEndChannel(
+						FriendlyStructures,
+						Query.Data,
+						EIFConnectorChannel::WoodWalkway,
+						HoveredChainAnchor,
+						0,
+						FMath::Max(Query.SnapRadiusCm, Query.MountSnapRadiusCm),
+						/*bPreserveHostOrientation=*/true,
+						Query.PreviousSnapHost,
+						Scratch,
+						ChainSnap))
+					{
+						bool bChainCornerInner = false;
+						const AIFStructure* BackingHost = nullptr;
+						if (HasStoneWallBacking(
+							FriendlyStructures,
+							ChainSnap.Location,
+							ChainSnap.YawDegrees,
+							Query.Data->AttachmentDepthHalfExtent,
+							bChainCornerInner,
+							&BackingHost))
+						{
+							ChainSnap.bIsCornerInnerWalkway = bChainCornerInner;
+							ChainSnap.bBackedByStoneWall = true;
+							ChainSnap.HostStructure = IsValid(BackingHost) ? BackingHost : ChainSnap.HostStructure.Get();
+							if (ChainSnap.HostStructure.IsValid())
+							{
+								ChainSnap.Location.Z = ChainSnap.HostStructure->GetActorLocation().Z;
+							}
+							ChainSnap.SnapState = bChainCornerInner ? EIFPlacementSnapState::SnappedToCorner : EIFPlacementSnapState::SnappedToWalkway;
+							OutResult = ChainSnap;
+							return true;
+						}
+					}
+				}
+			}
+		}
+
 		const FVector2D Cursor2D(Query.CursorGroundLocation);
 		const float ClampedRadius = FMath::Max(100.f, Query.MountSnapRadiusCm);
 		float BestScoreDistSq = FMath::Square(ClampedRadius);
@@ -777,7 +1027,7 @@ namespace
 		FIFSnapResult BestStairSnap;
 		const int32 Mode = ((Query.StairMountMode % 3) + 3) % 3;
 
-		auto HasWalkwayOnSide = [&FriendlyStructures](const FVector2D& WallAnchor, const FVector2D& SideNormal, float WallHalfThickness) -> bool
+		auto FindWalkwayOnSide = [&FriendlyStructures](const FVector2D& WallAnchor, const FVector2D& SideNormal, float WallHalfThickness) -> const AIFStructure*
 		{
 			for (const AIFStructure* const S : FriendlyStructures)
 			{
@@ -787,12 +1037,181 @@ namespace
 					const FVector2D Probe = WallAnchor + SideNormal * (WallHalfThickness + SDA->AttachmentDepthHalfExtent);
 					if (FVector2D::DistSquared(FVector2D(S->GetActorLocation()), Probe) < FMath::Square(55.f))
 					{
-						return true;
+						return S;
 					}
 				}
 			}
-			return false;
+			return nullptr;
 		};
+
+		auto BuildStairSnapResult = [&Query, Mode, FreeYaw](
+			const AIFStructure* Host,
+			const FVector2D& MountAnchor,
+			const FVector2D& SideNormal,
+			int8 ChosenSideSign,
+			EIFPlacementSnapState CandidateSnapState) -> FIFSnapResult
+		{
+			FIFSnapResult Snap;
+			Snap.bSnapped = true;
+			Snap.HostStructure = Host;
+			Snap.SideSign = ChosenSideSign;
+			Snap.SnapState = CandidateSnapState;
+
+			const FVector2D Tangent(-SideNormal.Y, SideNormal.X);
+			FVector2D FinalPos2D = MountAnchor;
+			float FinalYaw = FreeYaw;
+
+			if (Mode == 0)
+			{
+				FinalPos2D = MountAnchor + SideNormal * Query.Data->AttachmentDepthHalfExtent - Tangent * Query.Data->StairParallelLandingShift;
+				FinalYaw = FRotator::NormalizeAxis(FMath::RadiansToDegrees(FMath::Atan2(Tangent.Y, Tangent.X)));
+			}
+			else if (Mode == 1)
+			{
+				FinalPos2D = MountAnchor + SideNormal * Query.Data->AttachmentDepthHalfExtent + Tangent * Query.Data->StairParallelLandingShift;
+				FinalYaw = FRotator::NormalizeAxis(FMath::RadiansToDegrees(FMath::Atan2(-Tangent.Y, -Tangent.X)));
+			}
+			else
+			{
+				FinalPos2D = MountAnchor + SideNormal * Query.Data->StairHalfLength;
+				FinalYaw = FRotator::NormalizeAxis(FMath::RadiansToDegrees(FMath::Atan2(-SideNormal.Y, -SideNormal.X)));
+			}
+
+			Snap.Location = FVector(FinalPos2D.X, FinalPos2D.Y, Host->GetActorLocation().Z);
+			Snap.YawDegrees = FinalYaw;
+			return Snap;
+		};
+
+		if (IsValid(Query.HoveredStructure) && FriendlyStructures.Contains(Query.HoveredStructure))
+		{
+			const AIFStructure* const Hovered = Query.HoveredStructure;
+			const UIFStructureDataAsset* const HoveredDA = Hovered->GetStructureData();
+			if (IsValid(HoveredDA) && !HoveredDA->MountSurfaces.IsEmpty())
+			{
+				const FVector HostLoc = Hovered->GetActorLocation();
+				const FVector2D HostLoc2D(HostLoc);
+				const float HostYaw = Hovered->GetActorRotation().Yaw;
+				const FVector2D Impact2D(Query.HoveredImpactPoint);
+
+				FIFSnapResult HoveredStairSnap;
+				float BestHoveredSurfDistSq = MAX_flt;
+
+				for (const FIFLateralMountSurface& Surf : HoveredDA->MountSurfaces)
+				{
+					const AIFStructure* SnapHost = Hovered;
+					FVector2D MountAnchor = FVector2D::ZeroVector;
+					FVector2D SideNormal = FVector2D(0.f, 1.f);
+					int8 ChosenSideSign = 0;
+					EIFPlacementSnapState CandidateSnapState = EIFPlacementSnapState::SnappedToWall;
+					float SurfDistSq = MAX_flt;
+
+					if (Surf.Kind == EIFMountSurfaceKind::WalkwayOuterEdge)
+					{
+						const FStraightWallBasis Basis = ComputeStraightWallBasis(HostLoc2D, HostYaw, Surf);
+						SideNormal = Basis.Right;
+						MountAnchor = Basis.Anchor + SideNormal * Surf.HalfThickness;
+						ChosenSideSign = 1;
+						CandidateSnapState = EIFPlacementSnapState::SnappedToWalkway;
+						SurfDistSq = FVector2D::DistSquared(Impact2D, MountAnchor);
+					}
+					else if (Surf.Kind == EIFMountSurfaceKind::StraightWall)
+					{
+						const FStraightWallBasis Basis = ComputeStraightWallBasis(HostLoc2D, HostYaw, Surf);
+						ChosenSideSign = ResolveHoveredStraightWallSideSign(
+							Basis,
+							Query.HoveredImpactNormal,
+							Query.ViewRayOrigin,
+							Hovered,
+							Query.PreviousSnapHost,
+							Query.PreviousSideSign);
+						if ((ChosenSideSign > 0 && !Surf.bAllowPositiveSide) || (ChosenSideSign < 0 && !Surf.bAllowNegativeSide))
+						{
+							continue;
+						}
+
+						SideNormal = Basis.Right * static_cast<float>(ChosenSideSign);
+						if (const AIFStructure* const SideWalkway = FindWalkwayOnSide(Basis.Anchor, SideNormal, Surf.HalfThickness))
+						{
+							const UIFStructureDataAsset* const WalkwayDA = SideWalkway->GetStructureData();
+							bool bFoundWalkwayEdge = false;
+							if (IsValid(WalkwayDA))
+							{
+								const FVector2D WalkwayLoc2D(SideWalkway->GetActorLocation());
+								const float WalkwayYaw = SideWalkway->GetActorRotation().Yaw;
+								for (const FIFLateralMountSurface& WalkwaySurf : WalkwayDA->MountSurfaces)
+								{
+									if (WalkwaySurf.Kind == EIFMountSurfaceKind::WalkwayOuterEdge)
+									{
+										const FStraightWallBasis WalkwayBasis = ComputeStraightWallBasis(WalkwayLoc2D, WalkwayYaw, WalkwaySurf);
+										SnapHost = SideWalkway;
+										SideNormal = WalkwayBasis.Right;
+										MountAnchor = WalkwayBasis.Anchor + SideNormal * WalkwaySurf.HalfThickness;
+										ChosenSideSign = 1;
+										CandidateSnapState = EIFPlacementSnapState::SnappedToWalkway;
+										SurfDistSq = FVector2D::DistSquared(Impact2D, Basis.Anchor);
+										bFoundWalkwayEdge = true;
+										break;
+									}
+								}
+							}
+							if (!bFoundWalkwayEdge)
+							{
+								continue;
+							}
+						}
+						else
+						{
+							MountAnchor = Basis.Anchor + SideNormal * Surf.HalfThickness;
+							CandidateSnapState = EIFPlacementSnapState::SnappedToWall;
+							SurfDistSq = FVector2D::DistSquared(Impact2D, Basis.Anchor);
+						}
+					}
+					else if (Surf.Kind == EIFMountSurfaceKind::CornerArc)
+					{
+						const FVector2D WorldArcCenter = HostLoc2D + Rotate2D(Surf.LocalCenter, HostYaw);
+						const FVector2D MidRadial = ComputeCornerArcMidRadial(HostYaw);
+						const FVector2D ArcMidPoint = WorldArcCenter + MidRadial * Surf.ArcMidRadius;
+						ChosenSideSign = ResolveHoveredCornerArcSideSign(
+							WorldArcCenter,
+							MidRadial,
+							ArcMidPoint,
+							Query.HoveredImpactPoint,
+							Query.HoveredImpactNormal,
+							Query.ViewRayOrigin,
+							Hovered,
+							Query.PreviousSnapHost,
+							Query.PreviousSideSign);
+						const bool bInnerSide = (ChosenSideSign > 0);
+						if ((bInnerSide && !Surf.bAllowPositiveSide) || (!bInnerSide && !Surf.bAllowNegativeSide))
+						{
+							continue;
+						}
+
+						SideNormal = bInnerSide ? -MidRadial : MidRadial;
+						const float MountRadius = bInnerSide ? Surf.InnerWalkwayBackRadius : Surf.OuterWalkwayBackRadius;
+						MountAnchor = WorldArcCenter + MidRadial * MountRadius;
+						CandidateSnapState = EIFPlacementSnapState::SnappedToCorner;
+						SurfDistSq = FVector2D::DistSquared(Impact2D, ArcMidPoint);
+					}
+					else
+					{
+						continue;
+					}
+
+					if (SurfDistSq < BestHoveredSurfDistSq)
+					{
+						BestHoveredSurfDistSq = SurfDistSq;
+						HoveredStairSnap = BuildStairSnapResult(SnapHost, MountAnchor, SideNormal, ChosenSideSign, CandidateSnapState);
+					}
+				}
+
+				if (HoveredStairSnap.bSnapped)
+				{
+					OutResult = HoveredStairSnap;
+					return true;
+				}
+			}
+		}
 
 		for (const AIFStructure* const Host : FriendlyStructures)
 		{
@@ -858,7 +1277,7 @@ namespace
 					}
 
 					SideNormal = Basis.Right * static_cast<float>(ChosenSideSign);
-					if (HasWalkwayOnSide(Basis.Anchor, SideNormal, Surf.HalfThickness))
+					if (FindWalkwayOnSide(Basis.Anchor, SideNormal, Surf.HalfThickness) != nullptr)
 					{
 						continue;
 					}
@@ -904,33 +1323,7 @@ namespace
 				}
 
 				BestScoreDistSq = ScoreDistSq;
-				BestStairSnap.bSnapped = true;
-				BestStairSnap.HostStructure = Host;
-				BestStairSnap.SideSign = ChosenSideSign;
-				BestStairSnap.SnapState = CandidateSnapState;
-
-				const FVector2D Tangent(-SideNormal.Y, SideNormal.X);
-				FVector2D FinalPos2D = MountAnchor;
-				float FinalYaw = FreeYaw;
-
-				if (Mode == 0)
-				{
-					FinalPos2D = MountAnchor + SideNormal * Query.Data->AttachmentDepthHalfExtent - Tangent * Query.Data->StairParallelLandingShift;
-					FinalYaw = FRotator::NormalizeAxis(FMath::RadiansToDegrees(FMath::Atan2(Tangent.Y, Tangent.X)));
-				}
-				else if (Mode == 1)
-				{
-					FinalPos2D = MountAnchor + SideNormal * Query.Data->AttachmentDepthHalfExtent + Tangent * Query.Data->StairParallelLandingShift;
-					FinalYaw = FRotator::NormalizeAxis(FMath::RadiansToDegrees(FMath::Atan2(-Tangent.Y, -Tangent.X)));
-				}
-				else
-				{
-					FinalPos2D = MountAnchor + SideNormal * Query.Data->StairHalfLength;
-					FinalYaw = FRotator::NormalizeAxis(FMath::RadiansToDegrees(FMath::Atan2(-SideNormal.Y, -SideNormal.X)));
-				}
-
-				BestStairSnap.Location = FVector(FinalPos2D.X, FinalPos2D.Y, HostLoc.Z);
-				BestStairSnap.YawDegrees = FinalYaw;
+				BestStairSnap = BuildStairSnapResult(Host, MountAnchor, SideNormal, ChosenSideSign, CandidateSnapState);
 			}
 		}
 
@@ -1007,6 +1400,11 @@ namespace
 
 		if (!Candidate.bSnapped)
 		{
+			if (!IsValid(Context.GroundActor))
+			{
+				OutReason = EIFPlacementInvalidReason::InvalidLocation;
+				return false;
+			}
 			if (Context.GroundNormal.Z < MinGroundNormalZ)
 			{
 				OutReason = EIFPlacementInvalidReason::SlopeTooSteep;
@@ -1166,15 +1564,10 @@ namespace
 			const bool bExistIsWalkway = IsValid(ExistDA) && (ExistDA->PlacementRule == EIFPlacementRule::WallWalkwayOnly);
 			const bool bExistIsCornerWalkway = IsValid(ExistDA) && (ExistDA->PlacementRule == EIFPlacementRule::CornerWalkwayOnly);
 
-			// Allow miter overlap between CornerWalkway and adjoining straight walkways, but block double-stacking on the same host corner.
+			// CornerWalkway and WoodWalkway intentionally overlap at wall corners to bridge adjacent walkway runs with current modular meshes.
 			if ((bCandIsCornerWalkway && bExistIsWalkway) || (bCandIsWalkway && bExistIsCornerWalkway))
 			{
-				const AIFStructure* const CandHost = Candidate.HostStructure.Get();
-				const AIFStructure* const ExistHost = Existing->GetHostStructure();
-				if (!IsValid(CandHost) || CandHost != ExistHost)
-				{
-					continue;
-				}
+				continue;
 			}
 
 			if (bCandIsWalkway && bExistIsWalkway)

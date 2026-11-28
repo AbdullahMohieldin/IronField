@@ -145,6 +145,15 @@ private:
 	void ResolveGhostMaterials();
 	void UnbindRelocatingStructureDelegate();
 	bool HasLivingMountedDependents(const AIFStructure* HostStructure) const;
+	bool TraceFriendlyStructureUnderCursor(
+		const FVector& RayOrigin,
+		const FVector& RayDir,
+		FGenericTeamId BuilderTeamId,
+		const AActor* CameraRig,
+		float MaxDistance,
+		const AIFStructure*& OutStructure,
+		FVector& OutImpactPoint,
+		FVector& OutImpactNormal);
 	bool BeginBuildPlacementInternal(UIFStructureDataAsset* StructureData, AIFStructure* InRelocatingStructure);
 	AIFPlacementGhost* EnsurePlacementGhostSpawned();
 	FGenericTeamId ResolveBuilderTeamId() const;
@@ -173,6 +182,7 @@ private:
 	TWeakObjectPtr<AActor> LastGroundActor;
 
 	TArray<FHitResult> GroundTraceScratchHits;
+	TArray<FHitResult> StructureTraceScratchHits;
 	FIFSnapSolverScratch SolverScratch;
 
 	FIFSnapResult CachedSnapResult;
@@ -203,7 +213,7 @@ private:
 	bool bIsCurrentPlacementValid = false;
 	bool bHasBroadcastValidity = false;
 	bool bHasPreviewCache = false;
-	bool bLastGroundTraceHit = false;
+	bool bLastCursorTraceHit = false;
 	EIFPlacementInvalidReason LastInvalidReason = EIFPlacementInvalidReason::None;
 	EIFPlacementSnapState CurrentSnapState = EIFPlacementSnapState::Free;
 };

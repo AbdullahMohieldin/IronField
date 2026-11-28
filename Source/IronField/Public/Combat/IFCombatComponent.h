@@ -128,6 +128,7 @@ private:
 	void HandleComboReset();
 	void BuildSamplePoints(TArray<FVector, TInlineAllocator<16>>& OutPoints) const;
 	void ProcessHit(AActor* Target, const FVector& HitLocation);
+	void EnableAttackAnimTickOption();
 	void RestoreAnimTickOption();
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "IronField|Combat", meta = (AllowPrivateAccess = "true"))
