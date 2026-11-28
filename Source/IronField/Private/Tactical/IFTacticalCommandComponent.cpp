@@ -1308,8 +1308,7 @@ void UIFTacticalCommandComponent::HandleCommandStarted()
 		if (UWorld* const World = GetWorld())
 		{
 			TArray<FOverlapResult> Overlaps;
-			FCollisionObjectQueryParams PawnParams;
-			PawnParams.AddObjectTypesToQuery(ECC_Pawn);
+			const FCollisionObjectQueryParams PawnParams = IFCollision::MakePawnObjectQueryParams();
 			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFTacticalClusterAttack), false);
 			if (World->OverlapMultiByObjectType(
 				Overlaps,
@@ -1535,8 +1534,7 @@ AActor* UIFTacticalCommandComponent::FindBestPawnUnderCursor(const FVector& RayO
 	const float SweepDistance = FMath::Min(MaxDistance, EnvDistance + PawnClickToleranceRadius);
 	const FVector SweepEnd = RayOrigin + RayDir * SweepDistance;
 
-	FCollisionObjectQueryParams PawnObjectParams;
-	PawnObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+	const FCollisionObjectQueryParams PawnObjectParams = IFCollision::MakePawnObjectQueryParams();
 	FCollisionQueryParams PawnQueryParams(SCENE_QUERY_STAT(IFTacticalPawnTrace), false);
 
 	// 1. Direct line trace gives priority to exact cursor hits even if another unit stands nearby.
@@ -1718,8 +1716,7 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 	Params.MaxShapeRadius = FormationMaxShapeRadius;
 
 	FVector FormationCenter = FormationDragStartPoint;
-	const UNavigationSystemV1* const NavSys = UNavigationSystemV1::GetCurrent(World);
-	if (!FIFFormationSolver::SolveFormation(Params, NavSys, PreviewFormationSlots, FormationCenter))
+	if (!FIFFormationSolver::SolveFormation(World, Params, PreviewFormationSlots, FormationCenter))
 	{
 		return;
 	}
@@ -1783,8 +1780,7 @@ void UIFTacticalCommandComponent::IssueFormationMoveOrder(const FVector& AnchorP
 
 	TArray<FIFFormationSlot> SolvedSlots;
 	FVector FormationCenter = AnchorPoint;
-	const UNavigationSystemV1* const NavSys = UNavigationSystemV1::GetCurrent(World);
-	if (!FIFFormationSolver::SolveFormation(Params, NavSys, SolvedSlots, FormationCenter))
+	if (!FIFFormationSolver::SolveFormation(World, Params, SolvedSlots, FormationCenter))
 	{
 		return;
 	}

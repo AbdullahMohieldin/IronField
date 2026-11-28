@@ -788,7 +788,10 @@ void AIFStructure::SetStructureCollisionBlocking(bool bBlockPawnsAndNav)
 		{
 			return;
 		}
-		Box->SetCollisionResponseToChannel(ECC_Pawn, bShouldBlock ? ECR_Block : ECR_Ignore);
+		const ECollisionResponse PawnResponse = bShouldBlock ? ECR_Block : ECR_Ignore;
+		Box->SetCollisionResponseToChannel(ECC_Pawn, PawnResponse);
+		Box->SetCollisionResponseToChannel(IFCollision::PawnDawn, PawnResponse);
+		Box->SetCollisionResponseToChannel(IFCollision::PawnDusk, PawnResponse);
 		Box->SetCanEverAffectNavigation(bShouldBlock);
 		FNavigationSystem::UpdateComponentData(*Box);
 	};
@@ -1246,6 +1249,8 @@ UGeometryCollectionComponent* AIFStructure::SpawnFracturedGC(
 		TargetGC->SetCollisionResponseToAllChannels(ECR_Ignore);
 		TargetGC->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
 		TargetGC->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		TargetGC->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Ignore);
+		TargetGC->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Ignore);
 		TargetGC->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 		TargetGC->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
 		TargetGC->SetCollisionResponseToChannel(IFCollision::Damageable, ECR_Ignore);

@@ -52,9 +52,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Formation")
 	float GetAnchorFacingYaw() const { return AnchorFacingYaw; }
 
-	void BeginAnchorFacingAlignment();
-	void CancelAnchorFacingAlignment();
-
 	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|AI")
 	bool IsLeashedToAnchor() const { return bLeashToAnchor; }
 
@@ -77,8 +74,6 @@ public:
 	float GetAdvanceStopDistance() const { return AdvanceStopDistance; }
 
 	virtual void GetActorEyesViewPoint(FVector& OutLocation, FRotator& OutRotation) const override;
-
-	virtual void Tick(float DeltaSeconds) override;
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Tactical")
 	void SetTacticalSelected(bool bSelected, bool bShowRingNow = true);
@@ -157,12 +152,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Tactical", meta = (ClampMin = "0.0"))
 	float SelectionRingGroundClearance = 2.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Formation", meta = (ClampMin = "1.0"))
-	float AnchorFacingTurnSpeed = 10.f;
-
-	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Formation", meta = (ClampMin = "0.2", ClampMax = "15.0"))
-	float AnchorFacingToleranceDegrees = 1.5f;
-
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "IronField|Soldier|Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UIFStaminaComponent> StaminaComponent;
@@ -187,7 +176,6 @@ private:
 	FVector AnchorLocation = FVector::ZeroVector;
 	float AnchorFacingYaw = 0.f;
 	bool bHasAnchorFacing = false;
-	bool bIsAligningToAnchorFacing = false;
 	bool bHasAnchorLocation = false;
 
 	void ActivateRagdollDeath();

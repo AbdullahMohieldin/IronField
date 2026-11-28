@@ -819,8 +819,7 @@ void UIFCombatComponent::OpenHitWindow()
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFMeleeOverlap), false);
 	QueryParams.AddIgnoredActor(GetOwner());
 
-	FCollisionObjectQueryParams ObjectParams;
-	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+	FCollisionObjectQueryParams ObjectParams = IFCollision::MakePawnObjectQueryParams();
 	ObjectParams.AddObjectTypesToQuery(IFCollision::Damageable);
 
 	for (const FVector& Point : PreviousSamplePoints)
@@ -865,8 +864,7 @@ void UIFCombatComponent::UpdateHitWindow(float)
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFMeleeSweep), false);
 	QueryParams.AddIgnoredActor(GetOwner());
 
-	FCollisionObjectQueryParams ObjectParams;
-	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+	FCollisionObjectQueryParams ObjectParams = IFCollision::MakePawnObjectQueryParams();
 	ObjectParams.AddObjectTypesToQuery(IFCollision::Damageable);
 
 	for (int32 SampleIndex = 0; SampleIndex < CurrentPoints.Num(); ++SampleIndex)

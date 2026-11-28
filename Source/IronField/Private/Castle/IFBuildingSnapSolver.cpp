@@ -8,6 +8,7 @@
 #include "Combat/IFTeamTypes.h"
 #include "Components/SphereComponent.h"
 #include "Core/IFGameState.h"
+#include "Core/IFGameTypes.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -963,8 +964,7 @@ bool FIFBuildingSnapSolver::ValidatePlacement(
 	}
 
 	// 6. Pawn clearance (only ground-level boxes with local bottom Z < 180 cm).
-	FCollisionObjectQueryParams PawnObjects;
-	PawnObjects.AddObjectTypesToQuery(ECC_Pawn);
+	const FCollisionObjectQueryParams PawnObjects = IFCollision::MakePawnObjectQueryParams();
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFBuildPawnOverlap), false);
 	if (IsValid(PlacementGhost))
 	{

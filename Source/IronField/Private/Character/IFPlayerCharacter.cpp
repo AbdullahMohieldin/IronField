@@ -40,6 +40,8 @@ AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializ
 	InteractionSphere->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
 	InteractionSphere->SetCollisionResponseToChannel(IFCollision::Damageable, ECR_Overlap);
 	InteractionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	InteractionSphere->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Overlap);
+	InteractionSphere->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Overlap);
 	InteractionSphere->SetGenerateOverlapEvents(true);
 	InteractionSphere->SetCanEverAffectNavigation(false);
 

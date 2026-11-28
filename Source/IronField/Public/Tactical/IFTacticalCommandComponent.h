@@ -151,7 +151,7 @@ protected:
 	float CommandTraceDistance = 15000.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Orders", meta = (ClampMin = "10.0"))
-	float MoveOrderAcceptanceRadius = 35.f;
+	float MoveOrderAcceptanceRadius = 20.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Orders", meta = (ClampMin = "50.0"))
 	float FollowOrderRadius = 250.f;
@@ -163,10 +163,10 @@ protected:
 	float AttackOrderTargetSpreadPenalty = 180.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Formation", meta = (ClampMin = "80.0"))
-	float FormationLateralSpacing = 140.f;
+	float FormationLateralSpacing = 105.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Formation", meta = (ClampMin = "80.0"))
-	float FormationRankSpacing = 150.f;
+	float FormationRankSpacing = 115.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|Formation", meta = (ClampMin = "1.0"))
 	float FormationLineAspectRatio = 2.5f;

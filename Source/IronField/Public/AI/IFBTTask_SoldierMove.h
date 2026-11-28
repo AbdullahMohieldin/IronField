@@ -19,12 +19,12 @@ struct FBTTask_SoldierMoveMemory
 	int32 RepathRetryCount = 0;
 	float RepathCooldownSeconds = 0.f;
 	bool bTrackedActorGoal = false;
+	bool bUsingPointApproachForActor = false;
 };
 
 /**
- * Drives the controller's current move goal (actor or static point) and finishes on
- * arrival, on an early-ended path, or on timeout. Retargets when the decision changes
- * the goal and always stops movement when it finishes so melee wind-ups do not slide.
+ * Drives the controller's current move goal (actor or static point) with dynamic Recast
+ * repath retries and stops movement on exit so melee wind-ups never slide.
  */
 UCLASS()
 class IRONFIELD_API UIFBTTask_SoldierMove : public UBTTaskNode
@@ -46,9 +46,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0.3"))
 	float StallTimeoutSeconds = 1.85f;
-
-	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0.5"))
-	float PointMoveStallTimeoutSeconds = 3.25f;
 
 	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "5.0"))
 	float MinStallProgressDistance = 25.f;

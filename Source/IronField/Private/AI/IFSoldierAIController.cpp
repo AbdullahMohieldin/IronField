@@ -11,6 +11,7 @@
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/World.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "Navigation/CrowdFollowingComponent.h"
@@ -23,22 +24,12 @@
 const FName AIFSoldierAIController::SoldierBranchBlackboardKey(TEXT("SoldierBranch"));
 
 AIFSoldierAIController::AIFSoldierAIController(const FObjectInitializer& ObjectInitializer)
-	// Detour Crowd replaces default path following; bUseRVOAvoidance must stay false on AIFSoldierCharacter so the two systems never fight over velocity.
+	// Detour Crowd replaces default path following; bUseRVOAvoidance stays false on AIFSoldierCharacter so the two systems never fight over velocity.
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UCrowdFollowingComponent>(TEXT("PathFollowingComponent")))
 {
 	PrimaryActorTick.bCanEverTick = false;
 
-	if (UCrowdFollowingComponent* const CrowdComp = Cast<UCrowdFollowingComponent>(GetPathFollowingComponent()))
-	{
-		CrowdComp->SetCrowdAvoidanceQuality(ECrowdAvoidanceQuality::Good);
-		CrowdComp->SetCrowdSeparation(true);
-		CrowdComp->SetCrowdSeparationWeight(1.15f);
-		CrowdComp->SetCrowdObstacleAvoidance(true);
-		CrowdComp->SetCrowdAnticipateTurns(true);
-		CrowdComp->SetCrowdOptimizeVisibility(true);
-		CrowdComp->SetCrowdCollisionQueryRange(250.f);
-		CrowdComp->SetCrowdPathOptimizationRange(600.f);
-	}
+	ConfigureCrowdFollowing();
 
 	Perception = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("Perception"));
 	SetPerceptionComponent(*Perception);
@@ -56,6 +47,50 @@ AIFSoldierAIController::AIFSoldierAIController(const FObjectInitializer& ObjectI
 	Perception->ConfigureSense(*SightConfig);
 	Perception->SetDominantSense(SightConfig->GetSenseImplementation());
 	Perception->OnTargetPerceptionUpdated.AddDynamic(this, &AIFSoldierAIController::HandleTargetPerceptionUpdated);
+}
+
+void AIFSoldierAIController::ConfigureCrowdFollowing()
+{
+	if (UCrowdFollowingComponent* const CrowdComp = Cast<UCrowdFollowingComponent>(GetPathFollowingComponent()))
+	{
+		CrowdComp->SetAvoidanceGroup(1, true);
+		CrowdComp->SetGroupsToAvoid(MAX_int32);
+		CrowdComp->SetGroupsToIgnore(0);
+		CrowdComp->SetCrowdAvoidanceQuality(ECrowdAvoidanceQuality::Good);
+		CrowdComp->SetCrowdSeparation(true);
+		CrowdComp->SetCrowdSeparationWeight(1.35f);
+		CrowdComp->SetCrowdObstacleAvoidance(true);
+		CrowdComp->SetCrowdAnticipateTurns(true);
+		CrowdComp->SetCrowdOptimizeVisibility(true);
+		CrowdComp->SetCrowdCollisionQueryRange(200.f);
+		CrowdComp->SetCrowdPathOptimizationRange(600.f);
+		CrowdComp->UpdateCrowdAgentParams();
+	}
+}
+
+void AIFSoldierAIController::ApplyIdleAnchorFacing(AIFSoldierCharacter& Soldier)
+{
+	if (UCharacterMovementComponent* const Movement = Soldier.GetCharacterMovement())
+	{
+		// PhysicsRotation prioritizes bOrientRotationToMovement over bUseControllerDesiredRotation.
+		Movement->bOrientRotationToMovement = false;
+		Movement->bUseControllerDesiredRotation = true;
+	}
+
+	const float DesiredYaw = Soldier.GetAnchorFacingYaw();
+	const FVector FacingDir = FRotator(0.f, DesiredYaw, 0.f).Vector();
+	SetFocalPoint(Soldier.GetAnchorLocation() + FacingDir * 500.f, EAIFocusPriority::Gameplay);
+	SetControlRotation(FRotator(0.f, DesiredYaw, 0.f));
+}
+
+void AIFSoldierAIController::ClearIdleAnchorFacing(AIFSoldierCharacter& Soldier)
+{
+	ClearFocus(EAIFocusPriority::Gameplay);
+	if (UCharacterMovementComponent* const Movement = Soldier.GetCharacterMovement())
+	{
+		Movement->bUseControllerDesiredRotation = false;
+		Movement->bOrientRotationToMovement = true;
+	}
 }
 
 bool AIFSoldierAIController::IsValidCombatTarget(const AActor* SourceActor, const AActor* Target)
@@ -106,11 +141,10 @@ void AIFSoldierAIController::OnPossess(APawn* InPawn)
 	SetGenericTeamId(Soldier->GetGenericTeamId());
 	if (IsValid(Perception))
 	{
-		// AAIController::SetGenericTeamId does not notify the perception system.
 		Perception->RequestStimuliListenerUpdate();
 	}
 
-	// OnUnPossess disables crowd simulation to keep inactive controllers out of Detour's MaxAgents budget, so OnPossess must re-enable it.
+	// OnUnPossess disables crowd simulation to keep inactive controllers out of Detour's MaxAgents budget, so OnPossess re-enables and syncs params.
 	if (UCrowdFollowingComponent* const CrowdComp = Cast<UCrowdFollowingComponent>(GetPathFollowingComponent()))
 	{
 		if (CrowdComp->GetCrowdSimulationState() != ECrowdSimulationState::Enabled
@@ -119,6 +153,7 @@ void AIFSoldierAIController::OnPossess(APawn* InPawn)
 			CrowdComp->SetCrowdSimulationState(ECrowdSimulationState::Enabled);
 		}
 	}
+	ConfigureCrowdFollowing();
 
 	if (UIFHealthComponent* const Health = Soldier->GetHealthComponent())
 	{
@@ -129,10 +164,8 @@ void AIFSoldierAIController::OnPossess(APawn* InPawn)
 	CurrentAction = EIFSoldierAction::None;
 	CurrentTarget.Reset();
 	RecentDamageInstigator.Reset();
-	StalledTarget.Reset();
 	RecentDamageTime = -1000.f;
 	LastTargetSwitchTime = -1000.f;
-	StalledTargetIgnoreUntilTime = -1000.f;
 	CurrentOrder.Reset();
 	KnownHostiles.Reset();
 	ClearMoveGoal();
@@ -143,6 +176,15 @@ void AIFSoldierAIController::OnPossess(APawn* InPawn)
 
 void AIFSoldierAIController::CleanupActiveSession()
 {
+	if (AIFSoldierCharacter* const Soldier = GetSoldier())
+	{
+		ClearIdleAnchorFacing(*Soldier);
+	}
+	else
+	{
+		ClearFocus(EAIFocusPriority::Gameplay);
+	}
+
 	StopMovement();
 	if (UCrowdFollowingComponent* const CrowdComp = Cast<UCrowdFollowingComponent>(GetPathFollowingComponent()))
 	{
@@ -168,10 +210,8 @@ void AIFSoldierAIController::OnUnPossess()
 	CleanupActiveSession();
 	CurrentTarget.Reset();
 	RecentDamageInstigator.Reset();
-	StalledTarget.Reset();
 	RecentDamageTime = -1000.f;
 	LastTargetSwitchTime = -1000.f;
-	StalledTargetIgnoreUntilTime = -1000.f;
 	KnownHostiles.Reset();
 	ClearMoveGoal();
 
@@ -223,7 +263,6 @@ void AIFSoldierAIController::HandleBehaviorTreeLoaded()
 		return;
 	}
 
-	// The load may finish after the pawn was unpossessed or killed.
 	if (!IsValid(GetPawn()))
 	{
 		return;
@@ -245,6 +284,10 @@ void AIFSoldierAIController::RefreshDecision()
 	AIFSoldierCharacter* const Soldier = GetSoldier();
 	if (!IsValid(Soldier) || Soldier->IsDead())
 	{
+		if (IsValid(Soldier))
+		{
+			ClearIdleAnchorFacing(*Soldier);
+		}
 		ClearMoveGoal();
 		SetCurrentAction(EIFSoldierAction::Idle);
 		return;
@@ -308,7 +351,7 @@ bool AIFSoldierAIController::EvaluateMoveOrder(AIFSoldierCharacter& Soldier, flo
 			CurrentTarget = InterruptTarget;
 			RecordTargetSwitchIfChanged(InterruptTarget, PreviousTarget, Now);
 			UpdateMoveGoalForAction();
-			Soldier.CancelAnchorFacingAlignment();
+			ClearIdleAnchorFacing(Soldier);
 			SetCurrentAction(EIFSoldierAction::AttackTarget);
 			return true;
 		}
@@ -318,12 +361,12 @@ bool AIFSoldierAIController::EvaluateMoveOrder(AIFSoldierCharacter& Soldier, flo
 		MoveGoalActor.Reset();
 		MoveGoalLocation = CurrentOrder.Location;
 		MoveGoalAcceptanceRadius = Radius;
-		Soldier.CancelAnchorFacingAlignment();
+		ClearIdleAnchorFacing(Soldier);
 		SetCurrentAction(EIFSoldierAction::MoveTo);
 		return true;
 	}
 
-	Soldier.SetAnchorLocation(CurrentOrder.Location, /*bRefreshControllerDecision*/ false);
+	Soldier.SetAnchorLocation(CurrentOrder.Location, false);
 	if (CurrentOrder.bHasFacingYaw)
 	{
 		Soldier.SetAnchorFacingYaw(CurrentOrder.FacingYaw);
@@ -342,7 +385,7 @@ bool AIFSoldierAIController::EvaluateAttackOrder(AIFSoldierCharacter& Soldier, f
 	if (!IsTargetValidForCombat(Ordered))
 	{
 		// Anchor near current ground so autonomous defence fights surrounding enemies instead of retreating home.
-		Soldier.SetAnchorLocation(Soldier.GetActorLocation(), /*bRefreshControllerDecision*/ false);
+		Soldier.SetAnchorLocation(Soldier.GetActorLocation(), false);
 		Soldier.ClearAnchorFacing();
 		CurrentOrder.Reset();
 		CurrentTarget.Reset();
@@ -379,10 +422,6 @@ bool AIFSoldierAIController::EvaluateAttackOrder(AIFSoldierCharacter& Soldier, f
 				{
 					continue;
 				}
-				if (Candidate == StalledTarget.Get() && Now < StalledTargetIgnoreUntilTime)
-				{
-					continue;
-				}
 
 				const FVector CandidateLoc = Candidate->GetActorLocation();
 				const float DistToSelf = FVector::Dist2D(Soldier.GetActorLocation(), CandidateLoc);
@@ -405,13 +444,13 @@ bool AIFSoldierAIController::EvaluateAttackOrder(AIFSoldierCharacter& Soldier, f
 		}
 	}
 
-	Soldier.SetAnchorLocation(Ordered->GetActorLocation(), /*bRefreshControllerDecision*/ false);
+	Soldier.SetAnchorLocation(Ordered->GetActorLocation(), false);
 	Soldier.ClearAnchorFacing();
 	CurrentTarget = Ordered;
 	RecordTargetSwitchIfChanged(Ordered, PreviousTarget, Now);
 	KnownHostiles.Add(Ordered, Now);
 	UpdateMoveGoalForAction();
-	Soldier.CancelAnchorFacingAlignment();
+	ClearIdleAnchorFacing(Soldier);
 	SetCurrentAction(EIFSoldierAction::AttackTarget);
 	return true;
 }
@@ -438,7 +477,7 @@ bool AIFSoldierAIController::EvaluateFollowOrder(AIFSoldierCharacter& Soldier, f
 		bHasMoveGoal = true;
 		MoveGoalActor = Followed;
 		MoveGoalAcceptanceRadius = FollowDistance;
-		Soldier.CancelAnchorFacingAlignment();
+		ClearIdleAnchorFacing(Soldier);
 		SetCurrentAction(EIFSoldierAction::FollowActor);
 		return true;
 	}
@@ -456,7 +495,7 @@ bool AIFSoldierAIController::EvaluateFollowOrder(AIFSoldierCharacter& Soldier, f
 			CurrentTarget = EscortTarget;
 			RecordTargetSwitchIfChanged(EscortTarget, PreviousTarget, Now);
 			UpdateMoveGoalForAction();
-			Soldier.CancelAnchorFacingAlignment();
+			ClearIdleAnchorFacing(Soldier);
 			SetCurrentAction(EIFSoldierAction::Defend);
 			return true;
 		}
@@ -473,7 +512,7 @@ bool AIFSoldierAIController::EvaluateFollowOrder(AIFSoldierCharacter& Soldier, f
 	{
 		ClearMoveGoal();
 	}
-	Soldier.CancelAnchorFacingAlignment();
+	ClearIdleAnchorFacing(Soldier);
 	SetCurrentAction(EIFSoldierAction::FollowActor);
 	return true;
 }
@@ -490,7 +529,7 @@ bool AIFSoldierAIController::EvaluateAutonomousCombat(AIFSoldierCharacter& Soldi
 
 	RecordTargetSwitchIfChanged(Target, PreviousTarget, Now);
 	UpdateMoveGoalForAction();
-	Soldier.CancelAnchorFacingAlignment();
+	ClearIdleAnchorFacing(Soldier);
 	SetCurrentAction(Soldier.IsLeashedToAnchor()
 		? EIFSoldierAction::Defend
 		: EIFSoldierAction::AttackTarget);
@@ -535,7 +574,7 @@ bool AIFSoldierAIController::EvaluateAdvance(AIFSoldierCharacter& Soldier)
 		MoveGoalActor = AdvanceActor;
 		MoveGoalLocation = GoalLocation;
 		MoveGoalAcceptanceRadius = FMath::Max(StopDistance * 0.5f, 50.f);
-		Soldier.CancelAnchorFacingAlignment();
+		ClearIdleAnchorFacing(Soldier);
 		SetCurrentAction(EIFSoldierAction::Advance);
 		return true;
 	}
@@ -555,12 +594,19 @@ void AIFSoldierAIController::EvaluateReturnOrIdle(AIFSoldierCharacter& Soldier)
 		MoveGoalActor.Reset();
 		MoveGoalLocation = Soldier.GetAnchorLocation();
 		MoveGoalAcceptanceRadius = ReturnAcceptance;
-		Soldier.CancelAnchorFacingAlignment();
+		ClearIdleAnchorFacing(Soldier);
 		SetCurrentAction(EIFSoldierAction::HoldPosition);
 		return;
 	}
 
-	Soldier.BeginAnchorFacingAlignment();
+	if (Soldier.HasAnchorFacing())
+	{
+		ApplyIdleAnchorFacing(Soldier);
+	}
+	else
+	{
+		ClearIdleAnchorFacing(Soldier);
+	}
 	SetCurrentAction(EIFSoldierAction::Idle);
 }
 
@@ -721,7 +767,6 @@ AActor* AIFSoldierAIController::AcquireBestTarget() const
 		? GetAnchorLocation()
 		: SoldierLoc;
 	const float Now = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
-	AActor* const ActiveStalledTarget = (Now < StalledTargetIgnoreUntilTime) ? StalledTarget.Get() : nullptr;
 
 	TArray<AActor*> CandidatePool;
 	GatherValidCombatCandidates(CandidatePool);
@@ -730,7 +775,6 @@ AActor* AIFSoldierAIController::AcquireBestTarget() const
 	float BestOverallRefDistSq = TNumericLimits<float>::Max();
 	AActor* ClosestToSoldier = nullptr;
 	float ClosestToSoldierDistSq = TNumericLimits<float>::Max();
-	AActor* StalledFallback = nullptr;
 
 	for (AActor* const Candidate : CandidatePool)
 	{
@@ -738,12 +782,6 @@ AActor* AIFSoldierAIController::AcquireBestTarget() const
 		const float RefDistSq = FVector::DistSquared2D(Reference, CandidateLoc);
 		if (RefDistSq > EngageRadiusSq)
 		{
-			continue;
-		}
-
-		if (Candidate == ActiveStalledTarget)
-		{
-			StalledFallback = Candidate;
 			continue;
 		}
 
@@ -759,11 +797,6 @@ AActor* AIFSoldierAIController::AcquireBestTarget() const
 			ClosestToSoldierDistSq = SelfDistSq;
 			ClosestToSoldier = Candidate;
 		}
-	}
-
-	if (!IsValid(BestOverall))
-	{
-		BestOverall = StalledFallback;
 	}
 
 	const float InterceptRadiusSq = FMath::Square(FMath::Max(TargetSwitchInterceptRadius, 50.f));
@@ -783,7 +816,7 @@ AActor* AIFSoldierAIController::AcquireBestTarget() const
 
 	if (AActor* const Existing = CurrentTarget.Get())
 	{
-		if (IsTargetValidForCombat(Existing) && Existing != ActiveStalledTarget)
+		if (IsTargetValidForCombat(Existing))
 		{
 			const float HysteresisRadius = bIsEscortOrder
 				? FMath::Min(EngageRadius * LeashHysteresisMultiplier, GetMaxFollowLeashDistance())
@@ -889,7 +922,7 @@ void AIFSoldierAIController::ClearMoveGoal()
 	bHasMoveGoal = false;
 	MoveGoalActor.Reset();
 	MoveGoalLocation = FVector::ZeroVector;
-	MoveGoalAcceptanceRadius = 75.f;
+	MoveGoalAcceptanceRadius = 20.f;
 }
 
 void AIFSoldierAIController::HandleTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
@@ -899,7 +932,6 @@ void AIFSoldierAIController::HandleTargetPerceptionUpdated(AActor* Actor, FAISti
 		return;
 	}
 
-	// Sight loss is deliberately ignored: memory expiry is time-based in PruneKnownHostiles.
 	if (Stimulus.WasSuccessfullySensed())
 	{
 		KnownHostiles.Add(Actor, GetWorld()->GetTimeSeconds());
@@ -956,64 +988,6 @@ bool AIFSoldierAIController::IssueMoveToLocation(const FVector& Location, float 
 	return true;
 }
 
-void AIFSoldierAIController::NotifyMoveOrderBlockedOrStalled()
-{
-	AIFSoldierCharacter* const Soldier = GetSoldier();
-	if (!IsValid(Soldier) || Soldier->IsDead())
-	{
-		return;
-	}
-
-	if (CurrentOrder.Type == EIFSoldierOrderType::MoveToLocation)
-	{
-		Soldier->SetAnchorLocation(Soldier->GetActorLocation(), /*bRefreshControllerDecision*/ false);
-		if (CurrentOrder.bHasFacingYaw)
-		{
-			Soldier->SetAnchorFacingYaw(CurrentOrder.FacingYaw);
-		}
-		else
-		{
-			Soldier->ClearAnchorFacing();
-		}
-		CurrentOrder.Reset();
-		RefreshDecision();
-		return;
-	}
-
-	if (CurrentAction == EIFSoldierAction::HoldPosition)
-	{
-		Soldier->SetAnchorLocation(Soldier->GetActorLocation(), /*bRefreshControllerDecision*/ false);
-		RefreshDecision();
-		return;
-	}
-
-	if (CurrentAction == EIFSoldierAction::AttackTarget || CurrentAction == EIFSoldierAction::Defend)
-	{
-		if (AActor* const BlockedTarget = CurrentTarget.Get())
-		{
-			const float Now = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
-			StalledTarget = BlockedTarget;
-			StalledTargetIgnoreUntilTime = Now + 2.0f;
-
-			if (CurrentOrder.Type == EIFSoldierOrderType::AttackTarget && CurrentOrder.TargetActor.Get() == BlockedTarget)
-			{
-				TArray<AActor*> Candidates;
-				GatherValidCombatCandidates(Candidates);
-				const bool bHasAlternative = Candidates.ContainsByPredicate([BlockedTarget](const AActor* Candidate)
-				{
-					return IsValid(Candidate) && Candidate != BlockedTarget;
-				});
-				if (bHasAlternative)
-				{
-					CurrentOrder.Reset();
-				}
-			}
-
-			RefreshDecision();
-		}
-	}
-}
-
 bool AIFSoldierAIController::IssueAttackTarget(AActor* Target)
 {
 	AIFSoldierCharacter* const Soldier = GetSoldier();
@@ -1022,7 +996,7 @@ bool AIFSoldierAIController::IssueAttackTarget(AActor* Target)
 		return false;
 	}
 
-	Soldier->SetAnchorLocation(Target->GetActorLocation(), /*bRefreshControllerDecision*/ false);
+	Soldier->SetAnchorLocation(Target->GetActorLocation(), false);
 	Soldier->ClearAnchorFacing();
 
 	CurrentOrder.Type = EIFSoldierOrderType::AttackTarget;
@@ -1030,7 +1004,6 @@ bool AIFSoldierAIController::IssueAttackTarget(AActor* Target)
 	CurrentOrder.Location = Target->GetActorLocation();
 	CurrentOrder.Radius = Soldier->GetEffectiveAttackRange(Target);
 	CurrentOrder.IssuedTime = IsValid(GetWorld()) ? GetWorld()->GetTimeSeconds() : 0.f;
-	StalledTarget.Reset();
 	RefreshDecision();
 	return true;
 }

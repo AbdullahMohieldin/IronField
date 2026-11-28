@@ -1,10 +1,12 @@
 #include "Character/IFBaseCharacter.h"
 
+#include "AI/IFCrowdSubsystem.h"
 #include "Animation/AnimInstance.h"
 #include "Combat/IFCombatComponent.h"
 #include "Combat/IFCombatTypes.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Core/IFGameTypes.h"
 #include "Core/IFLog.h"
 #include "Engine/DamageEvents.h"
 #include "Engine/World.h"
@@ -22,11 +24,23 @@ AIFBaseCharacter::AIFBaseCharacter(const FObjectInitializer& ObjectInitializer)
 
 	HealthComponent = CreateDefaultSubobject<UIFHealthComponent>(TEXT("Health"));
 	CombatComponent = CreateDefaultSubobject<UIFCombatComponent>(CombatComponentName);
+
+	if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
+	{
+		Capsule->SetCanEverAffectNavigation(false);
+		Capsule->bDynamicObstacle = false;
+	}
 }
 
 bool AIFBaseCharacter::IsDead() const
 {
 	return IsValid(HealthComponent) && HealthComponent->IsDead();
+}
+
+void AIFBaseCharacter::SetGenericTeamId(const FGenericTeamId& InTeamID)
+{
+	TeamID = InTeamID;
+	ApplyTeamCollisionResponses();
 }
 
 ETeamAttitude::Type AIFBaseCharacter::GetTeamAttitudeTowards(const AActor& Other) const
@@ -38,6 +52,16 @@ void AIFBaseCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	ApplyTeamCollisionResponses();
+
+	if (UWorld* const World = GetWorld())
+	{
+		if (UIFCrowdSubsystem* const CrowdSubsystem = World->GetSubsystem<UIFCrowdSubsystem>())
+		{
+			CrowdSubsystem->RegisterCharacter(this);
+		}
+	}
+
 	if (IsValid(HealthComponent))
 	{
 		HealthComponent->OnDeath.AddUniqueDynamic(this, &AIFBaseCharacter::HandleDeath);
@@ -48,12 +72,66 @@ void AIFBaseCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	ClearLocalHitstop();
 
+	if (UWorld* const World = GetWorld())
+	{
+		if (UIFCrowdSubsystem* const CrowdSubsystem = World->GetSubsystem<UIFCrowdSubsystem>())
+		{
+			CrowdSubsystem->UnregisterCharacter(this);
+		}
+	}
+
 	if (IsValid(HealthComponent))
 	{
 		HealthComponent->OnDeath.RemoveDynamic(this, &AIFBaseCharacter::HandleDeath);
 	}
 
 	Super::EndPlay(EndPlayReason);
+}
+
+void AIFBaseCharacter::ApplyTeamCollisionResponses()
+{
+	if (bHasDied || IsDead())
+	{
+		return;
+	}
+
+	UCapsuleComponent* const Capsule = GetCapsuleComponent();
+	if (!IsValid(Capsule))
+	{
+		return;
+	}
+
+	const ECollisionChannel OwnChannel = IFCollision::GetTeamPawnChannel(TeamID);
+	Capsule->SetCollisionObjectType(OwnChannel);
+	Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	Capsule->SetGenerateOverlapEvents(true);
+	Capsule->SetCanEverAffectNavigation(false);
+	Capsule->bDynamicObstacle = false;
+
+	Capsule->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+	Capsule->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
+	Capsule->SetCollisionResponseToChannel(IFCollision::Damageable, ECR_Block);
+	Capsule->SetCollisionResponseToChannel(ECC_Visibility, ECR_Ignore);
+	Capsule->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+
+	if (OwnChannel == IFCollision::PawnDawn)
+	{
+		Capsule->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Overlap);
+		Capsule->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Block);
+		Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	}
+	else if (OwnChannel == IFCollision::PawnDusk)
+	{
+		Capsule->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Overlap);
+		Capsule->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Block);
+		Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	}
+	else
+	{
+		Capsule->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+		Capsule->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Block);
+		Capsule->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Block);
+	}
 }
 
 void AIFBaseCharacter::Landed(const FHitResult& Hit)
@@ -250,6 +328,9 @@ void AIFBaseCharacter::RestoreAliveState()
 			Movement->SetAvoidanceEnabled(DefaultMovement->bUseRVOAvoidance);
 		}
 	}
+
+	// Re-apply team object channel and overlap rules because CDO defaults restore ECC_Pawn.
+	ApplyTeamCollisionResponses();
 }
 
 void AIFBaseCharacter::ApplyLocalHitstop(float DurationSeconds, float TimeDilation)

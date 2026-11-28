@@ -1,16 +1,16 @@
 #include "Character/IFSoldierCharacter.h"
 
+#include "AI/IFCrowdSubsystem.h"
 #include "AI/IFSoldierAIController.h"
 #include "AIController.h"
 #include "Animation/AnimInstance.h"
 #include "BrainComponent.h"
 #include "Castle/IFStructure.h"
-#include "Combat/IFCombatComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
-#include "Core/IFLog.h"
+#include "Core/IFGameTypes.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -25,8 +25,7 @@
 AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	PrimaryActorTick.bCanEverTick = true;
-	PrimaryActorTick.bStartWithTickEnabled = false;
+	PrimaryActorTick.bCanEverTick = false;
 
 	AIControllerClass = AIFSoldierAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
@@ -41,6 +40,8 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 	if (UCapsuleComponent* const Capsule = GetCapsuleComponent())
 	{
 		Capsule->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+		Capsule->SetCanEverAffectNavigation(false);
+		Capsule->bDynamicObstacle = false;
 	}
 	if (USkeletalMeshComponent* const MeshComp = GetMesh())
 	{
@@ -60,6 +61,9 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 		Movement->BrakingDecelerationWalking = 1200.f;
 
 		Movement->bUseRVOAvoidance = false;
+		Movement->SetAvoidanceGroupMask(1);
+		Movement->SetGroupsToAvoidMask(MAX_int32);
+		Movement->SetGroupsToIgnoreMask(0);
 	}
 
 	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadVitals"));
@@ -113,8 +117,6 @@ void AIFSoldierCharacter::BeginPlay()
 	}
 	UpdateOverheadWidgetVisibility();
 
-	SetActorTickEnabled(false);
-
 	UpdateSelectionRingTransform();
 	if (IsValid(SelectionRingComponent) && IsValid(SelectionRingMesh))
 	{
@@ -125,8 +127,6 @@ void AIFSoldierCharacter::BeginPlay()
 
 void AIFSoldierCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	CancelAnchorFacingAlignment();
-
 	if (UIFHealthComponent* const Health = GetHealthComponent())
 	{
 		Health->OnHealthChanged.RemoveDynamic(this, &AIFSoldierCharacter::HandleHealthChanged);
@@ -146,35 +146,10 @@ void AIFSoldierCharacter::GetActorEyesViewPoint(FVector& OutLocation, FRotator& 
 	OutRotation = GetActorRotation();
 }
 
-void AIFSoldierCharacter::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-
-	const UIFCombatComponent* const Combat = GetCombatComponent();
-	if (!bIsAligningToAnchorFacing || !bHasAnchorFacing || IsDead() || (IsValid(Combat) && Combat->IsAttacking())
-		|| GetVelocity().SizeSquared2D() > FMath::Square(15.f))
-	{
-		CancelAnchorFacingAlignment();
-		return;
-	}
-
-	const FRotator CurrentRot = GetActorRotation();
-	const FRotator TargetRot(CurrentRot.Pitch, AnchorFacingYaw, CurrentRot.Roll);
-	const FRotator NewRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaSeconds, AnchorFacingTurnSpeed);
-	SetActorRotation(NewRot);
-
-	if (FMath::Abs(FRotator::NormalizeAxis(AnchorFacingYaw - NewRot.Yaw)) <= AnchorFacingToleranceDegrees)
-	{
-		SetActorRotation(TargetRot);
-		CancelAnchorFacingAlignment();
-	}
-}
-
 void AIFSoldierCharacter::HandleDeath(AActor* DeadActor)
 {
 	Super::HandleDeath(DeadActor);
 
-	CancelAnchorFacingAlignment();
 	bIsTacticalSelected = false;
 	bSelectionRingDisplayEnabled = false;
 	TacticalRingMode = EIFTacticalRingMode::None;
@@ -281,6 +256,9 @@ void AIFSoldierCharacter::ActivateRagdollDeath()
 		MeshComp->SetCollisionObjectType(ECC_PhysicsBody);
 		MeshComp->SetCollisionEnabled(ECollisionEnabled::PhysicsOnly);
 		MeshComp->SetCollisionResponseToAllChannels(ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Ignore);
 		MeshComp->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
 		MeshComp->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
 	};
@@ -336,34 +314,6 @@ void AIFSoldierCharacter::SetAnchorFacingYaw(float NewFacingYaw)
 void AIFSoldierCharacter::ClearAnchorFacing()
 {
 	bHasAnchorFacing = false;
-	CancelAnchorFacingAlignment();
-}
-
-void AIFSoldierCharacter::BeginAnchorFacingAlignment()
-{
-	const UIFCombatComponent* const Combat = GetCombatComponent();
-	if (!bHasAnchorFacing || IsDead() || (IsValid(Combat) && Combat->IsAttacking()) || GetVelocity().SizeSquared2D() > FMath::Square(15.f))
-	{
-		return;
-	}
-
-	const FRotator CurrentRot = GetActorRotation();
-	const float YawError = FMath::Abs(FRotator::NormalizeAxis(AnchorFacingYaw - CurrentRot.Yaw));
-	if (YawError <= AnchorFacingToleranceDegrees)
-	{
-		SetActorRotation(FRotator(CurrentRot.Pitch, AnchorFacingYaw, CurrentRot.Roll));
-		CancelAnchorFacingAlignment();
-		return;
-	}
-
-	bIsAligningToAnchorFacing = true;
-	SetActorTickEnabled(true);
-}
-
-void AIFSoldierCharacter::CancelAnchorFacingAlignment()
-{
-	bIsAligningToAnchorFacing = false;
-	SetActorTickEnabled(false);
 }
 
 float AIFSoldierCharacter::GetEffectiveAttackRange(const AActor* Target) const
@@ -429,11 +379,18 @@ FVector AIFSoldierCharacter::GetCombatApproachPoint(const AActor* Target) const
 		return GetActorLocation();
 	}
 
+	if (const UWorld* const World = GetWorld())
+	{
+		if (const UIFCrowdSubsystem* const CrowdSubsystem = World->GetSubsystem<UIFCrowdSubsystem>())
+		{
+			return CrowdSubsystem->ComputeCombatApproachPoint(*this, Target);
+		}
+	}
+
 	if (const AIFStructure* const Structure = Cast<AIFStructure>(Target))
 	{
-		const float CapsuleRadius = IsValid(GetCapsuleComponent()) ? GetCapsuleComponent()->GetScaledCapsuleRadius() : 44.f;
-		const float LateralSpreadOffset = static_cast<float>(static_cast<int32>(GetUniqueID() % 5) - 2) * (CapsuleRadius * 1.15f);
-		return Structure->GetSpreadCombatApproachPoint(GetActorLocation(), CapsuleRadius, LateralSpreadOffset);
+		const float CapsuleRadius = IsValid(GetCapsuleComponent()) ? GetCapsuleComponent()->GetScaledCapsuleRadius() : 42.f;
+		return Structure->GetSpreadCombatApproachPoint(GetActorLocation(), CapsuleRadius, 0.f);
 	}
 
 	return Target->GetActorLocation();
@@ -564,7 +521,7 @@ void AIFSoldierCharacter::UpdateSelectionRingTransform()
 		return;
 	}
 
-	float CapsuleHalfHeight = 88.f;
+	float CapsuleHalfHeight = 90.f;
 	if (const UCapsuleComponent* const Capsule = GetCapsuleComponent())
 	{
 		CapsuleHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();

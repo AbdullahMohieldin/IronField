@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "Tactical/IFTacticalTypes.h"
 
-class UNavigationSystemV1;
+class UWorld;
 
 struct IRONFIELD_API FIFFormationSolveParams
 {
@@ -21,38 +21,38 @@ struct IRONFIELD_API FIFFormationSolveParams
 	FVector SquadCentroid = FVector::ZeroVector;
 	FVector CameraForward = FVector::ForwardVector;
 
-	float LateralSpacing = 140.f;
-	float RankSpacing = 150.f;
-	float SquareSpacingScale = 1.0f;
+	float LateralSpacing = 105.f;
+	float RankSpacing = 115.f;
+	float SquareSpacingScale = 0.95f;
 	float LineAspectRatio = 2.5f;
 	int32 MinLineColumns = 3;
 	int32 MaxLineColumns = 10;
-	float MinShapeRadius = 110.f;
+	float MinShapeRadius = 95.f;
 	float MaxShapeRadius = 1400.f;
 
-	/** Projection query extent for snapping individual slots onto the NavMesh. */
-	FVector NavQueryExtent = FVector(180.f, 180.f, 300.f);
+	/** Tight horizontal projection extent rejects slots inside walls/towers while Z follows ramps and stairs. */
+	FVector NavQueryExtent = FVector(34.f, 34.f, 220.f);
 };
 
 /**
- * Stateless Action-RTS formation geometry and crossing-free slot assignment solver.
- * Supports instant RMB clicks and RMB hold-and-drag sizing/orientation for Line, Square, and Circle.
+ * Stateless Action-RTS formation lattice generator and globally optimal Kuhn-Munkres slot solver.
  */
 struct IRONFIELD_API FIFFormationSolver
 {
 	/**
-	 * Computes NavMesh-projected slots with per-slot arrival facing yaws.
-	 * Returns true if at least one slot was produced.
+	 * Generates an ordered candidate lattice and filters slots against the NavMesh using tight
+	 * projection plus NavigationRaycast (with a bounded path-length fallback around small obstacles
+	 * such as flag poles) so formations wrap cleanly without bleeding through castle walls.
 	 */
 	static bool SolveFormation(
+		UWorld* World,
 		const FIFFormationSolveParams& Params,
-		const UNavigationSystemV1* NavSys,
 		TArray<FIFFormationSlot>& OutSlots,
 		FVector& OutFormationCenter);
 
 	/**
-	 * Maps each soldier index [0..N-1] to a unique slot index [0..N-1] using greedy nearest seeding
-	 * followed by a deterministic 2-opt swap pass minimizing total squared 2D travel distance.
+	 * Maps each soldier index [0..N-1] to a unique slot index [0..N-1] via the exact O(N^3)
+	 * Kuhn-Munkres (Hungarian) algorithm minimizing strictly convex squared 2D travel distance.
 	 */
 	static void AssignSoldiersToSlots(
 		const TArray<FVector>& SoldierLocations,

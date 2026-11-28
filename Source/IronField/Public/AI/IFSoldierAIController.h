@@ -33,7 +33,7 @@ public:
 
 	// Prefixed with Issue to avoid colliding with AAIController::MoveToLocation.
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Orders")
-	bool IssueMoveToLocation(const FVector& Location, float AcceptanceRadius = 35.f, float DesiredFacingYaw = 0.f, bool bUseFacingYaw = false);
+	bool IssueMoveToLocation(const FVector& Location, float AcceptanceRadius = 20.f, float DesiredFacingYaw = 0.f, bool bUseFacingYaw = false);
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Orders")
 	bool IssueAttackTarget(AActor* Target);
@@ -59,8 +59,6 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|State")
 	void RefreshDecision();
-
-	void NotifyMoveOrderBlockedOrStalled();
 
 	AIFSoldierCharacter* GetSoldier() const;
 
@@ -126,6 +124,9 @@ protected:
 	float AnchorReturnAcceptanceRadius = 20.f;
 
 private:
+	void ConfigureCrowdFollowing();
+	void ApplyIdleAnchorFacing(AIFSoldierCharacter& Soldier);
+	void ClearIdleAnchorFacing(AIFSoldierCharacter& Soldier);
 	void RequestBehaviorTree();
 	void HandleBehaviorTreeLoaded();
 	void CleanupActiveSession();
@@ -165,15 +166,13 @@ private:
 	TMap<TWeakObjectPtr<AActor>, float> KnownHostiles;
 	TWeakObjectPtr<AActor> CurrentTarget;
 	TWeakObjectPtr<AActor> RecentDamageInstigator;
-	TWeakObjectPtr<AActor> StalledTarget;
 	float RecentDamageTime = -1000.f;
 	float LastTargetSwitchTime = -1000.f;
-	float StalledTargetIgnoreUntilTime = -1000.f;
 	FIFSoldierOrder CurrentOrder;
 
 	TWeakObjectPtr<AActor> MoveGoalActor;
 	FVector MoveGoalLocation = FVector::ZeroVector;
-	float MoveGoalAcceptanceRadius = 75.f;
+	float MoveGoalAcceptanceRadius = 20.f;
 	bool bHasMoveGoal = false;
 
 	EIFSoldierAction CurrentAction = EIFSoldierAction::None;

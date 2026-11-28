@@ -6,6 +6,7 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Core/IFGameState.h"
+#include "Core/IFGameTypes.h"
 #include "Core/IFLog.h"
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
@@ -63,6 +64,8 @@ AIFTerritory::AIFTerritory()
 	FlagCaptureZone->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	FlagCaptureZone->SetCollisionResponseToAllChannels(ECR_Ignore);
 	FlagCaptureZone->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	FlagCaptureZone->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Overlap);
+	FlagCaptureZone->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Overlap);
 	FlagCaptureZone->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	FlagCaptureZone->SetGenerateOverlapEvents(true);
 	FlagCaptureZone->SetCanEverAffectNavigation(false);

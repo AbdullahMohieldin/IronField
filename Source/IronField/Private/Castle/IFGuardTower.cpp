@@ -2,6 +2,7 @@
 
 #include "Castle/IFTowerProjectile.h"
 #include "Character/IFBaseCharacter.h"
+#include "Core/IFGameTypes.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -74,8 +75,7 @@ void AIFGuardTower::TryFireAtNearestHostile()
 
 	const FVector Origin = GetActorLocation();
 	TArray<FOverlapResult> Overlaps;
-	FCollisionObjectQueryParams ObjectParams;
-	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+	const FCollisionObjectQueryParams ObjectParams = IFCollision::MakePawnObjectQueryParams();
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFGuardTowerScan), false);
 	QueryParams.AddIgnoredActor(this);

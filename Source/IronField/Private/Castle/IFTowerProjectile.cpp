@@ -19,6 +19,8 @@ AIFTowerProjectile::AIFTowerProjectile()
 	CollisionSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	CollisionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
 	CollisionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	CollisionSphere->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Overlap);
+	CollisionSphere->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Overlap);
 	CollisionSphere->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
 	CollisionSphere->SetCollisionResponseToChannel(IFCollision::Damageable, ECR_Block);
 	CollisionSphere->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
