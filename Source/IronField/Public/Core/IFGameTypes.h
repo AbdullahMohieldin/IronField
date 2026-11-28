@@ -15,11 +15,11 @@ namespace IFCollision
 	inline ECollisionChannel GetTeamPawnChannel(FGenericTeamId TeamId)
 	{
 		const uint8 RawId = TeamId.GetId();
-		if (RawId == IFTeamIds::Player)
+		if (RawId == IFTeamIds::Dawn)
 		{
 			return PawnDawn;
 		}
-		if (RawId == IFTeamIds::Enemy)
+		if (RawId == IFTeamIds::Dusk)
 		{
 			return PawnDusk;
 		}

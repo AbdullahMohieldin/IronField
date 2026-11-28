@@ -5,6 +5,8 @@
 #include "Combat/IFCombatTypes.h"
 #include "Components/ActorComponent.h"
 #include "Components/SkinnedMeshComponent.h"
+#include "Engine/HitResult.h"
+#include "Engine/OverlapResult.h"
 #include "UObject/SoftObjectPtr.h"
 #include "IFCombatComponent.generated.h"
 
@@ -13,24 +15,6 @@ class UAnimInstance;
 class UAnimMontage;
 class UIFStaminaComponent;
 struct FStreamableHandle;
-
-struct FIFPlannedAICombo
-{
-	bool bHasPlan = false;
-	int32 OpenerStepIndex = 0;
-	int32 PlannedHitCount = 1;
-	int32 ExecutedHits = 0;
-	float RequiredStamina = 0.f;
-
-	void Reset()
-	{
-		bHasPlan = false;
-		OpenerStepIndex = 0;
-		PlannedHitCount = 1;
-		ExecutedHits = 0;
-		RequiredStamina = 0.f;
-	}
-};
 
 UCLASS(ClassGroup = (IronField), meta = (BlueprintSpawnableComponent))
 class IRONFIELD_API UIFCombatComponent : public UActorComponent
@@ -67,14 +51,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Combat")
 	bool TryStartAttack();
 
-	float GetAIComboBreatherSeconds() const;
-	void EnsureAIComboPlan();
-	bool HasEnoughStaminaForPlannedCombo() const;
-	bool TryExecuteNextPlannedAIStep();
-	bool HasRemainingPlannedAISteps() const;
-	void ClearAIComboPlan();
-	float GetAIMaxStaminaWaitSeconds() const;
-	int32 GetPlannedAIExecutedHits() const { return PlannedAICombo.ExecutedHits; }
+	bool TryStartAttackStep(int32 StepIndex);
+	const UIFCombatDataAsset* GetLoadedCombatData() const { return LoadedCombatData; }
 
 	int32 GetCurrentMontageInstanceID() const { return CurrentMontageInstanceID; }
 
@@ -112,8 +90,6 @@ protected:
 	bool PlayAdditiveFlinchMontage(UAnimMontage* MontageToPlay);
 	void TriggerAdditiveFlinch(AActor* DamageCauser, AController* EventInstigator);
 
-	UAnimMontage* GetCurrentMontage() const { return CurrentMontage; }
-
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Combat")
 	TSoftObjectPtr<UIFCombatDataAsset> CombatData;
 
@@ -150,7 +126,7 @@ private:
 	bool AreRequiredAssetsLoaded() const;
 	void StartComboResetTimer();
 	void HandleComboReset();
-	void BuildSamplePoints(TArray<FVector>& OutPoints) const;
+	void BuildSamplePoints(TArray<FVector, TInlineAllocator<16>>& OutPoints) const;
 	void ProcessHit(AActor* Target, const FVector& HitLocation);
 	void RestoreAnimTickOption();
 
@@ -169,6 +145,8 @@ private:
 	float NextAdditiveFlinchAllowedTime = 0.f;
 
 	TSet<TWeakObjectPtr<AActor>> HitActorsThisWindow;
-	TArray<FVector> PreviousSamplePoints;
-	FIFPlannedAICombo PlannedAICombo;
+	TArray<FVector, TInlineAllocator<16>> PreviousSamplePoints;
+	TArray<FVector, TInlineAllocator<16>> CurrentSamplePoints;
+	TArray<FOverlapResult> ScratchOverlaps;
+	TArray<FHitResult> ScratchHits;
 };

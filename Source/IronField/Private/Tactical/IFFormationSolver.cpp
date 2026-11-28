@@ -380,7 +380,8 @@ namespace
 		UNavigationSystemV1& NavSys,
 		const ANavigationData* NavData,
 		const FVector& NavAnchor,
-		const FVector& NavSlot)
+		const FVector& NavSlot,
+		bool bAllowPathfindingFallback)
 	{
 		FVector HitLocation = FVector::ZeroVector;
 		if (!UNavigationSystemV1::NavigationRaycast(World, NavAnchor, NavSlot, HitLocation))
@@ -390,7 +391,7 @@ namespace
 
 		// Bounded path-length fallback allows Circles to wrap around narrow interior obstacles (e.g. flag poles)
 		// while rejecting slots that project across castle walls, closed gates, or disconnected upper walkways.
-		if (!IsValid(NavData))
+		if (!bAllowPathfindingFallback || !IsValid(NavData))
 		{
 			return false;
 		}
@@ -494,7 +495,7 @@ bool FIFFormationSolver::SolveFormation(
 			continue;
 		}
 
-		if (!IsSlotConnectedToAnchor(World, *NavSys, NavData, OutFormationCenter, NavSlot.Location))
+		if (!IsSlotConnectedToAnchor(World, *NavSys, NavData, OutFormationCenter, NavSlot.Location, Params.bAllowPathfindingFallback))
 		{
 			continue;
 		}
@@ -525,7 +526,7 @@ bool FIFFormationSolver::SolveFormation(
 			{
 				continue;
 			}
-			if (!IsSlotConnectedToAnchor(World, *NavSys, NavData, OutFormationCenter, NavSlot.Location))
+			if (!IsSlotConnectedToAnchor(World, *NavSys, NavData, OutFormationCenter, NavSlot.Location, Params.bAllowPathfindingFallback))
 			{
 				continue;
 			}
@@ -561,9 +562,24 @@ void FIFFormationSolver::AssignSoldiersToSlots(
 	}
 
 	OutSoldierToSlotIndices.SetNumZeroed(N);
+	for (int32 i = 0; i < N; ++i)
+	{
+		OutSoldierToSlotIndices[i] = i;
+	}
 	if (N == 1)
 	{
-		OutSoldierToSlotIndices[0] = 0;
+		return;
+	}
+
+	// Guard against NaN/Inf coordinates which would prevent Hungarian delta updates from converging.
+	for (int32 i = 0; i < N; ++i)
+	{
+		if (!SoldierLocations[i].ContainsNaN() && !Slots[i].Location.ContainsNaN()
+			&& FMath::IsFinite(SoldierLocations[i].X) && FMath::IsFinite(SoldierLocations[i].Y)
+			&& FMath::IsFinite(Slots[i].Location.X) && FMath::IsFinite(Slots[i].Location.Y))
+		{
+			continue;
+		}
 		return;
 	}
 
@@ -625,6 +641,11 @@ void FIFFormationSolver::AssignSoldiersToSlots(
 				}
 			}
 
+			if (Col1 == 0)
+			{
+				break;
+			}
+
 			for (int32 j = 0; j <= N; ++j)
 			{
 				if (Used[j])
@@ -641,6 +662,11 @@ void FIFFormationSolver::AssignSoldiersToSlots(
 			Col0 = Col1;
 		}
 		while (P[Col0] != 0);
+
+		if (P[Col0] != 0)
+		{
+			continue;
+		}
 
 		do
 		{

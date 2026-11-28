@@ -117,8 +117,9 @@ void AIFTowerProjectile::HandleSphereOverlap(
 
 	bHasImpacted = true;
 
-	AActor* const DamageCauser = OwningTower.IsValid() ? static_cast<AActor*>(OwningTower.Get()) : static_cast<AActor*>(this);
-	UGameplayStatics::ApplyDamage(OtherActor, Damage, nullptr, DamageCauser, UDamageType::StaticClass());
+	// Pass the projectile itself as DamageCauser so Shield Block and directional hit-reacts resolve from the incoming bolt's direction.
+	AController* const InstigatorController = OwningTower.IsValid() ? OwningTower->GetInstigatorController() : nullptr;
+	UGameplayStatics::ApplyDamage(OtherActor, Damage, InstigatorController, this, UDamageType::StaticClass());
 	Destroy();
 }
 

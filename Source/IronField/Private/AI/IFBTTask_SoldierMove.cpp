@@ -10,7 +10,10 @@
 namespace
 {
 	constexpr float SurroundPointRecheckIntervalSeconds = 0.25f;
+	constexpr float StagingSurroundRecheckIntervalSeconds = 0.40f;
 	constexpr float SurroundPointMoveThresholdCm = 65.f;
+	constexpr float StagingArrivalThresholdCm = 30.f;
+	constexpr float StagingFaceInterpSpeed = 8.f;
 
 	float ComputeAcceptanceRadius(const AIFSoldierAIController& Controller, const AActor* GoalActor)
 	{
@@ -20,6 +23,20 @@ namespace
 			return Soldier->GetEffectiveAttackRange(GoalActor);
 		}
 		return Controller.GetMoveGoalAcceptanceRadius();
+	}
+
+	void FaceGoalActorSmooth(AIFSoldierCharacter& Soldier, const AActor& GoalActor, float DeltaSeconds)
+	{
+		FVector ToGoal = GoalActor.GetActorLocation() - Soldier.GetActorLocation();
+		ToGoal.Z = 0.f;
+		if (ToGoal.IsNearlyZero())
+		{
+			return;
+		}
+
+		const FRotator CurrentRot = Soldier.GetActorRotation();
+		const FRotator DesiredRot(CurrentRot.Pitch, ToGoal.Rotation().Yaw, CurrentRot.Roll);
+		Soldier.SetActorRotation(FMath::RInterpTo(CurrentRot, DesiredRot, DeltaSeconds, StagingFaceInterpSpeed));
 	}
 }
 
@@ -35,7 +52,7 @@ uint16 UIFBTTask_SoldierMove::GetInstanceMemorySize() const
 	return static_cast<uint16>(sizeof(FBTTask_SoldierMoveMemory));
 }
 
-EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Controller, FBTTask_SoldierMoveMemory& Memory)
+EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Controller, FBTTask_SoldierMoveMemory& Memory, const FVector* PrecomputedApproachPoint)
 {
 	AActor* const GoalActor = Controller.GetMoveGoalActor();
 	const FVector GoalLocation = Controller.GetMoveGoalLocation();
@@ -48,6 +65,7 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 	Memory.StallElapsedSeconds = 0.f;
 	Memory.SurroundCheckElapsedSeconds = 0.f;
 	Memory.bUsingPointApproachForActor = false;
+	Memory.bHoldingAtStagingPoint = false;
 
 	FAIMoveRequest MoveReq;
 	if (IsValid(GoalActor))
@@ -55,9 +73,9 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 		const AIFSoldierCharacter* const Soldier = Controller.GetSoldier();
 		if (const AIFStructure* const GoalStructure = Cast<AIFStructure>(GoalActor))
 		{
-			const FVector ApproachPoint = IsValid(Soldier)
-				? Soldier->GetCombatApproachPoint(GoalStructure)
-				: GoalStructure->GetActorLocation();
+			const FVector ApproachPoint = PrecomputedApproachPoint
+				? *PrecomputedApproachPoint
+				: (IsValid(Soldier) ? Soldier->GetCombatApproachPoint(GoalStructure) : GoalStructure->GetActorLocation());
 			MoveReq.SetGoalLocation(ApproachPoint);
 			MoveReq.SetProjectGoalLocation(true);
 			Memory.TrackedGoalLocation = ApproachPoint;
@@ -66,7 +84,9 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 		}
 		else if (IsValid(Soldier) && GoalActor == Controller.GetCurrentTarget())
 		{
-			const FVector SurroundPoint = Soldier->GetCombatApproachPoint(GoalActor);
+			const FVector SurroundPoint = PrecomputedApproachPoint
+				? *PrecomputedApproachPoint
+				: Soldier->GetCombatApproachPoint(GoalActor);
 			if (FVector::DistSquared2D(SurroundPoint, GoalActor->GetActorLocation()) > FMath::Square(20.f))
 			{
 				MoveReq.SetGoalLocation(SurroundPoint);
@@ -95,6 +115,7 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 	MoveReq.SetUsePathfinding(true);
 	MoveReq.SetAllowPartialPath(true);
 	MoveReq.SetCanStrafe(false);
+	// GetEffectiveAttackRange already adds SelfRadius + TargetRadius, so disable UE radius expansion to prevent double-counting.
 	MoveReq.SetReachTestIncludesAgentRadius(false);
 	MoveReq.SetReachTestIncludesGoalRadius(false);
 
@@ -103,7 +124,18 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 	switch (MoveResult.Code)
 	{
 	case EPathFollowingRequestResult::AlreadyAtGoal:
+	{
+		const AIFSoldierCharacter* const Soldier = Controller.GetSoldier();
+		if (Memory.bUsingPointApproachForActor && IsValid(Soldier) && IsValid(GoalActor)
+			&& GoalActor == Controller.GetCurrentTarget()
+			&& !Soldier->IsTargetInMeleeReach(GoalActor, false))
+		{
+			// Outer-ring staging point reached while still out of melee reach: hold in place instead of failing into MeleeAttack.
+			Memory.bHoldingAtStagingPoint = true;
+			return EBTNodeResult::InProgress;
+		}
 		return EBTNodeResult::Succeeded;
+	}
 	case EPathFollowingRequestResult::RequestSuccessful:
 		return EBTNodeResult::InProgress;
 	default:
@@ -125,6 +157,7 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::ExecuteTask(UBehaviorTreeComponent& O
 	Memory->SurroundCheckElapsedSeconds = 0.f;
 	Memory->bTrackedActorGoal = false;
 	Memory->bUsingPointApproachForActor = false;
+	Memory->bHoldingAtStagingPoint = false;
 
 	AIFSoldierAIController* const Controller = Cast<AIFSoldierAIController>(OwnerComp.GetAIOwner());
 	if (!IsValid(Controller))
@@ -159,16 +192,19 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		return;
 	}
 
-	Memory->ElapsedSeconds += DeltaSeconds;
 	Memory->RepathCooldownSeconds = FMath::Max(0.f, Memory->RepathCooldownSeconds - DeltaSeconds);
-	if (Memory->ElapsedSeconds > MaxMoveSeconds)
+	if (!Memory->bHoldingAtStagingPoint)
 	{
-		Controller->StopMovement();
-		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
-		return;
+		Memory->ElapsedSeconds += DeltaSeconds;
+		if (Memory->ElapsedSeconds > MaxMoveSeconds)
+		{
+			Controller->StopMovement();
+			FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+			return;
+		}
 	}
 
-	const AIFSoldierCharacter* const Soldier = Controller->GetSoldier();
+	AIFSoldierCharacter* const Soldier = Controller->GetSoldier();
 	const AActor* const CurrentGoalActor = Controller->GetMoveGoalActor();
 	const FVector CurrentGoalLocation = Controller->GetMoveGoalLocation();
 	const bool bGoalActorChanged = (CurrentGoalActor != Memory->TrackedGoalActor.Get())
@@ -177,13 +213,17 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		&& FVector::DistSquared2D(CurrentGoalLocation, Memory->TrackedGoalLocation) > FMath::Square(15.f);
 
 	bool bSurroundPointMoved = false;
+	FVector LiveApproachPoint = FVector::ZeroVector;
 	if (IsValid(CurrentGoalActor) && Memory->bUsingPointApproachForActor && IsValid(Soldier))
 	{
+		const float RecheckInterval = Memory->bHoldingAtStagingPoint
+			? StagingSurroundRecheckIntervalSeconds
+			: SurroundPointRecheckIntervalSeconds;
 		Memory->SurroundCheckElapsedSeconds += DeltaSeconds;
-		if (Memory->SurroundCheckElapsedSeconds >= SurroundPointRecheckIntervalSeconds)
+		if (Memory->SurroundCheckElapsedSeconds >= RecheckInterval)
 		{
 			Memory->SurroundCheckElapsedSeconds = 0.f;
-			const FVector LiveApproachPoint = Soldier->GetCombatApproachPoint(CurrentGoalActor);
+			LiveApproachPoint = Soldier->GetCombatApproachPoint(CurrentGoalActor);
 			bSurroundPointMoved = FVector::DistSquared2D(LiveApproachPoint, Memory->TrackedGoalLocation)
 				> FMath::Square(SurroundPointMoveThresholdCm);
 		}
@@ -196,8 +236,12 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 
 	if (!bActivelyTrackingActor && (bGoalActorChanged || bStaticPointMoved || bSurroundPointMoved))
 	{
-		Memory->ElapsedSeconds = 0.f;
-		const EBTNodeResult::Type IssueResult = IssueMove(*Controller, *Memory);
+		if (bGoalActorChanged)
+		{
+			Memory->ElapsedSeconds = 0.f;
+		}
+		const FVector* const PrecomputedPoint = (!bGoalActorChanged && bSurroundPointMoved) ? &LiveApproachPoint : nullptr;
+		const EBTNodeResult::Type IssueResult = IssueMove(*Controller, *Memory, PrecomputedPoint);
 
 		if (IssueResult == EBTNodeResult::Succeeded)
 		{
@@ -222,6 +266,25 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 	{
 		FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
 		return;
+	}
+
+	// Outer-ring surround staging: stay poised at the staging point facing the target until an inner slot opens.
+	if (IsValid(CurrentGoalActor) && IsValid(Soldier) && Memory->bUsingPointApproachForActor
+		&& CurrentGoalActor == Controller->GetCurrentTarget())
+	{
+		const bool bAtStagingPoint = FVector::DistSquared2D(PawnLocation, Memory->TrackedGoalLocation)
+			<= FMath::Square(StagingArrivalThresholdCm);
+		if (Memory->bHoldingAtStagingPoint || (bAtStagingPoint && Controller->GetMoveStatus() == EPathFollowingStatus::Idle))
+		{
+			if (!Memory->bHoldingAtStagingPoint)
+			{
+				Memory->bHoldingAtStagingPoint = true;
+				Controller->StopMovement();
+			}
+			Memory->StallElapsedSeconds = 0.f;
+			FaceGoalActorSmooth(*Soldier, *CurrentGoalActor, DeltaSeconds);
+			return;
+		}
 	}
 
 	if (IsValid(CurrentGoalActor))

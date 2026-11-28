@@ -16,7 +16,7 @@ enum class EIFSoldierAction : uint8
 	AttackTarget,
 	Defend,
 	Advance,
-	HoldPosition
+	ReturnToAnchor
 };
 
 /** Coarse Behavior Tree branch mapped from EIFSoldierAction and mirrored to the Blackboard. */
@@ -38,7 +38,7 @@ inline EIFSoldierBranch ResolveSoldierBranch(EIFSoldierAction Action)
 
 	case EIFSoldierAction::MoveTo:
 	case EIFSoldierAction::FollowActor:
-	case EIFSoldierAction::HoldPosition:
+	case EIFSoldierAction::ReturnToAnchor:
 	case EIFSoldierAction::Advance:
 		return EIFSoldierBranch::Move;
 
@@ -49,7 +49,7 @@ inline EIFSoldierBranch ResolveSoldierBranch(EIFSoldierAction Action)
 	}
 }
 
-/** Explicit player orders. Holding a position re-anchors the soldier and delegates defence to Priority 2. */
+/** Explicit player orders. Reaching a MoveToLocation re-anchors the soldier and hands off to autonomous defense. */
 UENUM(BlueprintType)
 enum class EIFSoldierOrderType : uint8
 {

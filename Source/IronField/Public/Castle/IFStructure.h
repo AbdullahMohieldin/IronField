@@ -213,7 +213,7 @@ protected:
 	TObjectPtr<UIFStructureDataAsset> StructureData;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Team")
-	FGenericTeamId TeamID = FGenericTeamId(IFTeamIds::Player);
+	FGenericTeamId TeamID = FGenericTeamId(IFTeamIds::Dawn);
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Structure|Visuals")
 	TSoftObjectPtr<UMaterialInterface> DawnTeamMaterial;

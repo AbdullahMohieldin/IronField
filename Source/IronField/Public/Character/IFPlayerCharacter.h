@@ -24,9 +24,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "IronField|Player|Components")
 	UIFStaminaComponent* GetStaminaComponent() const { return StaminaComponent; }
 
-	UFUNCTION(BlueprintPure, Category = "IronField|Player|Movement")
-	bool IsSprinting() const { return bIsSprinting; }
-
 	UFUNCTION(BlueprintCallable, Category = "IronField|Player|Respawn")
 	void RespawnAtCastle(const FVector& SpawnLocation, const FRotator& SpawnRotation);
 
@@ -59,6 +56,7 @@ protected:
 	virtual void UnPossessed() override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void OnDeathStarted() override;
+	// Hero stays on ECC_Pawn so both factions block the capsule while friendly Dawn soldiers overlap each other and part around the Hero via UIFCrowdSubsystem.
 	virtual ECollisionChannel GetCapsuleCollisionChannel() const override { return ECC_Pawn; }
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")

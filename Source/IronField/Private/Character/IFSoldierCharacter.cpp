@@ -66,6 +66,7 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadVitals"));
 	OverheadWidgetComponent->SetupAttachment(GetRootComponent());
 	OverheadWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	OverheadWidgetComponent->SetTickMode(ETickMode::Automatic);
 	OverheadWidgetComponent->SetDrawSize(FVector2D(88.f, 16.f));
 	OverheadWidgetComponent->SetRelativeLocation(FVector(0.f, 0.f, 118.f));
 	OverheadWidgetComponent->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
@@ -83,7 +84,7 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 	SelectionRingComponent->SetVisibility(false);
 	UpdateSelectionRingTransform();
 
-	SetGenericTeamId(FGenericTeamId(IFTeamIds::Enemy));
+	SetGenericTeamId(FGenericTeamId(IFTeamIds::Dusk));
 }
 
 void AIFSoldierCharacter::BeginPlay()
@@ -109,7 +110,7 @@ void AIFSoldierCharacter::BeginPlay()
 		{
 			OverheadWidget->BindToVitalComponents(GetHealthComponent(), StaminaComponent);
 			OverheadWidget->SetHealthBarColor(
-				(GetGenericTeamId().GetId() == IFTeamIds::Player) ? AllyHealthBarColor : EnemyHealthBarColor);
+				(GetGenericTeamId().GetId() == IFTeamIds::Dawn) ? AllyHealthBarColor : EnemyHealthBarColor);
 		}
 	}
 	UpdateOverheadWidgetVisibility();
@@ -143,10 +144,8 @@ void AIFSoldierCharacter::GetActorEyesViewPoint(FVector& OutLocation, FRotator& 
 	OutRotation = GetActorRotation();
 }
 
-void AIFSoldierCharacter::HandleDeath(AActor* DeadActor)
+void AIFSoldierCharacter::OnDeathStarted()
 {
-	Super::HandleDeath(DeadActor);
-
 	bIsTacticalSelected = false;
 	bSelectionRingDisplayEnabled = false;
 	TacticalRingMode = EIFTacticalRingMode::None;
@@ -159,6 +158,7 @@ void AIFSoldierCharacter::HandleDeath(AActor* DeadActor)
 			OverheadWidget->UnbindVitalComponents();
 		}
 		OverheadWidgetComponent->SetVisibility(false);
+		OverheadWidgetComponent->SetComponentTickEnabled(false);
 	}
 
 	if (IsValid(StaminaComponent))
@@ -167,6 +167,7 @@ void AIFSoldierCharacter::HandleDeath(AActor* DeadActor)
 		StaminaComponent->SetComponentTickEnabled(false);
 	}
 
+	// Stop, detach, and destroy AIController immediately so dead units do not tick Perception/BT during CorpseLifeSpan.
 	AAIController* const AIController = Cast<AAIController>(GetController());
 	if (IsValid(AIController))
 	{
@@ -395,7 +396,7 @@ FVector AIFSoldierCharacter::GetCombatApproachPoint(const AActor* Target) const
 
 void AIFSoldierCharacter::SetTacticalSelected(bool bSelected, bool bShowRingNow)
 {
-	if (bSelected && GetGenericTeamId().GetId() != IFTeamIds::Player)
+	if (bSelected && GetGenericTeamId().GetId() != IFTeamIds::Dawn)
 	{
 		bSelected = false;
 	}
@@ -425,7 +426,7 @@ void AIFSoldierCharacter::SetSelectionRingDisplayVisible(bool bVisible)
 
 void AIFSoldierCharacter::SetHostileTargetHighlighted(bool bHighlighted)
 {
-	if (bHighlighted && GetGenericTeamId().GetId() == IFTeamIds::Player)
+	if (bHighlighted && GetGenericTeamId().GetId() == IFTeamIds::Dawn)
 	{
 		bHighlighted = false;
 	}
@@ -458,6 +459,7 @@ void AIFSoldierCharacter::UpdateOverheadWidgetVisibility()
 	if (!IsAlive())
 	{
 		OverheadWidgetComponent->SetVisibility(false);
+		OverheadWidgetComponent->SetComponentTickEnabled(false);
 		return;
 	}
 
@@ -474,6 +476,7 @@ void AIFSoldierCharacter::UpdateOverheadWidgetVisibility()
 	{
 		OverheadWidget->SetVisibility(bShouldShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	}
+	OverheadWidgetComponent->SetComponentTickEnabled(bShouldShow);
 }
 
 void AIFSoldierCharacter::RefreshTacticalRingVisual()
@@ -491,7 +494,7 @@ void AIFSoldierCharacter::RefreshTacticalRingVisual()
 
 	if (TacticalRingMode == EIFTacticalRingMode::SelectedAlly)
 	{
-		const bool bAllowed = (GetGenericTeamId().GetId() == IFTeamIds::Player) && bIsTacticalSelected && bSelectionRingDisplayEnabled;
+		const bool bAllowed = (GetGenericTeamId().GetId() == IFTeamIds::Dawn) && bIsTacticalSelected && bSelectionRingDisplayEnabled;
 		if (bAllowed && IsValid(SelectionRingMaterial))
 		{
 			SelectionRingComponent->SetMaterial(0, SelectionRingMaterial);
@@ -502,7 +505,7 @@ void AIFSoldierCharacter::RefreshTacticalRingVisual()
 
 	if (TacticalRingMode == EIFTacticalRingMode::HostileTarget)
 	{
-		const bool bAllowed = (GetGenericTeamId().GetId() != IFTeamIds::Player) && IsValid(HostileTargetRingMaterial);
+		const bool bAllowed = (GetGenericTeamId().GetId() != IFTeamIds::Dawn) && IsValid(HostileTargetRingMaterial);
 		if (bAllowed)
 		{
 			SelectionRingComponent->SetMaterial(0, HostileTargetRingMaterial);

@@ -13,7 +13,7 @@ class UStaticMeshComponent;
 
 /**
  * Lightweight ballistic projectile fired by AIFGuardTower.
- * Friendly-fire safe, ECC_Camera ignored, short lifespan, passes OwningTower as DamageCauser.
+ * Friendly-fire safe, ECC_Camera ignored, short lifespan, passes itself as DamageCauser for incoming-bolt block/hit-react direction.
  */
 UCLASS()
 class IRONFIELD_API AIFTowerProjectile : public AActor, public IGenericTeamAgentInterface

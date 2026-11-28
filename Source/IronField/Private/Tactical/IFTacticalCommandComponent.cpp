@@ -454,6 +454,7 @@ void UIFTacticalCommandComponent::CancelFormationDragPreview()
 	bIsFormationDragging = false;
 	bHasPreviewCache = false;
 	LastPreviewUnitCount = 0;
+	LastPreviewUpdateRealTime = -1.0;
 	PreviewFormationSlots.Reset();
 
 	if (IsValid(FormationPreviewISM))
@@ -1686,10 +1687,13 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 		return;
 	}
 
-	if (bHasPreviewCache
+	const double NowRealTime = FPlatformTime::Seconds();
+	const bool bSameFormationAndCount = bHasPreviewCache
 		&& LastPreviewFormationType == ActiveFormationType
-		&& LastPreviewUnitCount == ActiveSquad.Num()
-		&& FVector::DistSquared2D(CurrentGroundPoint, LastPreviewGroundPoint) < FMath::Square(8.f))
+		&& LastPreviewUnitCount == ActiveSquad.Num();
+	if (bSameFormationAndCount
+		&& (FVector::DistSquared2D(CurrentGroundPoint, LastPreviewGroundPoint) < FMath::Square(8.f)
+			|| (NowRealTime - LastPreviewUpdateRealTime) < 0.05))
 	{
 		return;
 	}
@@ -1697,6 +1701,7 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 	LastPreviewGroundPoint = CurrentGroundPoint;
 	LastPreviewFormationType = ActiveFormationType;
 	LastPreviewUnitCount = ActiveSquad.Num();
+	LastPreviewUpdateRealTime = NowRealTime;
 	bHasPreviewCache = true;
 
 	FIFFormationSolveParams Params;
@@ -1705,6 +1710,7 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 	Params.AnchorPoint = FormationDragStartPoint;
 	Params.DragEndPoint = CurrentGroundPoint;
 	Params.bIsDrag = true;
+	Params.bAllowPathfindingFallback = false;
 	Params.SquadCentroid = SquadCentroid;
 	Params.CameraForward = ResolvePreviewCameraForward();
 	Params.LateralSpacing = FormationLateralSpacing;

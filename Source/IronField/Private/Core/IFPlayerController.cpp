@@ -148,6 +148,7 @@ void AIFPlayerController::SetupInputComponent()
 		return;
 	}
 
+	// Keep input ticking while paused so Enhanced Input still receives IA_Pause to unpause.
 	InputComponent->SetTickableWhenPaused(true);
 
 	if (!IsValid(PauseInputAction))
@@ -186,6 +187,12 @@ void AIFPlayerController::SetMatchPaused(bool bPaused)
 {
 	if (IsGameOverActive())
 	{
+		return;
+	}
+
+	if (bPaused && !PauseMenuWidgetClass)
+	{
+		UE_LOG(LogIronField, Warning, TEXT("[IF-Flow] PauseMenuWidgetClass is unset on %s; skipping pause to avoid a menu-less pause state."), *GetName());
 		return;
 	}
 
@@ -328,12 +335,11 @@ void AIFPlayerController::ApplyUIInputMode()
 
 void AIFPlayerController::SetInteractionPromptText(const FText& PromptText)
 {
-	CachedInteractionPrompt = PromptText;
 	if (IsValid(TacticalCommandComponent))
 	{
 		if (UIFTacticalHUDWidget* const HUD = TacticalCommandComponent->GetTacticalHUDWidget())
 		{
-			HUD->SetInteractionPrompt(CachedInteractionPrompt);
+			HUD->SetInteractionPrompt(PromptText);
 		}
 	}
 }

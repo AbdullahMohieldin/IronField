@@ -328,6 +328,7 @@ private:
 	FVector LastPreviewGroundPoint = FVector::ZeroVector;
 	EIFTacticalFormationType LastPreviewFormationType = EIFTacticalFormationType::Line;
 	int32 LastPreviewUnitCount = 0;
+	double LastPreviewUpdateRealTime = -1.0;
 	bool bHasPreviewCache = false;
 	TArray<FIFFormationSlot> PreviewFormationSlots;
 

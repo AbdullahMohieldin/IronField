@@ -21,6 +21,7 @@ struct FBTTask_SoldierMoveMemory
 	float SurroundCheckElapsedSeconds = 0.f;
 	bool bTrackedActorGoal = false;
 	bool bUsingPointApproachForActor = false;
+	bool bHoldingAtStagingPoint = false;
 };
 
 /**
@@ -42,18 +43,18 @@ protected:
 	virtual void TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
 	virtual void OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTNodeResult::Type TaskResult) override;
 
-	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "1.0"))
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Move", meta = (ClampMin = "1.0"))
 	float MaxMoveSeconds = 20.f;
 
-	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0.3"))
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Move", meta = (ClampMin = "0.3"))
 	float StallTimeoutSeconds = 1.85f;
 
-	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "5.0"))
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Move", meta = (ClampMin = "5.0"))
 	float MinStallProgressDistance = 25.f;
 
-	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0"))
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Move", meta = (ClampMin = "0"))
 	int32 MaxDynamicRepathRetries = 3;
 
 private:
-	EBTNodeResult::Type IssueMove(AIFSoldierAIController& Controller, FBTTask_SoldierMoveMemory& Memory);
+	EBTNodeResult::Type IssueMove(AIFSoldierAIController& Controller, FBTTask_SoldierMoveMemory& Memory, const FVector* PrecomputedApproachPoint = nullptr);
 };

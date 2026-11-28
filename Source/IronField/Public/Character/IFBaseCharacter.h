@@ -65,7 +65,7 @@ protected:
 	virtual void OnDeathStarted() {}
 
 	UFUNCTION()
-	virtual void HandleDeath(AActor* DeadActor);
+	void HandleDeath(AActor* DeadActor);
 
 	void RestoreAliveState();
 

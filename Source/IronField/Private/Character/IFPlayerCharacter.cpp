@@ -39,9 +39,6 @@ AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializ
 	InteractionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
 	InteractionSphere->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
 	InteractionSphere->SetCollisionResponseToChannel(IFCollision::Damageable, ECR_Overlap);
-	InteractionSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
-	InteractionSphere->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Overlap);
-	InteractionSphere->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Overlap);
 	InteractionSphere->SetGenerateOverlapEvents(true);
 	InteractionSphere->SetCanEverAffectNavigation(false);
 
@@ -71,7 +68,7 @@ AIFPlayerCharacter::AIFPlayerCharacter(const FObjectInitializer& ObjectInitializ
 		Movement->RotationRate = FRotator(0.f, 720.f, 0.f);
 	}
 
-	SetGenericTeamId(FGenericTeamId(IFTeamIds::Player));
+	SetGenericTeamId(FGenericTeamId(IFTeamIds::Dawn));
 	AutoPossessAI = EAutoPossessAI::Disabled;
 }
 
@@ -536,7 +533,6 @@ void AIFPlayerCharacter::OnDeathStarted()
 	}
 
 	RefreshInteractionPrompt();
-	bUseControllerRotationYaw = false;
 
 	if (const UWorld* const World = GetWorld())
 	{
@@ -556,12 +552,13 @@ void AIFPlayerCharacter::RespawnAtCastle(const FVector& SpawnLocation, const FRo
 		PC->SetControlRotation(SpawnRotation);
 	}
 
-	RestoreAliveState();
-
+	// Revive health before RestoreAliveState because ApplyTeamCollisionResponses guards on !IsDead().
 	if (UIFHealthComponent* const Health = GetHealthComponent())
 	{
 		Health->Revive();
 	}
+
+	RestoreAliveState();
 
 	if (IsValid(StaminaComponent))
 	{
@@ -571,6 +568,12 @@ void AIFPlayerCharacter::RespawnAtCastle(const FVector& SpawnLocation, const FRo
 	if (UIFCombatComponent* const Combat = GetCombatComponent())
 	{
 		Combat->HandleOwnerRevived();
+	}
+
+	// Re-add IMC_Default in case the hero died in Tactical Mode (where ExitTacticalStandby skipped it while dead).
+	if (!bIsInTacticalStandby && IsValid(GetController()))
+	{
+		AddDefaultMappingContext();
 	}
 
 	UpdateSprintState();
@@ -601,6 +604,11 @@ void AIFPlayerCharacter::HandleInteractionEndOverlap(
 	UPrimitiveComponent*,
 	int32)
 {
+	if (!IsValid(OtherActor) || !OtherActor->Implements<UIFInteractable>())
+	{
+		return;
+	}
+
 	NearbyInteractables.RemoveAll([OtherActor](const TWeakObjectPtr<AActor>& Ptr)
 	{
 		return !Ptr.IsValid() || Ptr.Get() == OtherActor;

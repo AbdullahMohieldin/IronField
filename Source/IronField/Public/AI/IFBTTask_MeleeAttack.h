@@ -14,11 +14,30 @@ enum class EIFMeleeAttackPhase : uint8
 	Breather
 };
 
+struct FIFPlannedAICombo
+{
+	bool bHasPlan = false;
+	int32 OpenerStepIndex = 0;
+	int32 PlannedHitCount = 1;
+	int32 ExecutedHits = 0;
+	float RequiredStamina = 0.f;
+
+	void Reset()
+	{
+		bHasPlan = false;
+		OpenerStepIndex = 0;
+		PlannedHitCount = 1;
+		ExecutedHits = 0;
+		RequiredStamina = 0.f;
+	}
+};
+
 struct FBTTask_MeleeAttackMemory
 {
 	TWeakObjectPtr<AIFSoldierAIController> Controller;
 	TWeakObjectPtr<AIFSoldierCharacter> Soldier;
 	EIFMeleeAttackPhase Phase = EIFMeleeAttackPhase::WaitingForStamina;
+	FIFPlannedAICombo ComboPlan;
 	float ElapsedSeconds = 0.f;
 	float StaminaWaitElapsed = 0.f;
 	float TurnAlignElapsed = 0.f;
@@ -45,15 +64,15 @@ protected:
 	virtual void TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
 	virtual void OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTNodeResult::Type TaskResult) override;
 
-	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0.1"))
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Combat", meta = (ClampMin = "0.1"))
 	float MaxAttackSeconds = 10.f;
 
-	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0.1"))
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Combat", meta = (ClampMin = "0.1"))
 	float TurnInterpSpeed = 10.f;
 
-	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "1.0", ClampMax = "180.0"))
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Combat", meta = (ClampMin = "1.0", ClampMax = "180.0"))
 	float OpeningMaxYawErrorDegrees = 30.f;
 
-	UPROPERTY(EditAnywhere, Category = "Soldier", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Combat", meta = (ClampMin = "0.0"))
 	float MaxTurnAlignSeconds = 0.45f;
 };

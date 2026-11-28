@@ -927,11 +927,11 @@ void AIFStructure::ApplyTeamVisuals()
 {
 	UMaterialInterface* TeamMat = nullptr;
 	const uint8 RawTeamId = TeamID.GetId();
-	if (RawTeamId == IFTeamIds::Player)
+	if (RawTeamId == IFTeamIds::Dawn)
 	{
 		TeamMat = DawnTeamMaterial.Get();
 	}
-	else if (RawTeamId == IFTeamIds::Enemy)
+	else if (RawTeamId == IFTeamIds::Dusk)
 	{
 		TeamMat = DuskTeamMaterial.Get();
 	}
@@ -988,11 +988,11 @@ void AIFStructure::RefreshOverheadWidget()
 		OverheadWidget->BindToVitalComponents(HealthComponent, nullptr);
 		const uint8 RawTeamId = TeamID.GetId();
 		FLinearColor BarColor = NeutralHealthBarColor;
-		if (RawTeamId == IFTeamIds::Player)
+		if (RawTeamId == IFTeamIds::Dawn)
 		{
 			BarColor = AllyHealthBarColor;
 		}
-		else if (RawTeamId == IFTeamIds::Enemy)
+		else if (RawTeamId == IFTeamIds::Dusk)
 		{
 			BarColor = EnemyHealthBarColor;
 		}

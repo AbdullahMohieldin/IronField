@@ -582,7 +582,7 @@ bool UIFBuildingComponent::TryConfirmPlacement()
 		|| (Data->PlacementRule == EIFPlacementRule::GateOpeningOnly)
 		|| (Data->PlacementRule == EIFPlacementRule::StairMountOrFree && bIsCurrentlySnapped);
 
-	NewStructure->InitializeStructure(Data, FGenericTeamId(IFTeamIds::Player), Territory, Data->bInstantBuild);
+	NewStructure->InitializeStructure(Data, FGenericTeamId(IFTeamIds::Dawn), Territory, Data->bInstantBuild);
 	if (bIsMountedSnap)
 	{
 		NewStructure->SetHostStructure(LastSnapHostStructure.Get());

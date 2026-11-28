@@ -5,7 +5,9 @@
 #include "Character/IFBaseCharacter.h"
 #include "Character/IFSoldierCharacter.h"
 #include "Combat/IFCombatComponent.h"
+#include "Combat/IFCombatDataAsset.h"
 #include "GameFramework/Actor.h"
+#include "Stats/IFStaminaComponent.h"
 
 namespace
 {
@@ -23,7 +25,8 @@ namespace
 			return ToTarget;
 		}
 
-		FVector ToTarget = Soldier.GetCombatApproachPoint(&Target) - Soldier.GetActorLocation();
+		// Face the target actor directly (never the surround ring slot, which can point away from the target).
+		FVector ToTarget = Target.GetActorLocation() - Soldier.GetActorLocation();
 		ToTarget.Z = 0.f;
 		return ToTarget;
 	}
@@ -61,6 +64,88 @@ namespace
 		return AIFSoldierAIController::IsValidCombatTarget(&Soldier, Target)
 			&& Soldier.IsTargetInMeleeReach(Target, true);
 	}
+
+	void BuildComboPlan(const UIFCombatComponent& Combat, const UIFStaminaComponent* Stamina, FIFPlannedAICombo& OutPlan)
+	{
+		const UIFCombatDataAsset* const CombatData = Combat.GetLoadedCombatData();
+		if (OutPlan.bHasPlan || !Combat.IsCombatReady() || !IsValid(CombatData) || CombatData->ComboSteps.IsEmpty())
+		{
+			return;
+		}
+
+		const int32 StepCount = CombatData->ComboSteps.Num();
+		OutPlan.Reset();
+		OutPlan.bHasPlan = true;
+		OutPlan.OpenerStepIndex = CombatData->bRandomizeAIComboOpener
+			? FMath::RandRange(0, StepCount - 1)
+			: 0;
+		OutPlan.PlannedHitCount = 1;
+		OutPlan.ExecutedHits = 0;
+
+		const TArray<float>& Chances = CombatData->AIComboContinuationChances;
+		for (int32 ChainIndex = 0; ChainIndex < Chances.Num() && OutPlan.PlannedHitCount < StepCount; ++ChainIndex)
+		{
+			const float Chance = Chances[ChainIndex];
+			if (Chance > 0.f && (Chance >= 1.f || FMath::FRand() < Chance))
+			{
+				++OutPlan.PlannedHitCount;
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		float TotalStamina = 0.f;
+		for (int32 Offset = 0; Offset < OutPlan.PlannedHitCount; ++Offset)
+		{
+			const int32 StepIndex = (OutPlan.OpenerStepIndex + Offset) % StepCount;
+			TotalStamina += FMath::Max(0.f, CombatData->ComboSteps[StepIndex].StaminaCost);
+		}
+
+		if (IsValid(Stamina))
+		{
+			TotalStamina = FMath::Min(TotalStamina, Stamina->GetMaxStamina());
+		}
+		OutPlan.RequiredStamina = TotalStamina;
+	}
+
+	bool HasEnoughStaminaForPlan(const UIFStaminaComponent* Stamina, const FIFPlannedAICombo& Plan)
+	{
+		if (!IsValid(Stamina))
+		{
+			return true;
+		}
+		if (!Plan.bHasPlan)
+		{
+			return false;
+		}
+		return Stamina->GetCurrentStamina() + KINDA_SMALL_NUMBER >= Plan.RequiredStamina;
+	}
+
+	bool TryExecuteNextPlannedStep(UIFCombatComponent& Combat, FIFPlannedAICombo& Plan)
+	{
+		const UIFCombatDataAsset* const CombatData = Combat.GetLoadedCombatData();
+		if (!Combat.IsCombatReady() || !IsValid(CombatData) || CombatData->ComboSteps.IsEmpty()
+			|| !Plan.bHasPlan || Plan.ExecutedHits >= Plan.PlannedHitCount || !Combat.IsIdle())
+		{
+			return false;
+		}
+
+		const int32 StepIndex = (Plan.OpenerStepIndex + Plan.ExecutedHits) % CombatData->ComboSteps.Num();
+		if (Combat.TryStartAttackStep(StepIndex))
+		{
+			++Plan.ExecutedHits;
+			return true;
+		}
+
+		return false;
+	}
+
+	bool HasRemainingPlannedSteps(const FIFPlannedAICombo& Plan)
+	{
+		return Plan.bHasPlan && Plan.ExecutedHits < Plan.PlannedHitCount;
+	}
 }
 
 UIFBTTask_MeleeAttack::UIFBTTask_MeleeAttack()
@@ -81,6 +166,7 @@ EBTNodeResult::Type UIFBTTask_MeleeAttack::ExecuteTask(UBehaviorTreeComponent& O
 	Memory->Controller.Reset();
 	Memory->Soldier.Reset();
 	Memory->Phase = EIFMeleeAttackPhase::WaitingForStamina;
+	Memory->ComboPlan.Reset();
 	Memory->ElapsedSeconds = 0.f;
 	Memory->StaminaWaitElapsed = 0.f;
 	Memory->TurnAlignElapsed = 0.f;
@@ -105,15 +191,16 @@ EBTNodeResult::Type UIFBTTask_MeleeAttack::ExecuteTask(UBehaviorTreeComponent& O
 		return EBTNodeResult::Failed;
 	}
 
-	Combat->EnsureAIComboPlan();
+	const UIFStaminaComponent* const Stamina = Soldier->GetStaminaComponent();
+	BuildComboPlan(*Combat, Stamina, Memory->ComboPlan);
 
 	Memory->Controller = Controller;
 	Memory->Soldier = Soldier;
 	Memory->Phase = EIFMeleeAttackPhase::WaitingForStamina;
 
-	if (Combat->HasEnoughStaminaForPlannedCombo()
+	if (HasEnoughStaminaForPlan(Stamina, Memory->ComboPlan)
 		&& GetYawErrorDegrees(*Soldier, *Target) <= OpeningMaxYawErrorDegrees
-		&& Combat->TryExecuteNextPlannedAIStep())
+		&& TryExecuteNextPlannedStep(*Combat, Memory->ComboPlan))
 	{
 		Memory->Phase = EIFMeleeAttackPhase::ExecutingCombo;
 	}
@@ -148,28 +235,31 @@ void UIFBTTask_MeleeAttack::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		return;
 	}
 
+	const UIFCombatDataAsset* const CombatData = Combat->GetLoadedCombatData();
+	const UIFStaminaComponent* const Stamina = Soldier->GetStaminaComponent();
+
 	switch (Memory->Phase)
 	{
 	case EIFMeleeAttackPhase::WaitingForStamina:
 	{
 		if (!IsTargetValidAndInRange(*Soldier, Target))
 		{
-			// Preserve the combo plan so the soldier keeps saving stamina while chasing.
 			FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 			return;
 		}
 
 		const float YawError = FaceTargetSmooth(*Soldier, *Target, DeltaSeconds, TurnInterpSpeed);
 
-		if (!Combat->HasEnoughStaminaForPlannedCombo())
+		const bool bHasStamina = HasEnoughStaminaForPlan(Stamina, Memory->ComboPlan);
+		if (!bHasStamina)
 		{
 			Memory->StaminaWaitElapsed += DeltaSeconds;
 		}
 
 		// Timed-out stamina wait falls through so a low-stamina unit attempts an opener or resets its combo plan instead of deadlocking.
-		const float MaxStaminaWait = Combat->GetAIMaxStaminaWaitSeconds();
+		const float MaxStaminaWait = IsValid(CombatData) ? CombatData->MaxStaminaWaitSeconds : 3.5f;
 		const bool bStaminaTimedOut = Memory->StaminaWaitElapsed >= MaxStaminaWait;
-		if (!Combat->HasEnoughStaminaForPlannedCombo() && !bStaminaTimedOut)
+		if (!bHasStamina && !bStaminaTimedOut)
 		{
 			return;
 		}
@@ -186,7 +276,7 @@ void UIFBTTask_MeleeAttack::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		}
 
 		Memory->TurnAlignElapsed = 0.f;
-		if (Combat->TryExecuteNextPlannedAIStep())
+		if (TryExecuteNextPlannedStep(*Combat, Memory->ComboPlan))
 		{
 			Memory->Phase = EIFMeleeAttackPhase::ExecutingCombo;
 			return;
@@ -194,7 +284,7 @@ void UIFBTTask_MeleeAttack::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 
 		if (bStaminaTimedOut)
 		{
-			Combat->ClearAIComboPlan();
+			Memory->ComboPlan.Reset();
 		}
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 		return;
@@ -207,7 +297,7 @@ void UIFBTTask_MeleeAttack::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 			return;
 		}
 
-		if (Combat->HasRemainingPlannedAISteps() && IsTargetValidAndInRange(*Soldier, Target))
+		if (HasRemainingPlannedSteps(Memory->ComboPlan) && IsTargetValidAndInRange(*Soldier, Target))
 		{
 			const float YawError = FaceTargetSmooth(*Soldier, *Target, DeltaSeconds, TurnInterpSpeed);
 			if (YawError > OpeningMaxYawErrorDegrees && Memory->TurnAlignElapsed < MaxTurnAlignSeconds)
@@ -217,15 +307,15 @@ void UIFBTTask_MeleeAttack::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 			}
 
 			Memory->TurnAlignElapsed = 0.f;
-			if (Combat->TryExecuteNextPlannedAIStep())
+			if (TryExecuteNextPlannedStep(*Combat, Memory->ComboPlan))
 			{
 				return;
 			}
 		}
 
-		Combat->ClearAIComboPlan();
+		Memory->ComboPlan.Reset();
 		Memory->Phase = EIFMeleeAttackPhase::Breather;
-		Memory->BreatherRemaining = Combat->GetAIComboBreatherSeconds();
+		Memory->BreatherRemaining = IsValid(CombatData) ? CombatData->AIComboBreatherSeconds : 0.f;
 		if (Memory->BreatherRemaining <= 0.f)
 		{
 			FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
@@ -260,18 +350,8 @@ void UIFBTTask_MeleeAttack::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 
 void UIFBTTask_MeleeAttack::OnTaskFinished(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTNodeResult::Type TaskResult)
 {
-	if (TaskResult != EBTNodeResult::Succeeded)
-	{
-		const FBTTask_MeleeAttackMemory* const Memory = CastInstanceNodeMemory<FBTTask_MeleeAttackMemory>(NodeMemory);
-		if (AIFSoldierCharacter* const Soldier = Memory->Soldier.Get())
-		{
-			if (UIFCombatComponent* const Combat = Soldier->GetCombatComponent();
-				IsValid(Combat) && Combat->GetPlannedAIExecutedHits() > 0)
-			{
-				Combat->ClearAIComboPlan();
-			}
-		}
-	}
+	FBTTask_MeleeAttackMemory* const Memory = CastInstanceNodeMemory<FBTTask_MeleeAttackMemory>(NodeMemory);
+	Memory->ComboPlan.Reset();
 
 	Super::OnTaskFinished(OwnerComp, NodeMemory, TaskResult);
 }

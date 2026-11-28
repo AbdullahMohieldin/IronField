@@ -98,7 +98,6 @@ private:
 	TObjectPtr<UIFBuildingComponent> BuildingSystem;
 
 	TWeakObjectPtr<AIFGameState> ObservedGameState;
-	FText CachedInteractionPrompt;
 
 	bool bIsGameOver = false;
 };

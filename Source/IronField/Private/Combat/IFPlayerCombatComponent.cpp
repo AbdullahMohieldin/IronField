@@ -298,7 +298,7 @@ float UIFPlayerCombatComponent::GetLeapSlamCooldownRemaining() const
 
 void UIFPlayerCombatComponent::OpenComboWindow()
 {
-	if (!IsAttacking() || bIsLeapSlamming)
+	if (!IsAttacking() || bIsLeapSlamming || bIsExecutingGuardAttack)
 	{
 		return;
 	}
@@ -342,13 +342,13 @@ void UIFPlayerCombatComponent::HandleStepStarted()
 	// Snap facing to camera yaw so swings align with aim.
 	SnapOwnerYawToController();
 
-	if (bIsLeapSlamming)
+	if (bIsLeapSlamming || bIsExecutingGuardAttack)
 	{
 		return;
 	}
 
 	const FIFMeleeAttackStep* const Step = GetCurrentStep();
-	const UAnimMontage* const Montage = GetCurrentMontage();
+	const UAnimMontage* const Montage = CurrentMontage;
 	UWorld* const World = GetWorld();
 	if (!Step || !IsValid(Montage) || !IsValid(World))
 	{
@@ -374,7 +374,7 @@ void UIFPlayerCombatComponent::HandleStepStarted()
 
 void UIFPlayerCombatComponent::HandleFallbackComboWindow()
 {
-	if (!IsAttacking() || bIsLeapSlamming || bComboWindowNotifySeen || bComboWindowOpen)
+	if (!IsAttacking() || bIsLeapSlamming || bIsExecutingGuardAttack || bComboWindowNotifySeen || bComboWindowOpen)
 	{
 		return;
 	}

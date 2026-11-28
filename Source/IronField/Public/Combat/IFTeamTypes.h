@@ -7,8 +7,8 @@ class AActor;
 
 namespace IFTeamIds
 {
-	constexpr uint8 Player = 0;
-	constexpr uint8 Enemy = 1;
+	constexpr uint8 Dawn = 0;
+	constexpr uint8 Dusk = 1;
 	constexpr uint8 Neutral = 255;
 }
 

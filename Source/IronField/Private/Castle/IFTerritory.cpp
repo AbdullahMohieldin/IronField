@@ -426,11 +426,11 @@ void AIFTerritory::TickFlagCapture()
 		}
 
 		const uint8 CharTeam = Char->GetGenericTeamId().GetId();
-		if (CharTeam == IFTeamIds::Player)
+		if (CharTeam == IFTeamIds::Dawn)
 		{
 			++PlayerCount;
 		}
-		else if (CharTeam == IFTeamIds::Enemy)
+		else if (CharTeam == IFTeamIds::Dusk)
 		{
 			++EnemyCount;
 		}
@@ -459,11 +459,11 @@ void AIFTerritory::TickFlagCapture()
 	FGenericTeamId DominantTeam = FGenericTeamId(IFTeamIds::Neutral);
 	if (PlayerCount > EnemyCount)
 	{
-		DominantTeam = FGenericTeamId(IFTeamIds::Player);
+		DominantTeam = FGenericTeamId(IFTeamIds::Dawn);
 	}
 	else if (EnemyCount > PlayerCount)
 	{
-		DominantTeam = FGenericTeamId(IFTeamIds::Enemy);
+		DominantTeam = FGenericTeamId(IFTeamIds::Dusk);
 	}
 
 	const bool bIsHostileDominant = (DominantTeam != FGenericTeamId::NoTeam) && (DominantTeam != TeamID);
@@ -603,12 +603,12 @@ void AIFTerritory::ApplyFactionVisuals()
 	UMaterialInterface* BorderMat = ResolveMaterial(NeutralBorderMaterial);
 	UMaterialInterface* FlagMat = ResolveMaterial(NeutralFlagMaterial);
 	const uint8 RawTeamId = TeamID.GetId();
-	if (RawTeamId == IFTeamIds::Player)
+	if (RawTeamId == IFTeamIds::Dawn)
 	{
 		BorderMat = ResolveMaterial(DawnBorderMaterial);
 		FlagMat = ResolveMaterial(DawnFlagMaterial);
 	}
-	else if (RawTeamId == IFTeamIds::Enemy)
+	else if (RawTeamId == IFTeamIds::Dusk)
 	{
 		BorderMat = ResolveMaterial(DuskBorderMaterial);
 		FlagMat = ResolveMaterial(DuskFlagMaterial);
@@ -694,11 +694,11 @@ void AIFTerritory::UpdateFlagRingMaterial()
 FLinearColor AIFTerritory::GetTeamRingColor(FGenericTeamId InTeamID) const
 {
 	const uint8 RawId = InTeamID.GetId();
-	if (RawId == IFTeamIds::Player)
+	if (RawId == IFTeamIds::Dawn)
 	{
 		return DawnRingColor;
 	}
-	if (RawId == IFTeamIds::Enemy)
+	if (RawId == IFTeamIds::Dusk)
 	{
 		return DuskRingColor;
 	}

@@ -107,7 +107,7 @@ namespace
 			if (!IsValid(Struct)
 				|| Struct == IgnoredStructure
 				|| !Struct->IsStructureAlive()
-				|| Struct->GetGenericTeamId().GetId() != IFTeamIds::Player)
+				|| Struct->GetGenericTeamId().GetId() != IFTeamIds::Dawn)
 			{
 				continue;
 			}
@@ -853,7 +853,7 @@ bool FIFBuildingSnapSolver::ValidatePlacement(
 	{
 		const FVector2D HorizHalf = GetEffectiveHorizontalHalfExtent(Box);
 		AIFTerritory* const BoxTerr = GS->FindTerritoryContainingBox(Box.WorldCenter, HorizHalf, Box.WorldRotation.Yaw);
-		if (!IsValid(BoxTerr) || BoxTerr->GetGenericTeamId().GetId() != IFTeamIds::Player)
+		if (!IsValid(BoxTerr) || BoxTerr->GetGenericTeamId().GetId() != IFTeamIds::Dawn)
 		{
 			OutReason = EIFPlacementInvalidReason::OutsideOwnedTerritory;
 			return false;

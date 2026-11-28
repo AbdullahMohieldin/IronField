@@ -65,6 +65,7 @@ public:
 	virtual ETeamAttitude::Type GetTeamAttitudeTowards(const AActor& Other) const override;
 
 protected:
+	virtual void PostInitializeComponents() override;
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void OnUnPossess() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -124,8 +125,8 @@ protected:
 	float AnchorReturnAcceptanceRadius = 20.f;
 
 private:
-	void ApplyIdleAnchorFacing(AIFSoldierCharacter& Soldier);
-	void ClearIdleAnchorFacing(AIFSoldierCharacter& Soldier);
+	void EnableControllerRotationFacing(AIFSoldierCharacter& Soldier);
+	void RestoreMovementRotationFacing(AIFSoldierCharacter& Soldier);
 	void RequestBehaviorTree();
 	void HandleBehaviorTreeLoaded();
 	void CleanupActiveSession();
@@ -140,6 +141,7 @@ private:
 	void SetCurrentAction(EIFSoldierAction NewAction);
 	void SyncBlackboardBranch();
 	void RecordTargetSwitchIfChanged(AActor* NewTarget, AActor* PreviousTarget, float Now);
+	AActor* GetActiveRecentAttacker(float Now) const;
 	void GatherValidCombatCandidates(TArray<AActor*>& OutCandidates) const;
 	AActor* AcquireBestTarget() const;
 	AActor* AcquireMoveOrderInterruptTarget() const;
@@ -151,12 +153,9 @@ private:
 	void ClearMoveGoal();
 
 	UPROPERTY(Transient)
-	TObjectPtr<UAIPerceptionComponent> Perception;
-
-	UPROPERTY(Transient)
 	TObjectPtr<UBehaviorTree> LoadedBehaviorTree;
 
-	// Retained until EndPlay so the BT cannot be GC'd mid-fight.
+	// LoadedBehaviorTree roots the asset against GC; this handle only keeps the async request cancellable until load completes or EndPlay.
 	TSharedPtr<FStreamableHandle> BehaviorTreeLoadHandle;
 
 	// Cached for a guaranteed unbind even if the pawn is already cleared.

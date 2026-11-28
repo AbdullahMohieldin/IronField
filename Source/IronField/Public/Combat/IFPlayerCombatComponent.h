@@ -26,9 +26,6 @@ public:
 	void CancelPendingInputsForTacticalMode();
 
 	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
-	bool IsLeapSlamming() const { return bIsLeapSlamming; }
-
-	UFUNCTION(BlueprintPure, Category = "IronField|Combat")
 	float GetLeapSlamCooldownRemaining() const;
 
 	virtual bool TryBlockIncomingDamage(float DamageAmount, AActor* DamageCauser, AController* EventInstigator) override;

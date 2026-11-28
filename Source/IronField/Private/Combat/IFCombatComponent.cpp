@@ -57,7 +57,6 @@ void UIFCombatComponent::BeginPlay()
 void UIFCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	bCombatReady = false;
-	PlannedAICombo.Reset();
 	InvalidateMontageExecution();
 	ActiveFlinchMontage.Reset();
 
@@ -207,99 +206,14 @@ bool UIFCombatComponent::TryStartAttack()
 	return PlayStep(GetNextStepIndex());
 }
 
-float UIFCombatComponent::GetAIComboBreatherSeconds() const
+bool UIFCombatComponent::TryStartAttackStep(int32 StepIndex)
 {
-	return IsValid(LoadedCombatData) ? LoadedCombatData->AIComboBreatherSeconds : 0.f;
-}
-
-void UIFCombatComponent::EnsureAIComboPlan()
-{
-	if (PlannedAICombo.bHasPlan || !bCombatReady || !IsValid(LoadedCombatData) || LoadedCombatData->ComboSteps.IsEmpty())
-	{
-		return;
-	}
-
-	const int32 StepCount = LoadedCombatData->ComboSteps.Num();
-	PlannedAICombo.Reset();
-	PlannedAICombo.bHasPlan = true;
-	PlannedAICombo.OpenerStepIndex = LoadedCombatData->bRandomizeAIComboOpener
-		? FMath::RandRange(0, StepCount - 1)
-		: 0;
-	PlannedAICombo.PlannedHitCount = 1;
-	PlannedAICombo.ExecutedHits = 0;
-
-	const TArray<float>& Chances = LoadedCombatData->AIComboContinuationChances;
-	for (int32 ChainIndex = 0; ChainIndex < Chances.Num() && PlannedAICombo.PlannedHitCount < StepCount; ++ChainIndex)
-	{
-		const float Chance = Chances[ChainIndex];
-		if (Chance > 0.f && (Chance >= 1.f || FMath::FRand() < Chance))
-		{
-			++PlannedAICombo.PlannedHitCount;
-		}
-		else
-		{
-			break;
-		}
-	}
-
-	float TotalStamina = 0.f;
-	for (int32 Offset = 0; Offset < PlannedAICombo.PlannedHitCount; ++Offset)
-	{
-		const int32 StepIndex = (PlannedAICombo.OpenerStepIndex + Offset) % StepCount;
-		TotalStamina += FMath::Max(0.f, LoadedCombatData->ComboSteps[StepIndex].StaminaCost);
-	}
-
-	if (IsValid(Stamina))
-	{
-		TotalStamina = FMath::Min(TotalStamina, Stamina->GetMaxStamina());
-	}
-	PlannedAICombo.RequiredStamina = TotalStamina;
-}
-
-bool UIFCombatComponent::HasEnoughStaminaForPlannedCombo() const
-{
-	if (!IsValid(Stamina))
-	{
-		return true;
-	}
-	if (!PlannedAICombo.bHasPlan)
-	{
-		return false;
-	}
-	return Stamina->GetCurrentStamina() + KINDA_SMALL_NUMBER >= PlannedAICombo.RequiredStamina;
-}
-
-bool UIFCombatComponent::TryExecuteNextPlannedAIStep()
-{
-	if (!bCombatReady || !IsValid(LoadedCombatData) || LoadedCombatData->ComboSteps.IsEmpty()
-		|| !PlannedAICombo.bHasPlan || PlannedAICombo.ExecutedHits >= PlannedAICombo.PlannedHitCount || !IsIdle())
+	if (!bCombatReady || !IsIdle())
 	{
 		return false;
 	}
 
-	const int32 StepIndex = (PlannedAICombo.OpenerStepIndex + PlannedAICombo.ExecutedHits) % LoadedCombatData->ComboSteps.Num();
-	if (PlayStep(StepIndex))
-	{
-		++PlannedAICombo.ExecutedHits;
-		return true;
-	}
-
-	return false;
-}
-
-bool UIFCombatComponent::HasRemainingPlannedAISteps() const
-{
-	return PlannedAICombo.bHasPlan && PlannedAICombo.ExecutedHits < PlannedAICombo.PlannedHitCount;
-}
-
-void UIFCombatComponent::ClearAIComboPlan()
-{
-	PlannedAICombo.Reset();
-}
-
-float UIFCombatComponent::GetAIMaxStaminaWaitSeconds() const
-{
-	return IsValid(LoadedCombatData) ? LoadedCombatData->MaxStaminaWaitSeconds : 3.5f;
+	return PlayStep(StepIndex);
 }
 
 int32 UIFCombatComponent::GetNextStepIndex() const
@@ -343,6 +257,7 @@ bool UIFCombatComponent::PlayAttackMontage(UAnimMontage* Montage)
 	FAnimMontageInstance* const Instance = PlayLength > 0.f && IsValid(CachedAnimInstance)
 		? CachedAnimInstance->GetActiveInstanceForMontage(Montage) : nullptr;
 
+	// Montage_Play can synchronously fire blend-out delegates or hit-react state changes; bail if re-entered.
 	if (!bCombatReady || !OwnerCharacter.IsValid() || OwnerCharacter->IsDead()
 		|| GetCombatState() != StartingState || CurrentMontageInstanceID != INDEX_NONE)
 	{
@@ -546,6 +461,7 @@ void UIFCombatComponent::PlayDirectionalHitReact(AActor* DamageCauser, AControll
 		return;
 	}
 
+	// Heavy staggers intentionally cancel in-progress swings; close hit window before stopping the outgoing montage.
 	if (IsAttacking())
 	{
 		UAnimMontage* const OutgoingMontage = CurrentMontage;
@@ -672,7 +588,7 @@ bool UIFCombatComponent::PlayAdditiveFlinchMontage(UAnimMontage* MontageToPlay)
 		}
 	}
 
-	// HitReactSlot uses a separate anim group so bStopAllMontages = false preserves active attacks.
+	// bStopAllMontages = false skips group stopping so additive HitReactSlot flinches overlap active DefaultSlot attacks.
 	const float PlayLength = CachedAnimInstance->Montage_Play(
 		MontageToPlay,
 		1.f,
@@ -705,7 +621,6 @@ void UIFCombatComponent::OnHitReactFinished()
 
 void UIFCombatComponent::HandleOwnerDeath()
 {
-	PlannedAICombo.Reset();
 	InvalidateMontageExecution();
 	CurrentStepIndex = INDEX_NONE;
 	LastFinishedStepIndex = INDEX_NONE;
@@ -723,7 +638,6 @@ void UIFCombatComponent::HandleOwnerDeath()
 
 void UIFCombatComponent::HandleOwnerRevived()
 {
-	PlannedAICombo.Reset();
 	InvalidateMontageExecution();
 	CurrentStepIndex = INDEX_NONE;
 	LastFinishedStepIndex = INDEX_NONE;
@@ -809,6 +723,10 @@ void UIFCombatComponent::OpenHitWindow()
 		}
 		// Refresh bones even off-screen so blade socket sweeps never read stale poses.
 		MeshComp->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+		if (!MeshComp->WasRecentlyRendered())
+		{
+			MeshComp->RefreshBoneTransforms();
+		}
 	}
 
 	HitActorsThisWindow.Reset();
@@ -824,9 +742,9 @@ void UIFCombatComponent::OpenHitWindow()
 
 	for (const FVector& Point : PreviousSamplePoints)
 	{
-		TArray<FOverlapResult> Overlaps;
-		World->OverlapMultiByObjectType(Overlaps, Point, FQuat::Identity, ObjectParams, Shape, QueryParams);
-		for (const FOverlapResult& Overlap : Overlaps)
+		ScratchOverlaps.Reset();
+		World->OverlapMultiByObjectType(ScratchOverlaps, Point, FQuat::Identity, ObjectParams, Shape, QueryParams);
+		for (const FOverlapResult& Overlap : ScratchOverlaps)
 		{
 			ProcessHit(Overlap.GetActor(), Point);
 		}
@@ -852,11 +770,10 @@ void UIFCombatComponent::UpdateHitWindow(float)
 		return;
 	}
 
-	TArray<FVector> CurrentPoints;
-	BuildSamplePoints(CurrentPoints);
-	if (CurrentPoints.Num() != PreviousSamplePoints.Num())
+	BuildSamplePoints(CurrentSamplePoints);
+	if (CurrentSamplePoints.Num() != PreviousSamplePoints.Num())
 	{
-		PreviousSamplePoints = MoveTemp(CurrentPoints);
+		PreviousSamplePoints = CurrentSamplePoints;
 		return;
 	}
 
@@ -867,30 +784,30 @@ void UIFCombatComponent::UpdateHitWindow(float)
 	FCollisionObjectQueryParams ObjectParams = IFCollision::MakePawnObjectQueryParams();
 	ObjectParams.AddObjectTypesToQuery(IFCollision::Damageable);
 
-	for (int32 SampleIndex = 0; SampleIndex < CurrentPoints.Num(); ++SampleIndex)
+	for (int32 SampleIndex = 0; SampleIndex < CurrentSamplePoints.Num(); ++SampleIndex)
 	{
-		TArray<FHitResult> Hits;
+		ScratchHits.Reset();
 		World->SweepMultiByObjectType(
-			Hits,
+			ScratchHits,
 			PreviousSamplePoints[SampleIndex],
-			CurrentPoints[SampleIndex],
+			CurrentSamplePoints[SampleIndex],
 			FQuat::Identity,
 			ObjectParams,
 			Shape,
 			QueryParams);
-		for (const FHitResult& Hit : Hits)
+		for (const FHitResult& Hit : ScratchHits)
 		{
 			ProcessHit(Hit.GetActor(), Hit.ImpactPoint);
 		}
 
 		if (bDrawDebugHitWindow)
 		{
-			DrawDebugLine(World, PreviousSamplePoints[SampleIndex], CurrentPoints[SampleIndex], FColor::Orange, false, 0.f);
-			DrawDebugSphere(World, CurrentPoints[SampleIndex], Step->HitRadius, 12, FColor::Red, false, 0.f);
+			DrawDebugLine(World, PreviousSamplePoints[SampleIndex], CurrentSamplePoints[SampleIndex], FColor::Orange, false, 0.f);
+			DrawDebugSphere(World, CurrentSamplePoints[SampleIndex], Step->HitRadius, 12, FColor::Red, false, 0.f);
 		}
 	}
 
-	PreviousSamplePoints = MoveTemp(CurrentPoints);
+	Swap(PreviousSamplePoints, CurrentSamplePoints);
 }
 
 void UIFCombatComponent::CloseHitWindow()
@@ -898,6 +815,7 @@ void UIFCombatComponent::CloseHitWindow()
 	bHitWindowOpen = false;
 	HitActorsThisWindow.Reset();
 	PreviousSamplePoints.Reset();
+	CurrentSamplePoints.Reset();
 	RestoreAnimTickOption();
 }
 
@@ -915,7 +833,7 @@ void UIFCombatComponent::RestoreAnimTickOption()
 	}
 }
 
-void UIFCombatComponent::BuildSamplePoints(TArray<FVector>& OutPoints) const
+void UIFCombatComponent::BuildSamplePoints(TArray<FVector, TInlineAllocator<16>>& OutPoints) const
 {
 	OutPoints.Reset();
 

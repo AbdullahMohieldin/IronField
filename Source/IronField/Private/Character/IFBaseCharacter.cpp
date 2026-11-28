@@ -36,6 +36,7 @@ AIFBaseCharacter::AIFBaseCharacter(const FObjectInitializer& ObjectInitializer)
 		MeshComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Ignore);
 		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 		MeshComp->SetCanEverAffectNavigation(false);
 	}
 }
@@ -113,6 +114,7 @@ void AIFBaseCharacter::ApplyTeamCollisionResponses()
 		MeshComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Ignore);
 		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 		MeshComp->SetCanEverAffectNavigation(false);
 	}
 
@@ -169,7 +171,6 @@ void AIFBaseCharacter::Landed(const FHitResult& Hit)
 		}
 		if (UCharacterMovementComponent* const Movement = GetCharacterMovement())
 		{
-			Movement->SetAvoidanceEnabled(false);
 			Movement->DisableMovement();
 		}
 	}
@@ -240,6 +241,14 @@ void AIFBaseCharacter::HandleDeath(AActor*)
 
 	ClearLocalHitstop();
 
+	if (UWorld* const World = GetWorld())
+	{
+		if (UIFCrowdSubsystem* const CrowdSubsystem = World->GetSubsystem<UIFCrowdSubsystem>())
+		{
+			CrowdSubsystem->UnregisterCharacter(this);
+		}
+	}
+
 	UE_LOG(LogIronField, Log, TEXT("[IF-Death] %s died."), *GetName());
 
 	if (IsValid(CombatComponent))
@@ -269,7 +278,6 @@ void AIFBaseCharacter::StopMovementForDeath()
 		return;
 	}
 
-	Movement->SetAvoidanceEnabled(false);
 	Movement->StopMovementImmediately();
 
 	if (!Movement->IsFalling())
@@ -332,6 +340,8 @@ void AIFBaseCharacter::RestoreAliveState()
 		if (const USkeletalMeshComponent* const DefaultMesh = DefaultChar ? DefaultChar->GetMesh() : nullptr)
 		{
 			MeshComp->SetCollisionProfileName(DefaultMesh->GetCollisionProfileName());
+			MeshComp->SetCollisionObjectType(DefaultMesh->GetCollisionObjectType());
+			MeshComp->SetCollisionResponseToChannels(DefaultMesh->GetCollisionResponseToChannels());
 			// SetCollisionProfileName resets CollisionEnabled, so reapply the CDO mode after it.
 			MeshComp->SetCollisionEnabled(DefaultMesh->GetCollisionEnabled());
 			MeshComp->SetCanEverAffectNavigation(DefaultMesh->CanEverAffectNavigation());
@@ -346,12 +356,19 @@ void AIFBaseCharacter::RestoreAliveState()
 		{
 			Movement->bOrientRotationToMovement = DefaultMovement->bOrientRotationToMovement;
 			Movement->bUseControllerDesiredRotation = DefaultMovement->bUseControllerDesiredRotation;
-			Movement->SetAvoidanceEnabled(DefaultMovement->bUseRVOAvoidance);
 		}
 	}
 
-	// Re-apply team object channel and overlap rules because CDO defaults restore ECC_Pawn.
+	// Re-apply runtime channel type and custom faction responses (Hero stays ECC_Pawn; soldiers use PawnDawn/PawnDusk).
 	ApplyTeamCollisionResponses();
+
+	if (UWorld* const World = GetWorld())
+	{
+		if (UIFCrowdSubsystem* const CrowdSubsystem = World->GetSubsystem<UIFCrowdSubsystem>())
+		{
+			CrowdSubsystem->RegisterCharacter(this);
+		}
+	}
 }
 
 void AIFBaseCharacter::ApplyLocalHitstop(float DurationSeconds, float TimeDilation)

@@ -84,13 +84,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "IronField|Soldier|Tactical")
 	void SetHostileTargetHighlighted(bool bHighlighted);
 
-	UFUNCTION(BlueprintPure, Category = "IronField|Soldier|Tactical")
-	bool IsTacticalSelected() const { return bIsTacticalSelected; }
-
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-	virtual void HandleDeath(AActor* DeadActor) override;
+	virtual void OnDeathStarted() override;
 
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Soldier|Combat", meta = (ClampMin = "0.0"))
 	float AttackRange = 60.f;
@@ -125,7 +122,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI")
 	bool bAdvanceTowardsPlayer = true;
 
-	UPROPERTY(EditInstanceOnly, Category = "IronField|Soldier|AI")
+	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI")
 	TObjectPtr<AActor> AdvanceGoalActor;
 
 	UPROPERTY(EditAnywhere, Category = "IronField|Soldier|AI")

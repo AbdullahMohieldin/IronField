@@ -32,6 +32,9 @@ struct IRONFIELD_API FIFFormationSolveParams
 
 	/** Tight horizontal projection extent rejects slots inside walls/towers while Z follows ramps and stairs. */
 	FVector NavQueryExtent = FVector(34.f, 34.f, 220.f);
+
+	/** Disable during live RMB drag previews so 120-unit drags near walls skip synchronous FindPathSync A* fallback. */
+	bool bAllowPathfindingFallback = true;
 };
 
 /**

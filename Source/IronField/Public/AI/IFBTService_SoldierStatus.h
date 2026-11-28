@@ -21,9 +21,9 @@ public:
 protected:
 	virtual void TickNode(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
 
-	UPROPERTY(EditAnywhere, Category = "Blackboard")
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Blackboard")
 	FBlackboardKeySelector TargetActorKey;
 
-	UPROPERTY(EditAnywhere, Category = "Blackboard")
+	UPROPERTY(EditAnywhere, Category = "IronField|AI|Blackboard")
 	FBlackboardKeySelector AnchorLocationKey;
 };
