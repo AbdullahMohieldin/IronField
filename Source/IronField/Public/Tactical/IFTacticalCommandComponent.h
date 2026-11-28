@@ -321,12 +321,14 @@ private:
 	EIFTacticalFormationType ActiveFormationType = EIFTacticalFormationType::Line;
 	FVector FormationDragStartPoint = FVector::ZeroVector;
 	FVector FormationDragCurrentPoint = FVector::ZeroVector;
+	FVector LastPreviewAnchorPoint = FVector::ZeroVector;
 	FVector LastPreviewGroundPoint = FVector::ZeroVector;
+	float LastPreviewFacingYaw = 0.f;
 	EIFTacticalFormationType LastPreviewFormationType = EIFTacticalFormationType::Line;
 	int32 LastPreviewUnitCount = 0;
-	double LastPreviewUpdateRealTime = -1.0;
-	bool bHasPreviewCache = false;
+	bool bPreviewDirty = true;
 	TArray<FIFFormationSlot> PreviewFormationSlots;
+	TArray<FTransform> PreviewInstanceTransforms;
 
 	bool bIsTacticalModeActive = false;
 	bool bIsSelectModifierHeld = false;

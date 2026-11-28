@@ -451,10 +451,10 @@ void UIFTacticalCommandComponent::CancelFormationDragPreview()
 {
 	bIsCommandPressed = false;
 	bIsFormationDragging = false;
-	bHasPreviewCache = false;
+	bPreviewDirty = true;
 	LastPreviewUnitCount = 0;
-	LastPreviewUpdateRealTime = -1.0;
 	PreviewFormationSlots.Reset();
+	PreviewInstanceTransforms.Reset();
 
 	if (IsValid(FormationPreviewISM))
 	{
@@ -1324,22 +1324,29 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 		return;
 	}
 
-	const double NowRealTime = FPlatformTime::Seconds();
-	const bool bSameFormationAndCount = bHasPreviewCache
+	const FVector CameraForward = ResolvePreviewCameraForward();
+	const FVector DragDelta2D = (CurrentGroundPoint - FormationDragStartPoint).GetSafeNormal2D();
+	const float DragFacingYaw = DragDelta2D.IsNearlyZero()
+		? CameraForward.Rotation().Yaw
+		: DragDelta2D.Rotation().Yaw;
+
+	const bool bInputsUnchanged = !bPreviewDirty
 		&& LastPreviewFormationType == ActiveFormationType
-		&& LastPreviewUnitCount == ActiveSquad.Num();
-	if (bSameFormationAndCount
-		&& (FVector::DistSquared2D(CurrentGroundPoint, LastPreviewGroundPoint) < FMath::Square(8.f)
-			|| (NowRealTime - LastPreviewUpdateRealTime) < 0.05))
+		&& LastPreviewUnitCount == ActiveSquad.Num()
+		&& FVector::DistSquared2D(FormationDragStartPoint, LastPreviewAnchorPoint) < FMath::Square(1.f)
+		&& FVector::DistSquared2D(CurrentGroundPoint, LastPreviewGroundPoint) < FMath::Square(1.f)
+		&& FMath::Abs(FRotator::NormalizeAxis(DragFacingYaw - LastPreviewFacingYaw)) < 0.15f;
+	if (bInputsUnchanged)
 	{
 		return;
 	}
 
+	LastPreviewAnchorPoint = FormationDragStartPoint;
 	LastPreviewGroundPoint = CurrentGroundPoint;
+	LastPreviewFacingYaw = DragFacingYaw;
 	LastPreviewFormationType = ActiveFormationType;
 	LastPreviewUnitCount = ActiveSquad.Num();
-	LastPreviewUpdateRealTime = NowRealTime;
-	bHasPreviewCache = true;
+	bPreviewDirty = false;
 
 	FIFFormationSolveParams Params;
 	Params.FormationType = ActiveFormationType;
@@ -1349,7 +1356,7 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 	Params.bIsDrag = true;
 	Params.bAllowPathfindingFallback = false;
 	Params.SquadCentroid = SquadCentroid;
-	Params.CameraForward = ResolvePreviewCameraForward();
+	Params.CameraForward = CameraForward;
 	Params.LateralSpacing = FormationLateralSpacing;
 	Params.RankSpacing = FormationRankSpacing;
 	Params.LineAspectRatio = FormationLineAspectRatio;
@@ -1366,18 +1373,25 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 
 	if (UInstancedStaticMeshComponent* const PreviewISM = EnsureFormationPreviewComponent())
 	{
-		PreviewISM->ClearInstances();
-
-		TArray<FTransform> InstanceTransforms;
-		InstanceTransforms.Reserve(PreviewFormationSlots.Num());
+		PreviewInstanceTransforms.Reset();
+		PreviewInstanceTransforms.Reserve(PreviewFormationSlots.Num());
 		for (const FIFFormationSlot& Slot : PreviewFormationSlots)
 		{
 			const FVector RingPos = Slot.Location + FVector(0.f, 0.f, FormationPreviewGroundOffset);
 			const FRotator RingRot(0.f, Slot.FacingYaw, 0.f);
-			InstanceTransforms.Emplace(RingRot, RingPos, FormationPreviewScale);
+			PreviewInstanceTransforms.Emplace(RingRot, RingPos, FormationPreviewScale);
 		}
 
-		PreviewISM->AddInstances(InstanceTransforms, false, true);
+		// Update ISM transforms in-place when slot count is unchanged to avoid rebuilding instance buffers each frame.
+		if (PreviewISM->GetInstanceCount() == PreviewInstanceTransforms.Num())
+		{
+			PreviewISM->BatchUpdateInstancesTransforms(0, PreviewInstanceTransforms, true, true, true);
+		}
+		else
+		{
+			PreviewISM->ClearInstances();
+			PreviewISM->AddInstances(PreviewInstanceTransforms, false, true);
+		}
 		PreviewISM->SetVisibility(true);
 	}
 
