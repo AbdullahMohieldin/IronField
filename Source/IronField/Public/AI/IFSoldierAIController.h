@@ -124,7 +124,6 @@ protected:
 	float AnchorReturnAcceptanceRadius = 20.f;
 
 private:
-	void ConfigureCrowdFollowing();
 	void ApplyIdleAnchorFacing(AIFSoldierCharacter& Soldier);
 	void ClearIdleAnchorFacing(AIFSoldierCharacter& Soldier);
 	void RequestBehaviorTree();

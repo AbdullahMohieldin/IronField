@@ -14,8 +14,6 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
-#include "Navigation/CrowdFollowingComponent.h"
-#include "Navigation/CrowdManager.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISense_Sight.h"
@@ -24,12 +22,9 @@
 const FName AIFSoldierAIController::SoldierBranchBlackboardKey(TEXT("SoldierBranch"));
 
 AIFSoldierAIController::AIFSoldierAIController(const FObjectInitializer& ObjectInitializer)
-	// Detour Crowd replaces default path following; bUseRVOAvoidance stays false on AIFSoldierCharacter so the two systems never fight over velocity.
-	: Super(ObjectInitializer.SetDefaultSubobjectClass<UCrowdFollowingComponent>(TEXT("PathFollowingComponent")))
+	: Super(ObjectInitializer)
 {
 	PrimaryActorTick.bCanEverTick = false;
-
-	ConfigureCrowdFollowing();
 
 	Perception = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("Perception"));
 	SetPerceptionComponent(*Perception);
@@ -49,25 +44,6 @@ AIFSoldierAIController::AIFSoldierAIController(const FObjectInitializer& ObjectI
 	Perception->OnTargetPerceptionUpdated.AddDynamic(this, &AIFSoldierAIController::HandleTargetPerceptionUpdated);
 }
 
-void AIFSoldierAIController::ConfigureCrowdFollowing()
-{
-	if (UCrowdFollowingComponent* const CrowdComp = Cast<UCrowdFollowingComponent>(GetPathFollowingComponent()))
-	{
-		CrowdComp->SetAvoidanceGroup(1, true);
-		CrowdComp->SetGroupsToAvoid(MAX_int32);
-		CrowdComp->SetGroupsToIgnore(0);
-		CrowdComp->SetCrowdAvoidanceQuality(ECrowdAvoidanceQuality::Good);
-		CrowdComp->SetCrowdSeparation(true);
-		CrowdComp->SetCrowdSeparationWeight(1.35f);
-		CrowdComp->SetCrowdObstacleAvoidance(true);
-		CrowdComp->SetCrowdAnticipateTurns(true);
-		CrowdComp->SetCrowdOptimizeVisibility(true);
-		CrowdComp->SetCrowdCollisionQueryRange(200.f);
-		CrowdComp->SetCrowdPathOptimizationRange(600.f);
-		CrowdComp->UpdateCrowdAgentParams();
-	}
-}
-
 void AIFSoldierAIController::ApplyIdleAnchorFacing(AIFSoldierCharacter& Soldier)
 {
 	if (UCharacterMovementComponent* const Movement = Soldier.GetCharacterMovement())
@@ -78,14 +54,11 @@ void AIFSoldierAIController::ApplyIdleAnchorFacing(AIFSoldierCharacter& Soldier)
 	}
 
 	const float DesiredYaw = Soldier.GetAnchorFacingYaw();
-	const FVector FacingDir = FRotator(0.f, DesiredYaw, 0.f).Vector();
-	SetFocalPoint(Soldier.GetAnchorLocation() + FacingDir * 500.f, EAIFocusPriority::Gameplay);
 	SetControlRotation(FRotator(0.f, DesiredYaw, 0.f));
 }
 
 void AIFSoldierAIController::ClearIdleAnchorFacing(AIFSoldierCharacter& Soldier)
 {
-	ClearFocus(EAIFocusPriority::Gameplay);
 	if (UCharacterMovementComponent* const Movement = Soldier.GetCharacterMovement())
 	{
 		Movement->bUseControllerDesiredRotation = false;
@@ -144,17 +117,6 @@ void AIFSoldierAIController::OnPossess(APawn* InPawn)
 		Perception->RequestStimuliListenerUpdate();
 	}
 
-	// OnUnPossess disables crowd simulation to keep inactive controllers out of Detour's MaxAgents budget, so OnPossess re-enables and syncs params.
-	if (UCrowdFollowingComponent* const CrowdComp = Cast<UCrowdFollowingComponent>(GetPathFollowingComponent()))
-	{
-		if (CrowdComp->GetCrowdSimulationState() != ECrowdSimulationState::Enabled
-			&& IsValid(UCrowdManager::GetCurrent(GetWorld())))
-		{
-			CrowdComp->SetCrowdSimulationState(ECrowdSimulationState::Enabled);
-		}
-	}
-	ConfigureCrowdFollowing();
-
 	if (UIFHealthComponent* const Health = Soldier->GetHealthComponent())
 	{
 		Health->OnDamaged.AddUniqueDynamic(this, &AIFSoldierAIController::HandleOwnerDamaged);
@@ -180,16 +142,8 @@ void AIFSoldierAIController::CleanupActiveSession()
 	{
 		ClearIdleAnchorFacing(*Soldier);
 	}
-	else
-	{
-		ClearFocus(EAIFocusPriority::Gameplay);
-	}
 
 	StopMovement();
-	if (UCrowdFollowingComponent* const CrowdComp = Cast<UCrowdFollowingComponent>(GetPathFollowingComponent()))
-	{
-		CrowdComp->SetCrowdSimulationState(ECrowdSimulationState::Disabled);
-	}
 
 	if (UIFHealthComponent* const Health = BoundHealthComponent.Get())
 	{

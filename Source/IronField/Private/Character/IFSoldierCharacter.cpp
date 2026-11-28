@@ -61,9 +61,6 @@ AIFSoldierCharacter::AIFSoldierCharacter(const FObjectInitializer& ObjectInitial
 		Movement->BrakingDecelerationWalking = 1200.f;
 
 		Movement->bUseRVOAvoidance = false;
-		Movement->SetAvoidanceGroupMask(1);
-		Movement->SetGroupsToAvoidMask(MAX_int32);
-		Movement->SetGroupsToIgnoreMask(0);
 	}
 
 	OverheadWidgetComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("OverheadVitals"));
