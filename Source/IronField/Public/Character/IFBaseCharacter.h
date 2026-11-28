@@ -53,6 +53,7 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	virtual ECollisionChannel GetCapsuleCollisionChannel() const;
 	void ApplyTeamCollisionResponses();
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "IronField|Team")

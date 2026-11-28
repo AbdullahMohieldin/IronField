@@ -59,6 +59,7 @@ protected:
 	virtual void UnPossessed() override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void OnDeathStarted() override;
+	virtual ECollisionChannel GetCapsuleCollisionChannel() const override { return ECC_Pawn; }
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "IronField|Player|Input")
 	TObjectPtr<UInputMappingContext> DefaultMappingContext;

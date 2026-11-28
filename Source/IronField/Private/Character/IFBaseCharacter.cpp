@@ -96,6 +96,11 @@ void AIFBaseCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+ECollisionChannel AIFBaseCharacter::GetCapsuleCollisionChannel() const
+{
+	return IFCollision::GetTeamPawnChannel(TeamID);
+}
+
 void AIFBaseCharacter::ApplyTeamCollisionResponses()
 {
 	if (bHasDied || IsDead())
@@ -117,7 +122,7 @@ void AIFBaseCharacter::ApplyTeamCollisionResponses()
 		return;
 	}
 
-	const ECollisionChannel OwnChannel = IFCollision::GetTeamPawnChannel(TeamID);
+	const ECollisionChannel OwnChannel = GetCapsuleCollisionChannel();
 	Capsule->SetCollisionObjectType(OwnChannel);
 	Capsule->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	Capsule->SetGenerateOverlapEvents(true);

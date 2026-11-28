@@ -16,10 +16,10 @@ namespace
 {
 	constexpr float GridCellSizeCm = 160.f;
 	constexpr float CombatSeparationDistCm = 82.f;
-	constexpr float HeroPartingDistCm = 78.f;
+	constexpr float HeroPartingDistCm = 110.f;
 	constexpr float MaxVerticalSeparationDistCm = 110.f;
 	constexpr float MaxCombatSeparationSpeedCmPerSec = 150.f;
-	constexpr float MaxHeroPartingSpeedCmPerSec = 140.f;
+	constexpr float MaxHeroPartingSpeedCmPerSec = 260.f;
 
 	bool IsCombatOrEscortAction(EIFSoldierAction Action)
 	{
@@ -113,7 +113,9 @@ bool UIFCrowdSubsystem::HasUnitsNeedingSeparation() const
 				}
 			}
 		}
-		else if (Cast<AIFPlayerCharacter>(Char) && Char->GetVelocity().SizeSquared2D() > 4.f)
+		else if (Cast<AIFPlayerCharacter>(Char)
+			&& (Char->GetVelocity().SizeSquared2D() > 4.f
+				|| Char->GetLastMovementInputVector().SizeSquared2D() > 0.01f))
 		{
 			return true;
 		}
