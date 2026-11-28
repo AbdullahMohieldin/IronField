@@ -18,6 +18,7 @@ struct FBTTask_SoldierMoveMemory
 	float StallElapsedSeconds = 0.f;
 	int32 RepathRetryCount = 0;
 	float RepathCooldownSeconds = 0.f;
+	float SurroundCheckElapsedSeconds = 0.f;
 	bool bTrackedActorGoal = false;
 	bool bUsingPointApproachForActor = false;
 };

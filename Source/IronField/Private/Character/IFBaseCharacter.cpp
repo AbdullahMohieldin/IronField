@@ -30,6 +30,14 @@ AIFBaseCharacter::AIFBaseCharacter(const FObjectInitializer& ObjectInitializer)
 		Capsule->SetCanEverAffectNavigation(false);
 		Capsule->bDynamicObstacle = false;
 	}
+
+	if (USkeletalMeshComponent* const MeshComp = GetMesh())
+	{
+		MeshComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Ignore);
+		MeshComp->SetCanEverAffectNavigation(false);
+	}
 }
 
 bool AIFBaseCharacter::IsDead() const
@@ -93,6 +101,14 @@ void AIFBaseCharacter::ApplyTeamCollisionResponses()
 	if (bHasDied || IsDead())
 	{
 		return;
+	}
+
+	if (USkeletalMeshComponent* const MeshComp = GetMesh())
+	{
+		MeshComp->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDawn, ECR_Ignore);
+		MeshComp->SetCollisionResponseToChannel(IFCollision::PawnDusk, ECR_Ignore);
+		MeshComp->SetCanEverAffectNavigation(false);
 	}
 
 	UCapsuleComponent* const Capsule = GetCapsuleComponent();

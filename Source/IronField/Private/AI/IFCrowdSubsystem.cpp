@@ -270,14 +270,15 @@ void UIFCrowdSubsystem::Tick(float DeltaTime)
 		}
 
 		UCharacterMovementComponent* const MoveComp = Self.Character->GetCharacterMovement();
-		if (!IsValid(MoveComp))
+		if (!IsValid(MoveComp) || MoveComp->IsFalling() || MoveComp->MovementMode == MOVE_None)
 		{
 			continue;
 		}
 
 		const float MaxSpeed = Self.bReceivesCombatPush ? MaxCombatSeparationSpeedCmPerSec : MaxHeroPartingSpeedCmPerSec;
 		const float StepLen = FMath::Min(PushAccum.Size2D() * MaxSpeed * Dt, MaxAllowedStep);
-		const FVector MoveDelta = PushAccum.GetSafeNormal2D() * StepLen;
+		FVector MoveDelta = PushAccum.GetSafeNormal2D() * StepLen;
+		MoveDelta.Z = 0.f;
 		if (!MoveDelta.IsNearlyZero())
 		{
 			// Sweep=true respects solid WorldStatic, Damageable castle walls/gates, and hostile capsules.

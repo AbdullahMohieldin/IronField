@@ -476,6 +476,7 @@ bool AIFSoldierAIController::EvaluateFollowOrder(AIFSoldierCharacter& Soldier, f
 		CurrentTarget.Reset();
 		bHasMoveGoal = true;
 		MoveGoalActor = Followed;
+		MoveGoalLocation = Followed->GetActorLocation();
 		MoveGoalAcceptanceRadius = FollowDistance;
 		ClearIdleAnchorFacing(Soldier);
 		SetCurrentAction(EIFSoldierAction::FollowActor);
@@ -506,6 +507,7 @@ bool AIFSoldierAIController::EvaluateFollowOrder(AIFSoldierCharacter& Soldier, f
 	{
 		bHasMoveGoal = true;
 		MoveGoalActor = Followed;
+		MoveGoalLocation = Followed->GetActorLocation();
 		MoveGoalAcceptanceRadius = FollowDistance;
 	}
 	else

@@ -9,6 +9,9 @@
 
 namespace
 {
+	constexpr float SurroundPointRecheckIntervalSeconds = 0.25f;
+	constexpr float SurroundPointMoveThresholdCm = 65.f;
+
 	float ComputeAcceptanceRadius(const AIFSoldierAIController& Controller, const AActor* GoalActor)
 	{
 		const AIFSoldierCharacter* const Soldier = Controller.GetSoldier();
@@ -43,6 +46,7 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::IssueMove(AIFSoldierAIController& Con
 	Memory.TrackedGoalLocation = GoalLocation;
 	Memory.LastProgressLocation = IsValid(Controller.GetPawn()) ? Controller.GetPawn()->GetActorLocation() : FVector::ZeroVector;
 	Memory.StallElapsedSeconds = 0.f;
+	Memory.SurroundCheckElapsedSeconds = 0.f;
 	Memory.bUsingPointApproachForActor = false;
 
 	FAIMoveRequest MoveReq;
@@ -118,6 +122,7 @@ EBTNodeResult::Type UIFBTTask_SoldierMove::ExecuteTask(UBehaviorTreeComponent& O
 	Memory->StallElapsedSeconds = 0.f;
 	Memory->RepathRetryCount = 0;
 	Memory->RepathCooldownSeconds = 0.f;
+	Memory->SurroundCheckElapsedSeconds = 0.f;
 	Memory->bTrackedActorGoal = false;
 	Memory->bUsingPointApproachForActor = false;
 
@@ -163,15 +168,26 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 		return;
 	}
 
+	const AIFSoldierCharacter* const Soldier = Controller->GetSoldier();
 	const AActor* const CurrentGoalActor = Controller->GetMoveGoalActor();
 	const FVector CurrentGoalLocation = Controller->GetMoveGoalLocation();
 	const bool bGoalActorChanged = (CurrentGoalActor != Memory->TrackedGoalActor.Get())
 		|| (IsValid(CurrentGoalActor) != Memory->bTrackedActorGoal);
 	const bool bStaticPointMoved = !IsValid(CurrentGoalActor)
 		&& FVector::DistSquared2D(CurrentGoalLocation, Memory->TrackedGoalLocation) > FMath::Square(15.f);
-	const bool bSurroundPointMoved = IsValid(CurrentGoalActor)
-		&& Memory->bUsingPointApproachForActor
-		&& FVector::DistSquared2D(CurrentGoalLocation, Memory->TrackedGoalLocation) > FMath::Square(65.f);
+
+	bool bSurroundPointMoved = false;
+	if (IsValid(CurrentGoalActor) && Memory->bUsingPointApproachForActor && IsValid(Soldier))
+	{
+		Memory->SurroundCheckElapsedSeconds += DeltaSeconds;
+		if (Memory->SurroundCheckElapsedSeconds >= SurroundPointRecheckIntervalSeconds)
+		{
+			Memory->SurroundCheckElapsedSeconds = 0.f;
+			const FVector LiveApproachPoint = Soldier->GetCombatApproachPoint(CurrentGoalActor);
+			bSurroundPointMoved = FVector::DistSquared2D(LiveApproachPoint, Memory->TrackedGoalLocation)
+				> FMath::Square(SurroundPointMoveThresholdCm);
+		}
+	}
 
 	const bool bActivelyTrackingActor = (Controller->GetMoveStatus() == EPathFollowingStatus::Moving)
 		&& IsValid(CurrentGoalActor)
@@ -195,7 +211,6 @@ void UIFBTTask_SoldierMove::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* N
 	}
 
 	const FVector PawnLocation = Controller->GetPawn()->GetActorLocation();
-	const AIFSoldierCharacter* const Soldier = Controller->GetSoldier();
 	const float Radius = ComputeAcceptanceRadius(*Controller, CurrentGoalActor);
 	const float Dist2D = (IsValid(CurrentGoalActor) && IsValid(Soldier))
 		? Soldier->GetHorizontalDistanceToTarget(CurrentGoalActor)
