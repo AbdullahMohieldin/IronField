@@ -156,8 +156,11 @@ void AIFSoldierCharacter::OnDeathStarted()
 		if (UIFVitalBarsWidget* const OverheadWidget = Cast<UIFVitalBarsWidget>(OverheadWidgetComponent->GetUserWidgetObject()))
 		{
 			OverheadWidget->UnbindVitalComponents();
+			OverheadWidget->SetVisibility(ESlateVisibility::Collapsed);
 		}
 		OverheadWidgetComponent->SetVisibility(false);
+		// Synchronously remove from screen layer before disabling tick; Screen-space UWidgetComponent does not remove on SetVisibility alone.
+		OverheadWidgetComponent->SetWidget(nullptr);
 		OverheadWidgetComponent->SetComponentTickEnabled(false);
 	}
 
@@ -458,7 +461,12 @@ void AIFSoldierCharacter::UpdateOverheadWidgetVisibility()
 
 	if (!IsAlive())
 	{
+		if (UUserWidget* const OverheadWidget = OverheadWidgetComponent->GetUserWidgetObject())
+		{
+			OverheadWidget->SetVisibility(ESlateVisibility::Collapsed);
+		}
 		OverheadWidgetComponent->SetVisibility(false);
+		OverheadWidgetComponent->SetWidget(nullptr);
 		OverheadWidgetComponent->SetComponentTickEnabled(false);
 		return;
 	}
@@ -475,6 +483,10 @@ void AIFSoldierCharacter::UpdateOverheadWidgetVisibility()
 	if (UUserWidget* const OverheadWidget = OverheadWidgetComponent->GetUserWidgetObject())
 	{
 		OverheadWidget->SetVisibility(bShouldShow ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
+	}
+	if (!bShouldShow)
+	{
+		OverheadWidgetComponent->UpdateWidget();
 	}
 	OverheadWidgetComponent->SetComponentTickEnabled(bShouldShow);
 }

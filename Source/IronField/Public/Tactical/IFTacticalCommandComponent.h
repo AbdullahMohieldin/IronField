@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "InputActionValue.h"
+#include "Tactical/IFTacticalSelectionState.h"
 #include "Tactical/IFTacticalTypes.h"
 #include "UObject/ObjectKey.h"
 #include "UObject/SoftObjectPtr.h"
@@ -25,13 +26,14 @@ class UMaterialInterface;
 class UParticleSystem;
 class UParticleSystemComponent;
 class UStaticMesh;
+struct FHitResult;
 struct FStreamableHandle;
 
 /**
  * Controller-owned Tactical Command coordinator (zero tick).
- * Handles Tab mode swapping, IMC lifecycle, RTS camera rig orchestration,
- * Dawn unit selection (click + marquee), hostile target highlighting,
- * death pruning, 3-formation solving/previewing, and contextual RMB orders.
+ * Orchestrates Tab mode swapping, IMC lifecycle, RTS camera rig, formation preview ISM,
+ * order confirmation VFX, and delegates cursor queries, selection state, and order dispatch
+ * to focused C++ helper modules.
  */
 UCLASS(ClassGroup = (IronField), meta = (BlueprintSpawnableComponent))
 class IRONFIELD_API UIFTacticalCommandComponent : public UActorComponent
@@ -213,6 +215,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|VFX", meta = (ClampMin = "0.1"))
 	float OrderMarkerScale = 1.f;
 
+	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|VFX", meta = (ClampMin = "0.0"))
+	float OrderMarkerOverheadOffsetCm = 25.f;
+
 	UPROPERTY(EditDefaultsOnly, Category = "IronField|Tactical|UI")
 	TSoftClassPtr<UIFTacticalHUDWidget> TacticalHUDWidgetClass;
 
@@ -263,41 +268,35 @@ private:
 	UFUNCTION()
 	void HandleHighlightedStructureDestroyed(AIFStructure* DestroyedStructure, AActor* KillerActor);
 
-	AIFStructure* FindBestStructureUnderCursor(const FVector& RayOrigin, const FVector& RayDir, float MaxDistance, const APawn* PlayerPawn, bool bHostileOnly) const;
-	void SetHighlightedHostileStructure(AIFStructure* HostileStructure);
-	void ClearHighlightedHostileStructure();
-	UIFBuildingComponent* GetBuildingComponent() const;
-
 	void PerformSingleClickSelection();
 	void PerformMarqueeSelection(const FVector2D& StartPos, const FVector2D& EndPos);
-	void ReplaceSelection(const TArray<AIFSoldierCharacter*>& NewSoldiers);
-	void AddToSelection(const TArray<AIFSoldierCharacter*>& SoldiersToAdd);
-	void ToggleSoldierInSelection(AIFSoldierCharacter* Soldier);
-	void SetSelectedSoldierRingsVisible(bool bVisible);
 	void SetHighlightedHostileTarget(AIFSoldierCharacter* HostileSoldier);
 	void ClearHighlightedHostileTarget();
+	void SetHighlightedHostileStructure(AIFStructure* HostileStructure);
+	void ClearHighlightedHostileStructure();
 	void BindSoldierDeath(AIFSoldierCharacter* Soldier);
 	void UnbindSoldierDeath(AIFSoldierCharacter* Soldier);
+	void BindHostileDeath(AIFSoldierCharacter* Hostile);
+	void UnbindHostileDeath(AIFSoldierCharacter* Hostile);
+	void BindStructureDestroyed(AIFStructure* Structure);
+	void UnbindStructureDestroyed(AIFStructure* Structure);
 	void PruneInvalidSoldiers();
 	void UpdateHUDMarqueeRect(bool bActive);
 	void UpdateHUDFormationPreview(bool bActive);
 	void BroadcastSelectionCount();
 
-	template <typename TPredicate>
-	AActor* FindBestPawnUnderCursor(const FVector& RayOrigin, const FVector& RayDir, float MaxDistance, TPredicate&& IsEligible) const;
-
 	bool IsSelectModifierDown() const;
-	bool TraceGroundUnderCursor(const FVector& RayOrigin, const FVector& RayDir, FHitResult& OutHit) const;
-	void GatherAliveSelectedSquad(TArray<AIFSoldierCharacter*>& OutSquad, TArray<FVector>& OutLocations, FVector& OutCentroid) const;
 	FVector ResolvePreviewCameraForward() const;
 	void UpdateFormationDragPreview(const FVector& CurrentGroundPoint);
 	void IssueFormationMoveOrder(const FVector& AnchorPoint, const FVector& DragEndPoint, bool bIsDrag);
-	void SpawnOrderMarkerVFX(EIFTacticalOrderType OrderType, const FVector& Location);
+	void SpawnOrderMarkerVFX(EIFTacticalOrderType OrderType, const FVector& Location, AActor* AttachTarget = nullptr);
+	void SyncOrderMarkerTimeDilation(float EffectiveWorldDilation);
 	void CleanupOrderMarkerVFX();
 
 	float ComputeDilatedBlendTime(float DesiredRealSeconds, float StartDilation, float EndDilation) const;
 	AIFPlayerController* GetOwningPlayerController() const;
 	AIFTacticalHUD* GetTacticalHUD() const;
+	UIFBuildingComponent* GetBuildingComponent() const;
 
 	UPROPERTY(Transient)
 	TObjectPtr<AIFTacticalCameraRig> TacticalCameraRig;
@@ -310,17 +309,14 @@ private:
 
 	TWeakObjectPtr<UParticleSystemComponent> ActiveOrderMarkerPSC;
 	FTimerHandle OrderMarkerTimerHandle;
+	double OrderMarkerExpireRealTime = 0.0;
 
 	TSharedPtr<FStreamableHandle> TacticalAssetsLoadHandle;
 	FDelegateHandle AppActivationHandle;
 
 	TSet<TObjectKey<UInputAction>> BoundInputActions;
-	TArray<TWeakObjectPtr<AIFSoldierCharacter>> SelectedSoldiers;
-	TWeakObjectPtr<AIFSoldierCharacter> HighlightedHostileTarget;
-	TWeakObjectPtr<AIFStructure> HighlightedHostileStructure;
-
-	FVector2D MarqueeStartScreenPos = FVector2D::ZeroVector;
-	FVector2D MarqueeCurrentScreenPos = FVector2D::ZeroVector;
+	FIFTacticalSelectionState SelectionState;
+	mutable TArray<FHitResult> GroundTraceScratchHits;
 
 	EIFTacticalFormationType ActiveFormationType = EIFTacticalFormationType::Line;
 	FVector FormationDragStartPoint = FVector::ZeroVector;
@@ -333,8 +329,6 @@ private:
 	TArray<FIFFormationSlot> PreviewFormationSlots;
 
 	bool bIsTacticalModeActive = false;
-	bool bIsSelectPressed = false;
-	bool bIsMarqueeDragging = false;
 	bool bIsSelectModifierHeld = false;
 	bool bIsCommandPressed = false;
 	bool bCommandHandledOnPress = false;

@@ -60,6 +60,7 @@ void AIFTacticalCameraRig::ActivateTacticalCamera(const APawn* CommanderPawn, fl
 	ActivationOrigin = InitialLocation;
 	CurrentGroundZ = InitialLocation.Z;
 	TargetGroundZ = InitialLocation.Z;
+	bNeedsInitialGroundTrace = true;
 
 	SetActorLocationAndRotation(
 		InitialLocation,
@@ -259,6 +260,14 @@ void AIFTacticalCameraRig::ApplyCameraZoomAndPitch()
 
 void AIFTacticalCameraRig::UpdateTerrainFollowZ(float XYLocationX, float XYLocationY, float RealDeltaSeconds)
 {
+	if (!bNeedsInitialGroundTrace
+		&& CurrentPanVelocity.IsNearlyZero()
+		&& FMath::IsNearlyEqual(CurrentGroundZ, TargetGroundZ, 0.5f))
+	{
+		return;
+	}
+	bNeedsInitialGroundTrace = false;
+
 	UWorld* const World = GetWorld();
 	if (!IsValid(World))
 	{

@@ -82,8 +82,8 @@ void AIFTacticalHUD::DrawFormationFacingArrows()
 
 		FVector2D BaseScreen = FVector2D::ZeroVector;
 		FVector2D TipScreen = FVector2D::ZeroVector;
-		if (!PC->ProjectWorldLocationToScreen(BaseWorld, BaseScreen, false)
-			|| !PC->ProjectWorldLocationToScreen(TipWorld, TipScreen, false))
+		if (!PC->ProjectWorldLocationToScreen(BaseWorld, BaseScreen, true)
+			|| !PC->ProjectWorldLocationToScreen(TipWorld, TipScreen, true))
 		{
 			continue;
 		}

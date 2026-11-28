@@ -1,37 +1,35 @@
 #include "Tactical/IFTacticalCommandComponent.h"
 
-#include "AI/IFSoldierAIController.h"
 #include "Castle/IFBuildingComponent.h"
-#include "Castle/IFGateDoor.h"
 #include "Castle/IFStructure.h"
 #include "Character/IFBaseCharacter.h"
 #include "Character/IFPlayerCharacter.h"
 #include "Character/IFSoldierCharacter.h"
 #include "Combat/IFTeamTypes.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
-#include "Core/IFGameTypes.h"
 #include "Core/IFLog.h"
 #include "Core/IFPlayerController.h"
 #include "Engine/AssetManager.h"
 #include "Engine/LocalPlayer.h"
-#include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/World.h"
-#include "EngineUtils.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Framework/Application/SlateApplication.h"
+#include "GameFramework/Character.h"
 #include "InputAction.h"
 #include "InputCoreTypes.h"
 #include "InputMappingContext.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
-#include "NavigationSystem.h"
 #include "Particles/ParticleSystem.h"
 #include "Particles/ParticleSystemComponent.h"
 #include "Tactical/IFFormationSolver.h"
 #include "Tactical/IFTacticalCameraRig.h"
+#include "Tactical/IFTacticalCursorQuery.h"
+#include "Tactical/IFTacticalOrderDispatcher.h"
 #include "TimerManager.h"
 #include "UI/IFTacticalHUD.h"
 #include "UI/IFTacticalHUDWidget.h"
@@ -77,6 +75,7 @@ void UIFTacticalCommandComponent::EndPlay(const EEndPlayReason::Type EndPlayReas
 	}
 	CancelMarqueeSelection();
 	CancelFormationDragPreview();
+	bCommandHandledOnPress = false;
 	ClearHighlightedHostileTarget();
 	ClearHighlightedHostileStructure();
 	ClearSelection();
@@ -117,7 +116,7 @@ void UIFTacticalCommandComponent::SetupControllerInput(UInputComponent* PlayerIn
 		return;
 	}
 
-	// Raw Tab acts only as fallback before IA_ToggleTacticalMode is assigned; never double-bind.
+	// Raw Tab acts only as fallback before IA_ToggleTacticalMode is assigned so it never double-binds.
 	if (ToggleTacticalModeAction.IsNull())
 	{
 		PlayerInputComponent->BindKey(EKeys::Tab, IE_Pressed, this, &UIFTacticalCommandComponent::ToggleTacticalMode);
@@ -126,7 +125,6 @@ void UIFTacticalCommandComponent::SetupControllerInput(UInputComponent* PlayerIn
 	{
 		PlayerInputComponent->BindKey(EKeys::R, IE_Pressed, this, &UIFTacticalCommandComponent::HandleRotateBuildInput);
 	}
-	// Secondary cancel fallback for standalone builds (RMB is primary cancel in PIE).
 	PlayerInputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &UIFTacticalCommandComponent::HandleEscapeCancelInput);
 
 	BindTacticalInputActions();
@@ -174,6 +172,7 @@ void UIFTacticalCommandComponent::RequestTacticalAssets()
 
 void UIFTacticalCommandComponent::HandleTacticalAssetsLoaded()
 {
+	// Retain TacticalAssetsLoadHandle until EndPlay so soft-referenced tactical inputs, meshes, and VFX stay resident.
 	if (UIFBuildingComponent* const Building = GetBuildingComponent())
 	{
 		Building->EnsureBuildableStructuresLoaded();
@@ -327,6 +326,7 @@ void UIFTacticalCommandComponent::EnterTacticalMode()
 
 	bIsTacticalModeActive = true;
 	bIsSelectModifierHeld = false;
+	bCommandHandledOnPress = false;
 
 	PlayerChar->EnterTacticalStandby();
 	AddTacticalMappingContext();
@@ -335,12 +335,13 @@ void UIFTacticalCommandComponent::EnterTacticalMode()
 	const float StartDilation = UGameplayStatics::GetGlobalTimeDilation(this);
 	const float TargetDilation = FMath::Clamp(TacticalTimeDilation, 0.1f, 1.f);
 	Rig->ActivateTacticalCamera(PlayerChar, PC->GetControlRotation().Yaw, TargetDilation, TimeDilationRampSeconds);
+	SyncOrderMarkerTimeDilation(TargetDilation);
 
 	const float CompensatedBlendIn = ComputeDilatedBlendTime(CameraBlendInSeconds, StartDilation, TargetDilation);
 	PC->SetViewTargetWithBlend(Rig, CompensatedBlendIn, EViewTargetBlendFunction::VTBlend_Cubic);
 
 	PruneInvalidSoldiers();
-	SetSelectedSoldierRingsVisible(true);
+	SelectionState.SetSelectedSoldierRingsVisible(true);
 
 	if (UIFBuildingComponent* const Building = GetBuildingComponent())
 	{
@@ -365,6 +366,7 @@ void UIFTacticalCommandComponent::ExitTacticalMode(bool bImmediateSnap)
 
 	bIsTacticalModeActive = false;
 	bIsSelectModifierHeld = false;
+	bCommandHandledOnPress = false;
 	if (UIFBuildingComponent* const Building = GetBuildingComponent())
 	{
 		Building->CancelBuildPlacement();
@@ -374,7 +376,7 @@ void UIFTacticalCommandComponent::ExitTacticalMode(bool bImmediateSnap)
 	CancelFormationDragPreview();
 	ClearHighlightedHostileTarget();
 	ClearHighlightedHostileStructure();
-	SetSelectedSoldierRingsVisible(false);
+	SelectionState.SetSelectedSoldierRingsVisible(false);
 
 	AIFPlayerController* const PC = GetOwningPlayerController();
 	AIFPlayerCharacter* const PlayerChar = IsValid(PC) ? Cast<AIFPlayerCharacter>(PC->GetPawn()) : nullptr;
@@ -396,6 +398,7 @@ void UIFTacticalCommandComponent::ExitTacticalMode(bool bImmediateSnap)
 	{
 		UGameplayStatics::SetGlobalTimeDilation(this, 1.f);
 	}
+	SyncOrderMarkerTimeDilation(1.f);
 
 	if (IsValid(PlayerChar))
 	{
@@ -440,17 +443,13 @@ void UIFTacticalCommandComponent::HandleMatchPausedChanged(bool bIsPaused)
 
 void UIFTacticalCommandComponent::CancelMarqueeSelection()
 {
-	bIsSelectPressed = false;
-	bIsMarqueeDragging = false;
-	MarqueeStartScreenPos = FVector2D::ZeroVector;
-	MarqueeCurrentScreenPos = FVector2D::ZeroVector;
+	SelectionState.CancelMarquee();
 	UpdateHUDMarqueeRect(false);
 }
 
 void UIFTacticalCommandComponent::CancelFormationDragPreview()
 {
 	bIsCommandPressed = false;
-	bCommandHandledOnPress = false;
 	bIsFormationDragging = false;
 	bHasPreviewCache = false;
 	LastPreviewUnitCount = 0;
@@ -468,20 +467,7 @@ void UIFTacticalCommandComponent::CancelFormationDragPreview()
 
 void UIFTacticalCommandComponent::ClearSelection()
 {
-	const bool bHadSelection = !SelectedSoldiers.IsEmpty();
-
-	for (const TWeakObjectPtr<AIFSoldierCharacter>& SoldierPtr : SelectedSoldiers)
-	{
-		if (AIFSoldierCharacter* const Soldier = SoldierPtr.Get())
-		{
-			UnbindSoldierDeath(Soldier);
-			Soldier->SetTacticalSelected(false, false);
-		}
-	}
-
-	SelectedSoldiers.Reset();
-
-	if (bHadSelection)
+	if (SelectionState.ClearSelection([this](AIFSoldierCharacter* Soldier) { UnbindSoldierDeath(Soldier); }))
 	{
 		BroadcastSelectionCount();
 	}
@@ -505,18 +491,7 @@ void UIFTacticalCommandComponent::SetActiveFormationType(EIFTacticalFormationTyp
 
 int32 UIFTacticalCommandComponent::GetSelectedSoldierCount() const
 {
-	int32 Count = 0;
-	for (const TWeakObjectPtr<AIFSoldierCharacter>& SoldierPtr : SelectedSoldiers)
-	{
-		if (const AIFSoldierCharacter* const Soldier = SoldierPtr.Get())
-		{
-			if (Soldier->IsAlive())
-			{
-				++Count;
-			}
-		}
-	}
-	return Count;
+	return SelectionState.GetSelectedSoldierCount();
 }
 
 AIFTacticalCameraRig* UIFTacticalCommandComponent::EnsureCameraRigSpawned()
@@ -743,16 +718,13 @@ void UIFTacticalCommandComponent::HandleSelectStarted()
 		return;
 	}
 
-	bIsSelectPressed = true;
-	bIsMarqueeDragging = false;
-	MarqueeStartScreenPos = FVector2D(MouseX, MouseY);
-	MarqueeCurrentScreenPos = MarqueeStartScreenPos;
+	SelectionState.BeginMarqueePress(FVector2D(MouseX, MouseY));
 	UpdateHUDMarqueeRect(false);
 }
 
 void UIFTacticalCommandComponent::HandleSelectTriggered()
 {
-	if (!bIsTacticalModeActive || !bIsSelectPressed)
+	if (!bIsTacticalModeActive || !SelectionState.IsSelectPressed())
 	{
 		return;
 	}
@@ -770,13 +742,7 @@ void UIFTacticalCommandComponent::HandleSelectTriggered()
 		return;
 	}
 
-	MarqueeCurrentScreenPos = FVector2D(MouseX, MouseY);
-	if (!bIsMarqueeDragging && FVector2D::Distance(MarqueeStartScreenPos, MarqueeCurrentScreenPos) >= MarqueeDragThresholdPixels)
-	{
-		bIsMarqueeDragging = true;
-	}
-
-	if (bIsMarqueeDragging)
+	if (SelectionState.UpdateMarqueeDrag(FVector2D(MouseX, MouseY), MarqueeDragThresholdPixels))
 	{
 		UpdateHUDMarqueeRect(true);
 	}
@@ -784,22 +750,22 @@ void UIFTacticalCommandComponent::HandleSelectTriggered()
 
 void UIFTacticalCommandComponent::HandleSelectCompleted()
 {
-	if (!bIsTacticalModeActive || !bIsSelectPressed)
+	if (!bIsTacticalModeActive || !SelectionState.IsSelectPressed())
 	{
 		CancelMarqueeSelection();
 		return;
 	}
 
 	const AIFPlayerController* const PC = GetOwningPlayerController();
-	float MouseX = MarqueeCurrentScreenPos.X;
-	float MouseY = MarqueeCurrentScreenPos.Y;
+	float MouseX = SelectionState.GetMarqueeCurrentScreenPos().X;
+	float MouseY = SelectionState.GetMarqueeCurrentScreenPos().Y;
 	if (IsValid(PC))
 	{
 		PC->GetMousePosition(MouseX, MouseY);
 	}
 
-	const bool bWasMarquee = bIsMarqueeDragging;
-	const FVector2D StartPos = MarqueeStartScreenPos;
+	const bool bWasMarquee = SelectionState.IsMarqueeDragging();
+	const FVector2D StartPos = SelectionState.GetMarqueeStartScreenPos();
 	const FVector2D EndPos(MouseX, MouseY);
 
 	CancelMarqueeSelection();
@@ -901,10 +867,13 @@ void UIFTacticalCommandComponent::PerformSingleClickSelection()
 		return;
 	}
 
-	AActor* const HitActor = FindBestPawnUnderCursor(
+	AActor* const HitActor = FIFTacticalCursorQuery::FindBestPawnUnderCursor(
+		GetWorld(),
 		RayOrigin,
 		RayDir,
 		CommandTraceDistance,
+		PawnClickToleranceRadius,
+		TacticalCameraRig,
 		[PlayerPawn](const AActor* Candidate)
 		{
 			const AIFSoldierCharacter* const Soldier = Cast<AIFSoldierCharacter>(Candidate);
@@ -922,11 +891,23 @@ void UIFTacticalCommandComponent::PerformSingleClickSelection()
 		}
 		if (bShiftDown)
 		{
-			ToggleSoldierInSelection(HitSoldier);
+			if (SelectionState.ToggleSoldierInSelection(
+				HitSoldier,
+				bIsTacticalModeActive,
+				[this](AIFSoldierCharacter* S) { BindSoldierDeath(S); },
+				[this](AIFSoldierCharacter* S) { UnbindSoldierDeath(S); }))
+			{
+				BroadcastSelectionCount();
+			}
 		}
 		else
 		{
-			ReplaceSelection({ HitSoldier });
+			SelectionState.ReplaceSelection(
+				{ HitSoldier },
+				bIsTacticalModeActive,
+				[this](AIFSoldierCharacter* S) { BindSoldierDeath(S); },
+				[this](AIFSoldierCharacter* S) { UnbindSoldierDeath(S); });
+			BroadcastSelectionCount();
 		}
 	}
 	else if (!bShiftDown)
@@ -934,7 +915,8 @@ void UIFTacticalCommandComponent::PerformSingleClickSelection()
 		ClearSelection();
 		if (UIFBuildingComponent* const Building = GetBuildingComponent())
 		{
-			if (AIFStructure* const FriendlyStruct = FindBestStructureUnderCursor(RayOrigin, RayDir, CommandTraceDistance, PlayerPawn, /*bHostileOnly*/ false))
+			if (AIFStructure* const FriendlyStruct = FIFTacticalCursorQuery::FindBestStructureUnderCursor(
+				GetWorld(), RayOrigin, RayDir, CommandTraceDistance, PlayerPawn, TacticalCameraRig, false))
 			{
 				Building->SelectFriendlyStructure(FriendlyStruct);
 			}
@@ -956,34 +938,11 @@ void UIFTacticalCommandComponent::PerformMarqueeSelection(const FVector2D& Start
 		return;
 	}
 
-	const FVector2D BoxMin(FMath::Min(StartPos.X, EndPos.X), FMath::Min(StartPos.Y, EndPos.Y));
-	const FVector2D BoxMax(FMath::Max(StartPos.X, EndPos.X), FMath::Max(StartPos.Y, EndPos.Y));
-	const FBox2D SelectionBox(BoxMin, BoxMax);
-
 	TArray<AIFSoldierCharacter*> BoxedSoldiers;
-	for (TActorIterator<AIFSoldierCharacter> It(World); It; ++It)
-	{
-		AIFSoldierCharacter* const Soldier = *It;
-		if (!IsValid(Soldier) || !Soldier->IsAlive() || !IFTeamUtils::AreFriendly(PlayerPawn, Soldier))
-		{
-			continue;
-		}
+	FIFTacticalSelectionState::GatherSoldiersInMarqueeBox(World, PC, PlayerPawn, StartPos, EndPos, BoxedSoldiers);
 
-		FVector2D CenterScreen = FVector2D::ZeroVector;
-		FVector2D BaseScreen = FVector2D::ZeroVector;
-		const bool bCenterInside = PC->ProjectWorldLocationToScreen(Soldier->GetActorLocation(), CenterScreen, true)
-			&& SelectionBox.IsInside(CenterScreen);
-		const bool bBaseInside = !bCenterInside
-			&& PC->ProjectWorldLocationToScreen(Soldier->GetActorLocation() - FVector(0.f, 0.f, 50.f), BaseScreen, true)
-			&& SelectionBox.IsInside(BaseScreen);
-
-		if (bCenterInside || bBaseInside)
-		{
-			BoxedSoldiers.Add(Soldier);
-		}
-	}
-
-	if (!BoxedSoldiers.IsEmpty() || !IsSelectModifierDown())
+	const bool bShiftDown = IsSelectModifierDown();
+	if (!BoxedSoldiers.IsEmpty() || !bShiftDown)
 	{
 		if (UIFBuildingComponent* const Building = GetBuildingComponent())
 		{
@@ -991,143 +950,51 @@ void UIFTacticalCommandComponent::PerformMarqueeSelection(const FVector2D& Start
 		}
 	}
 
-	if (IsSelectModifierDown())
+	if (bShiftDown)
 	{
-		AddToSelection(BoxedSoldiers);
+		if (SelectionState.AddToSelection(
+			BoxedSoldiers,
+			bIsTacticalModeActive,
+			[this](AIFSoldierCharacter* S) { BindSoldierDeath(S); }))
+		{
+			BroadcastSelectionCount();
+		}
 	}
 	else
 	{
-		ReplaceSelection(BoxedSoldiers);
-	}
-}
-
-void UIFTacticalCommandComponent::ReplaceSelection(const TArray<AIFSoldierCharacter*>& NewSoldiers)
-{
-	for (const TWeakObjectPtr<AIFSoldierCharacter>& SoldierPtr : SelectedSoldiers)
-	{
-		if (AIFSoldierCharacter* const Soldier = SoldierPtr.Get())
-		{
-			if (!NewSoldiers.Contains(Soldier))
-			{
-				UnbindSoldierDeath(Soldier);
-				Soldier->SetTacticalSelected(false, false);
-			}
-		}
-	}
-
-	SelectedSoldiers.Reset();
-	for (AIFSoldierCharacter* const Soldier : NewSoldiers)
-	{
-		if (IsValid(Soldier) && Soldier->IsAlive())
-		{
-			const bool bAlreadyAdded = SelectedSoldiers.ContainsByPredicate(
-				[Soldier](const TWeakObjectPtr<AIFSoldierCharacter>& Ptr) { return Ptr.Get() == Soldier; });
-			if (!bAlreadyAdded)
-			{
-				SelectedSoldiers.Add(Soldier);
-			}
-			BindSoldierDeath(Soldier);
-			Soldier->SetTacticalSelected(true, bIsTacticalModeActive);
-		}
-	}
-
-	BroadcastSelectionCount();
-}
-
-void UIFTacticalCommandComponent::AddToSelection(const TArray<AIFSoldierCharacter*>& SoldiersToAdd)
-{
-	bool bChanged = false;
-	for (AIFSoldierCharacter* const Soldier : SoldiersToAdd)
-	{
-		if (!IsValid(Soldier) || !Soldier->IsAlive())
-		{
-			continue;
-		}
-
-		const bool bAlreadySelected = SelectedSoldiers.ContainsByPredicate(
-			[Soldier](const TWeakObjectPtr<AIFSoldierCharacter>& Ptr) { return Ptr.Get() == Soldier; });
-		if (!bAlreadySelected)
-		{
-			SelectedSoldiers.Add(Soldier);
-			BindSoldierDeath(Soldier);
-			Soldier->SetTacticalSelected(true, bIsTacticalModeActive);
-			bChanged = true;
-		}
-	}
-
-	if (bChanged)
-	{
+		SelectionState.ReplaceSelection(
+			BoxedSoldiers,
+			bIsTacticalModeActive,
+			[this](AIFSoldierCharacter* S) { BindSoldierDeath(S); },
+			[this](AIFSoldierCharacter* S) { UnbindSoldierDeath(S); });
 		BroadcastSelectionCount();
-	}
-}
-
-void UIFTacticalCommandComponent::ToggleSoldierInSelection(AIFSoldierCharacter* Soldier)
-{
-	if (!IsValid(Soldier) || !Soldier->IsAlive())
-	{
-		return;
-	}
-
-	const int32 ExistingIndex = SelectedSoldiers.IndexOfByPredicate(
-		[Soldier](const TWeakObjectPtr<AIFSoldierCharacter>& Ptr) { return Ptr.Get() == Soldier; });
-	if (ExistingIndex != INDEX_NONE)
-	{
-		UnbindSoldierDeath(Soldier);
-		Soldier->SetTacticalSelected(false, false);
-		SelectedSoldiers.RemoveAt(ExistingIndex);
-	}
-	else
-	{
-		SelectedSoldiers.Add(Soldier);
-		BindSoldierDeath(Soldier);
-		Soldier->SetTacticalSelected(true, bIsTacticalModeActive);
-	}
-
-	BroadcastSelectionCount();
-}
-
-void UIFTacticalCommandComponent::SetSelectedSoldierRingsVisible(bool bVisible)
-{
-	for (const TWeakObjectPtr<AIFSoldierCharacter>& SoldierPtr : SelectedSoldiers)
-	{
-		if (AIFSoldierCharacter* const Soldier = SoldierPtr.Get())
-		{
-			Soldier->SetSelectionRingDisplayVisible(bVisible);
-		}
 	}
 }
 
 void UIFTacticalCommandComponent::SetHighlightedHostileTarget(AIFSoldierCharacter* HostileSoldier)
 {
-	if (HighlightedHostileTarget.Get() == HostileSoldier)
-	{
-		if (IsValid(HostileSoldier) && HostileSoldier->IsAlive())
-		{
-			HostileSoldier->SetHostileTargetHighlighted(true);
-		}
-		return;
-	}
-
-	ClearHighlightedHostileTarget();
-
-	if (!IsValid(HostileSoldier) || !HostileSoldier->IsAlive())
-	{
-		return;
-	}
-
-	HighlightedHostileTarget = HostileSoldier;
-	HostileSoldier->OnCharacterDied.AddUniqueDynamic(this, &UIFTacticalCommandComponent::HandleHighlightedHostileDied);
-	HostileSoldier->SetHostileTargetHighlighted(true);
+	SelectionState.SetHighlightedHostileTarget(
+		HostileSoldier,
+		[this](AIFSoldierCharacter* H) { BindHostileDeath(H); },
+		[this](AIFSoldierCharacter* H) { UnbindHostileDeath(H); });
 }
 
 void UIFTacticalCommandComponent::ClearHighlightedHostileTarget()
 {
-	if (AIFSoldierCharacter* const Hostile = HighlightedHostileTarget.Get())
-	{
-		Hostile->OnCharacterDied.RemoveDynamic(this, &UIFTacticalCommandComponent::HandleHighlightedHostileDied);
-		Hostile->SetHostileTargetHighlighted(false);
-	}
-	HighlightedHostileTarget.Reset();
+	SelectionState.ClearHighlightedHostileTarget([this](AIFSoldierCharacter* H) { UnbindHostileDeath(H); });
+}
+
+void UIFTacticalCommandComponent::SetHighlightedHostileStructure(AIFStructure* HostileStructure)
+{
+	SelectionState.SetHighlightedHostileStructure(
+		HostileStructure,
+		[this](AIFStructure* S) { BindStructureDestroyed(S); },
+		[this](AIFStructure* S) { UnbindStructureDestroyed(S); });
+}
+
+void UIFTacticalCommandComponent::ClearHighlightedHostileStructure()
+{
+	SelectionState.ClearHighlightedHostileStructure([this](AIFStructure* S) { UnbindStructureDestroyed(S); });
 }
 
 void UIFTacticalCommandComponent::BindSoldierDeath(AIFSoldierCharacter* Soldier)
@@ -1146,24 +1013,42 @@ void UIFTacticalCommandComponent::UnbindSoldierDeath(AIFSoldierCharacter* Soldie
 	}
 }
 
+void UIFTacticalCommandComponent::BindHostileDeath(AIFSoldierCharacter* Hostile)
+{
+	if (IsValid(Hostile))
+	{
+		Hostile->OnCharacterDied.AddUniqueDynamic(this, &UIFTacticalCommandComponent::HandleHighlightedHostileDied);
+	}
+}
+
+void UIFTacticalCommandComponent::UnbindHostileDeath(AIFSoldierCharacter* Hostile)
+{
+	if (IsValid(Hostile))
+	{
+		Hostile->OnCharacterDied.RemoveDynamic(this, &UIFTacticalCommandComponent::HandleHighlightedHostileDied);
+	}
+}
+
+void UIFTacticalCommandComponent::BindStructureDestroyed(AIFStructure* Structure)
+{
+	if (IsValid(Structure))
+	{
+		Structure->OnStructureDestroyed.AddUniqueDynamic(this, &UIFTacticalCommandComponent::HandleHighlightedStructureDestroyed);
+	}
+}
+
+void UIFTacticalCommandComponent::UnbindStructureDestroyed(AIFStructure* Structure)
+{
+	if (IsValid(Structure))
+	{
+		Structure->OnStructureDestroyed.RemoveDynamic(this, &UIFTacticalCommandComponent::HandleHighlightedStructureDestroyed);
+	}
+}
+
 void UIFTacticalCommandComponent::HandleSelectedSoldierDied(AIFBaseCharacter* DeadCharacter)
 {
 	AIFSoldierCharacter* const DeadSoldier = Cast<AIFSoldierCharacter>(DeadCharacter);
-	if (!IsValid(DeadSoldier))
-	{
-		return;
-	}
-
-	UnbindSoldierDeath(DeadSoldier);
-	DeadSoldier->SetTacticalSelected(false, false);
-
-	const int32 Removed = SelectedSoldiers.RemoveAll(
-		[DeadSoldier](const TWeakObjectPtr<AIFSoldierCharacter>& Ptr)
-		{
-			return !Ptr.IsValid() || Ptr.Get() == DeadSoldier;
-		});
-
-	if (Removed > 0)
+	if (SelectionState.HandleSelectedSoldierDied(DeadSoldier, [this](AIFSoldierCharacter* S) { UnbindSoldierDeath(S); }))
 	{
 		BroadcastSelectionCount();
 	}
@@ -1171,32 +1056,23 @@ void UIFTacticalCommandComponent::HandleSelectedSoldierDied(AIFBaseCharacter* De
 
 void UIFTacticalCommandComponent::HandleHighlightedHostileDied(AIFBaseCharacter* DeadCharacter)
 {
-	if (HighlightedHostileTarget.Get() == DeadCharacter)
+	if (SelectionState.GetHighlightedHostileTarget() == DeadCharacter)
 	{
 		ClearHighlightedHostileTarget();
 	}
 }
 
+void UIFTacticalCommandComponent::HandleHighlightedStructureDestroyed(AIFStructure* DestroyedStructure, AActor*)
+{
+	if (SelectionState.GetHighlightedHostileStructure() == DestroyedStructure)
+	{
+		ClearHighlightedHostileStructure();
+	}
+}
+
 void UIFTacticalCommandComponent::PruneInvalidSoldiers()
 {
-	const int32 PrevCount = SelectedSoldiers.Num();
-	SelectedSoldiers.RemoveAll(
-		[this](const TWeakObjectPtr<AIFSoldierCharacter>& Ptr)
-		{
-			AIFSoldierCharacter* const Soldier = Ptr.Get();
-			if (!IsValid(Soldier) || !Soldier->IsAlive())
-			{
-				if (IsValid(Soldier))
-				{
-					UnbindSoldierDeath(Soldier);
-					Soldier->SetTacticalSelected(false, false);
-				}
-				return true;
-			}
-			return false;
-		});
-
-	if (SelectedSoldiers.Num() != PrevCount)
+	if (SelectionState.PruneInvalidSoldiers([this](AIFSoldierCharacter* S) { UnbindSoldierDeath(S); }))
 	{
 		BroadcastSelectionCount();
 	}
@@ -1206,7 +1082,10 @@ void UIFTacticalCommandComponent::UpdateHUDMarqueeRect(bool bActive)
 {
 	if (AIFTacticalHUD* const HUD = GetTacticalHUD())
 	{
-		HUD->SetMarqueeSelectionRect(bActive, MarqueeStartScreenPos, MarqueeCurrentScreenPos);
+		HUD->SetMarqueeSelectionRect(
+			bActive,
+			SelectionState.GetMarqueeStartScreenPos(),
+			SelectionState.GetMarqueeCurrentScreenPos());
 	}
 }
 
@@ -1230,6 +1109,8 @@ void UIFTacticalCommandComponent::HandleCommandStarted()
 		return;
 	}
 
+	bCommandHandledOnPress = false;
+
 	if (UIFBuildingComponent* const Building = GetBuildingComponent(); IsValid(Building) && Building->IsInBuildPlacementMode())
 	{
 		Building->CancelBuildPlacement();
@@ -1238,7 +1119,7 @@ void UIFTacticalCommandComponent::HandleCommandStarted()
 	}
 
 	PruneInvalidSoldiers();
-	if (SelectedSoldiers.IsEmpty())
+	if (SelectionState.IsSelectionEmpty())
 	{
 		return;
 	}
@@ -1257,10 +1138,13 @@ void UIFTacticalCommandComponent::HandleCommandStarted()
 		return;
 	}
 
-	AActor* const TargetActor = FindBestPawnUnderCursor(
+	AActor* const TargetActor = FIFTacticalCursorQuery::FindBestPawnUnderCursor(
+		GetWorld(),
 		RayOrigin,
 		RayDir,
 		CommandTraceDistance,
+		PawnClickToleranceRadius,
+		TacticalCameraRig,
 		[PlayerPawn](const AActor* Candidate)
 		{
 			const AIFBaseCharacter* const BaseChar = Cast<AIFBaseCharacter>(Candidate);
@@ -1277,140 +1161,40 @@ void UIFTacticalCommandComponent::HandleCommandStarted()
 		ClearHighlightedHostileStructure();
 		bCommandHandledOnPress = true;
 
+		TArray<AIFSoldierCharacter*> AliveSquad;
+		TArray<FVector> AliveLocations;
+		FVector UnusedCentroid = FVector::ZeroVector;
+		SelectionState.GatherAliveSelectedSquad(AliveSquad, AliveLocations, UnusedCentroid);
+
 		if (TargetActor == PlayerPawn)
 		{
 			ClearHighlightedHostileTarget();
-			for (const TWeakObjectPtr<AIFSoldierCharacter>& SoldierPtr : SelectedSoldiers)
-			{
-				if (AIFSoldierCharacter* const Soldier = SoldierPtr.Get())
-				{
-					if (AIFSoldierAIController* const AI = Soldier->GetSoldierController())
-					{
-						AI->IssueFollowActor(PlayerPawn, FollowOrderRadius);
-					}
-				}
-			}
+			FIFTacticalOrderDispatcher::DispatchFollowOrder(AliveSquad, PlayerPawn, FollowOrderRadius);
 
 			const FVector MarkerLoc = PlayerPawn->GetActorLocation();
-			SpawnOrderMarkerVFX(EIFTacticalOrderType::FollowCommander, MarkerLoc);
+			SpawnOrderMarkerVFX(EIFTacticalOrderType::FollowCommander, MarkerLoc, PlayerPawn);
 			OnOrderIssued.Broadcast(EIFTacticalOrderType::FollowCommander, MarkerLoc);
 			return;
 		}
 
-		// Group Attack: distribute the squad across nearby hostiles around the clicked target so soldiers don't dogpile a single actor.
-		TArray<AIFBaseCharacter*> ClusterTargets;
-		if (AIFBaseCharacter* const PrimaryBase = Cast<AIFBaseCharacter>(TargetActor))
-		{
-			ClusterTargets.Add(PrimaryBase);
-		}
-
-		const FVector PrimaryLoc = TargetActor->GetActorLocation();
-		const float ClusterRadius = FMath::Max(AttackOrderClusterRadius, 100.f);
-		if (UWorld* const World = GetWorld())
-		{
-			TArray<FOverlapResult> Overlaps;
-			const FCollisionObjectQueryParams PawnParams = IFCollision::MakePawnObjectQueryParams();
-			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFTacticalClusterAttack), false);
-			if (World->OverlapMultiByObjectType(
-				Overlaps,
-				PrimaryLoc,
-				FQuat::Identity,
-				PawnParams,
-				FCollisionShape::MakeSphere(ClusterRadius),
-				QueryParams))
-			{
-				for (const FOverlapResult& Overlap : Overlaps)
-				{
-					AIFBaseCharacter* const Candidate = Cast<AIFBaseCharacter>(Overlap.GetActor());
-					if (IsValid(Candidate) && Candidate != TargetActor && Candidate->IsAlive()
-						&& IFTeamUtils::AreHostile(PlayerPawn, Candidate))
-					{
-						ClusterTargets.AddUnique(Candidate);
-					}
-				}
-			}
-		}
-
-		TArray<AIFSoldierCharacter*> AliveSquad;
-		TArray<FVector> AliveLocations;
-		FVector UnusedCentroid = FVector::ZeroVector;
-		GatherAliveSelectedSquad(AliveSquad, AliveLocations, UnusedCentroid);
-
-		if (ClusterTargets.Num() <= 1 || AliveSquad.Num() <= 1)
-		{
-			for (AIFSoldierCharacter* const Soldier : AliveSquad)
-			{
-				if (AIFSoldierAIController* const AI = Soldier->GetSoldierController())
-				{
-					AI->IssueAttackTarget(TargetActor);
-				}
-			}
-		}
-		else
-		{
-			TArray<int32> AssignedCounts;
-			AssignedCounts.Init(0, ClusterTargets.Num());
-
-			// Guarantee the closest soldier immediately commits to the clicked primary target.
-			int32 PrimarySoldierIdx = 0;
-			float BestPrimaryDistSq = TNumericLimits<float>::Max();
-			for (int32 i = 0; i < AliveSquad.Num(); ++i)
-			{
-				const float DistSq = FVector::DistSquared2D(AliveLocations[i], PrimaryLoc);
-				if (DistSq < BestPrimaryDistSq)
-				{
-					BestPrimaryDistSq = DistSq;
-					PrimarySoldierIdx = i;
-				}
-			}
-
-			if (AIFSoldierAIController* const PrimaryAI = AliveSquad[PrimarySoldierIdx]->GetSoldierController())
-			{
-				PrimaryAI->IssueAttackTarget(ClusterTargets[0]);
-				AssignedCounts[0] = 1;
-			}
-
-			for (int32 i = 0; i < AliveSquad.Num(); ++i)
-			{
-				if (i == PrimarySoldierIdx)
-				{
-					continue;
-				}
-
-				AIFSoldierAIController* const AI = AliveSquad[i]->GetSoldierController();
-				if (!IsValid(AI))
-				{
-					continue;
-				}
-
-				int32 BestTargetIdx = 0;
-				float BestScore = TNumericLimits<float>::Max();
-				for (int32 TargetIdx = 0; TargetIdx < ClusterTargets.Num(); ++TargetIdx)
-				{
-					const float Score =
-						FVector::Dist2D(AliveLocations[i], ClusterTargets[TargetIdx]->GetActorLocation())
-						+ (static_cast<float>(AssignedCounts[TargetIdx]) * AttackOrderTargetSpreadPenalty);
-					if (Score < BestScore)
-					{
-						BestScore = Score;
-						BestTargetIdx = TargetIdx;
-					}
-				}
-
-				AI->IssueAttackTarget(ClusterTargets[BestTargetIdx]);
-				++AssignedCounts[BestTargetIdx];
-			}
-		}
+		FIFTacticalOrderDispatcher::DispatchClusterAttackOrder(
+			GetWorld(),
+			PlayerPawn,
+			AliveSquad,
+			AliveLocations,
+			TargetActor,
+			AttackOrderClusterRadius,
+			AttackOrderTargetSpreadPenalty);
 
 		SetHighlightedHostileTarget(Cast<AIFSoldierCharacter>(TargetActor));
 		const FVector MarkerLoc = TargetActor->GetActorLocation();
-		SpawnOrderMarkerVFX(EIFTacticalOrderType::AttackTarget, MarkerLoc);
+		SpawnOrderMarkerVFX(EIFTacticalOrderType::AttackTarget, MarkerLoc, TargetActor);
 		OnOrderIssued.Broadcast(EIFTacticalOrderType::AttackTarget, MarkerLoc);
 		return;
 	}
 
-	// Hostile structure RMB attack order.
-	if (AIFStructure* const HostileStructure = FindBestStructureUnderCursor(RayOrigin, RayDir, CommandTraceDistance, PlayerPawn, /*bHostileOnly*/ true))
+	if (AIFStructure* const HostileStructure = FIFTacticalCursorQuery::FindBestStructureUnderCursor(
+		GetWorld(), RayOrigin, RayDir, CommandTraceDistance, PlayerPawn, TacticalCameraRig, true))
 	{
 		CancelFormationDragPreview();
 		ClearHighlightedHostileTarget();
@@ -1419,17 +1203,11 @@ void UIFTacticalCommandComponent::HandleCommandStarted()
 		TArray<AIFSoldierCharacter*> AliveSquad;
 		TArray<FVector> AliveLocations;
 		FVector UnusedCentroid = FVector::ZeroVector;
-		GatherAliveSelectedSquad(AliveSquad, AliveLocations, UnusedCentroid);
+		SelectionState.GatherAliveSelectedSquad(AliveSquad, AliveLocations, UnusedCentroid);
 
-		for (AIFSoldierCharacter* const Soldier : AliveSquad)
-		{
-			if (AIFSoldierAIController* const AI = Soldier->GetSoldierController())
-			{
-				AI->IssueAttackTarget(HostileStructure);
-			}
-		}
-
+		FIFTacticalOrderDispatcher::DispatchStructureAttackOrder(AliveSquad, HostileStructure);
 		SetHighlightedHostileStructure(HostileStructure);
+
 		const FVector MarkerLoc = HostileStructure->GetActorLocation();
 		SpawnOrderMarkerVFX(EIFTacticalOrderType::AttackTarget, MarkerLoc);
 		OnOrderIssued.Broadcast(EIFTacticalOrderType::AttackTarget, MarkerLoc);
@@ -1437,10 +1215,10 @@ void UIFTacticalCommandComponent::HandleCommandStarted()
 	}
 
 	FHitResult GroundHit;
-	if (TraceGroundUnderCursor(RayOrigin, RayDir, GroundHit))
+	if (FIFTacticalCursorQuery::TraceGroundUnderCursor(
+		GetWorld(), RayOrigin, RayDir, CommandTraceDistance, TacticalCameraRig, GroundHit, &GroundTraceScratchHits))
 	{
 		bIsCommandPressed = true;
-		bCommandHandledOnPress = false;
 		bIsFormationDragging = false;
 		FormationDragStartPoint = GroundHit.ImpactPoint;
 		FormationDragCurrentPoint = GroundHit.ImpactPoint;
@@ -1468,7 +1246,8 @@ void UIFTacticalCommandComponent::HandleCommandTriggered()
 	}
 
 	FHitResult GroundHit;
-	if (!TraceGroundUnderCursor(RayOrigin, RayDir, GroundHit))
+	if (!FIFTacticalCursorQuery::TraceGroundUnderCursor(
+		GetWorld(), RayOrigin, RayDir, CommandTraceDistance, TacticalCameraRig, GroundHit, &GroundTraceScratchHits))
 	{
 		return;
 	}
@@ -1508,148 +1287,6 @@ void UIFTacticalCommandComponent::HandleCommandCompleted()
 	IssueFormationMoveOrder(AnchorPoint, DragEndPoint, bWasDragging);
 }
 
-template <typename TPredicate>
-AActor* UIFTacticalCommandComponent::FindBestPawnUnderCursor(const FVector& RayOrigin, const FVector& RayDir, float MaxDistance, TPredicate&& IsEligible) const
-{
-	UWorld* const World = GetWorld();
-	if (!IsValid(World))
-	{
-		return nullptr;
-	}
-
-	FCollisionObjectQueryParams EnvObjectParams;
-	EnvObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
-	FCollisionQueryParams EnvQueryParams(SCENE_QUERY_STAT(IFTacticalEnvTrace), false);
-	if (IsValid(TacticalCameraRig))
-	{
-		EnvQueryParams.AddIgnoredActor(TacticalCameraRig);
-	}
-
-	FHitResult EnvHit;
-	float EnvDistance = MaxDistance;
-	if (World->LineTraceSingleByObjectType(EnvHit, RayOrigin, RayOrigin + RayDir * MaxDistance, EnvObjectParams, EnvQueryParams))
-	{
-		EnvDistance = EnvHit.Distance;
-	}
-
-	const float SweepDistance = FMath::Min(MaxDistance, EnvDistance + PawnClickToleranceRadius);
-	const FVector SweepEnd = RayOrigin + RayDir * SweepDistance;
-
-	const FCollisionObjectQueryParams PawnObjectParams = IFCollision::MakePawnObjectQueryParams();
-	FCollisionQueryParams PawnQueryParams(SCENE_QUERY_STAT(IFTacticalPawnTrace), false);
-
-	// 1. Direct line trace gives priority to exact cursor hits even if another unit stands nearby.
-	TArray<FHitResult> DirectHits;
-	if (World->LineTraceMultiByObjectType(DirectHits, RayOrigin, SweepEnd, PawnObjectParams, PawnQueryParams))
-	{
-		for (const FHitResult& Hit : DirectHits)
-		{
-			AActor* const Candidate = Hit.GetActor();
-			if (Hit.Distance <= EnvDistance + 25.f && IsEligible(Candidate))
-			{
-				return Candidate;
-			}
-		}
-	}
-
-	// 2. Forgiving sphere sweep catches moving targets or units clicked near capsule edges from overhead.
-	TArray<FHitResult> SweepHits;
-	if (!World->SweepMultiByObjectType(
-		SweepHits,
-		RayOrigin,
-		SweepEnd,
-		FQuat::Identity,
-		PawnObjectParams,
-		FCollisionShape::MakeSphere(PawnClickToleranceRadius),
-		PawnQueryParams))
-	{
-		return nullptr;
-	}
-
-	AActor* BestCandidate = nullptr;
-	float BestPerpDistSq = TNumericLimits<float>::Max();
-
-	for (const FHitResult& Hit : SweepHits)
-	{
-		AActor* const Candidate = Hit.GetActor();
-		if (!IsEligible(Candidate))
-		{
-			continue;
-		}
-
-		const float PerpDistSq = FMath::PointDistToSegmentSquared(Candidate->GetActorLocation(), RayOrigin, SweepEnd);
-		if (PerpDistSq < BestPerpDistSq)
-		{
-			BestPerpDistSq = PerpDistSq;
-			BestCandidate = Candidate;
-		}
-	}
-
-	return BestCandidate;
-}
-
-bool UIFTacticalCommandComponent::TraceGroundUnderCursor(const FVector& RayOrigin, const FVector& RayDir, FHitResult& OutHit) const
-{
-	UWorld* const World = GetWorld();
-	if (!IsValid(World))
-	{
-		return false;
-	}
-
-	FCollisionObjectQueryParams GroundObjectParams;
-	GroundObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
-
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFTacticalGroundTrace), false);
-	if (IsValid(TacticalCameraRig))
-	{
-		QueryParams.AddIgnoredActor(TacticalCameraRig);
-	}
-
-	TArray<FHitResult> Hits;
-	if (!World->LineTraceMultiByObjectType(Hits, RayOrigin, RayOrigin + RayDir * CommandTraceDistance, GroundObjectParams, QueryParams))
-	{
-		return false;
-	}
-
-	for (const FHitResult& Hit : Hits)
-	{
-		if (Hit.bBlockingHit && !Cast<APawn>(Hit.GetActor()))
-		{
-			OutHit = Hit;
-			return true;
-		}
-	}
-
-	return false;
-}
-
-void UIFTacticalCommandComponent::GatherAliveSelectedSquad(
-	TArray<AIFSoldierCharacter*>& OutSquad,
-	TArray<FVector>& OutLocations,
-	FVector& OutCentroid) const
-{
-	OutSquad.Reset();
-	OutLocations.Reset();
-	OutCentroid = FVector::ZeroVector;
-
-	for (const TWeakObjectPtr<AIFSoldierCharacter>& SoldierPtr : SelectedSoldiers)
-	{
-		AIFSoldierCharacter* const Soldier = SoldierPtr.Get();
-		if (IsValid(Soldier) && Soldier->IsAlive() && IsValid(Soldier->GetSoldierController()))
-		{
-			const FVector Loc = Soldier->GetActorLocation();
-			OutSquad.Add(Soldier);
-			OutLocations.Add(Loc);
-			OutCentroid += Loc;
-		}
-	}
-
-	if (!OutSquad.IsEmpty())
-	{
-		OutCentroid /= static_cast<float>(OutSquad.Num());
-	}
-}
-
 FVector UIFTacticalCommandComponent::ResolvePreviewCameraForward() const
 {
 	if (IsValid(TacticalCameraRig))
@@ -1679,7 +1316,7 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 	TArray<AIFSoldierCharacter*> ActiveSquad;
 	TArray<FVector> SoldierLocations;
 	FVector SquadCentroid = FVector::ZeroVector;
-	GatherAliveSelectedSquad(ActiveSquad, SoldierLocations, SquadCentroid);
+	SelectionState.GatherAliveSelectedSquad(ActiveSquad, SoldierLocations, SquadCentroid);
 
 	if (ActiveSquad.IsEmpty())
 	{
@@ -1729,7 +1366,6 @@ void UIFTacticalCommandComponent::UpdateFormationDragPreview(const FVector& Curr
 
 	if (UInstancedStaticMeshComponent* const PreviewISM = EnsureFormationPreviewComponent())
 	{
-		ApplyFormationPreviewAssets();
 		PreviewISM->ClearInstances();
 
 		TArray<FTransform> InstanceTransforms;
@@ -1761,61 +1397,40 @@ void UIFTacticalCommandComponent::IssueFormationMoveOrder(const FVector& AnchorP
 	TArray<AIFSoldierCharacter*> ActiveSquad;
 	TArray<FVector> SoldierLocations;
 	FVector SquadCentroid = FVector::ZeroVector;
-	GatherAliveSelectedSquad(ActiveSquad, SoldierLocations, SquadCentroid);
+	SelectionState.GatherAliveSelectedSquad(ActiveSquad, SoldierLocations, SquadCentroid);
 
 	if (ActiveSquad.IsEmpty())
 	{
 		return;
 	}
 
-	FIFFormationSolveParams Params;
-	Params.FormationType = ActiveFormationType;
-	Params.UnitCount = ActiveSquad.Num();
-	Params.AnchorPoint = AnchorPoint;
-	Params.DragEndPoint = DragEndPoint;
-	Params.bIsDrag = bIsDrag;
-	Params.SquadCentroid = SquadCentroid;
-	Params.CameraForward = ResolvePreviewCameraForward();
-	Params.LateralSpacing = FormationLateralSpacing;
-	Params.RankSpacing = FormationRankSpacing;
-	Params.LineAspectRatio = FormationLineAspectRatio;
-	Params.MinLineColumns = FormationMinLineColumns;
-	Params.MaxLineColumns = FormationMaxLineColumns;
-	Params.MinShapeRadius = FormationMinShapeRadius;
-	Params.MaxShapeRadius = FormationMaxShapeRadius;
+	FIFTacticalFormationOrderConfig Config;
+	Config.FormationType = ActiveFormationType;
+	Config.AnchorPoint = AnchorPoint;
+	Config.DragEndPoint = DragEndPoint;
+	Config.bIsDrag = bIsDrag;
+	Config.CameraForward = ResolvePreviewCameraForward();
+	Config.LateralSpacing = FormationLateralSpacing;
+	Config.RankSpacing = FormationRankSpacing;
+	Config.LineAspectRatio = FormationLineAspectRatio;
+	Config.MinLineColumns = FormationMinLineColumns;
+	Config.MaxLineColumns = FormationMaxLineColumns;
+	Config.MinShapeRadius = FormationMinShapeRadius;
+	Config.MaxShapeRadius = FormationMaxShapeRadius;
+	Config.MoveOrderAcceptanceRadius = MoveOrderAcceptanceRadius;
 
-	TArray<FIFFormationSlot> SolvedSlots;
 	FVector FormationCenter = AnchorPoint;
-	if (!FIFFormationSolver::SolveFormation(World, Params, SolvedSlots, FormationCenter))
+	if (!FIFTacticalOrderDispatcher::DispatchFormationMoveOrder(
+		World, ActiveSquad, SoldierLocations, SquadCentroid, Config, FormationCenter))
 	{
 		return;
-	}
-
-	TArray<int32> SoldierToSlotIndices;
-	FIFFormationSolver::AssignSoldiersToSlots(SoldierLocations, SolvedSlots, SoldierToSlotIndices);
-
-	const int32 AssignCount = FMath::Min(ActiveSquad.Num(), SoldierToSlotIndices.Num());
-	for (int32 i = 0; i < AssignCount; ++i)
-	{
-		const int32 SlotIndex = SoldierToSlotIndices[i];
-		if (!SolvedSlots.IsValidIndex(SlotIndex))
-		{
-			continue;
-		}
-
-		AIFSoldierCharacter* const Soldier = ActiveSquad[i];
-		if (AIFSoldierAIController* const AI = IsValid(Soldier) ? Soldier->GetSoldierController() : nullptr)
-		{
-			const FIFFormationSlot& AssignedSlot = SolvedSlots[SlotIndex];
-			AI->IssueMoveToLocation(AssignedSlot.Location, MoveOrderAcceptanceRadius, AssignedSlot.FacingYaw, true);
-		}
 	}
 
 	SpawnOrderMarkerVFX(EIFTacticalOrderType::MoveTo, FormationCenter + FVector(0.f, 0.f, 5.f));
 	OnOrderIssued.Broadcast(EIFTacticalOrderType::MoveTo, FormationCenter);
 }
 
-void UIFTacticalCommandComponent::SpawnOrderMarkerVFX(EIFTacticalOrderType OrderType, const FVector& Location)
+void UIFTacticalCommandComponent::SpawnOrderMarkerVFX(EIFTacticalOrderType OrderType, const FVector& Location, AActor* AttachTarget)
 {
 	CleanupOrderMarkerVFX();
 
@@ -1859,46 +1474,100 @@ void UIFTacticalCommandComponent::SpawnOrderMarkerVFX(EIFTacticalOrderType Order
 		return;
 	}
 
-	FVector SpawnLocation = Location;
-	FHitResult GroundHit;
-	FCollisionQueryParams GroundParams(SCENE_QUERY_STAT(IFTacticalOrderVFXGround), false);
-	if (IsValid(TacticalCameraRig))
+	UParticleSystemComponent* SpawnedPSC = nullptr;
+	if (IsValid(AttachTarget) && IsValid(AttachTarget->GetRootComponent()))
 	{
-		GroundParams.AddIgnoredActor(TacticalCameraRig);
-	}
-	if (World->LineTraceSingleByChannel(
-		GroundHit,
-		Location + FVector(0.f, 0.f, 150.f),
-		Location - FVector(0.f, 0.f, 300.f),
-		ECC_WorldStatic,
-		GroundParams))
-	{
-		SpawnLocation = GroundHit.ImpactPoint + FVector(0.f, 0.f, 5.f);
-	}
+		float OverheadZ = 115.f + OrderMarkerOverheadOffsetCm;
+		if (const ACharacter* const TargetChar = Cast<ACharacter>(AttachTarget))
+		{
+			if (const UCapsuleComponent* const Capsule = TargetChar->GetCapsuleComponent())
+			{
+				OverheadZ = Capsule->GetScaledCapsuleHalfHeight() + OrderMarkerOverheadOffsetCm;
+			}
+		}
 
-	UParticleSystemComponent* const SpawnedPSC = UGameplayStatics::SpawnEmitterAtLocation(
-		World,
-		ParticleAsset,
-		SpawnLocation,
-		FRotator::ZeroRotator,
-		FVector(OrderMarkerScale),
-		true,
-		EPSCPoolMethod::None,
-		true);
+		SpawnedPSC = UGameplayStatics::SpawnEmitterAttached(
+			ParticleAsset,
+			AttachTarget->GetRootComponent(),
+			NAME_None,
+			FVector(0.f, 0.f, OverheadZ),
+			FRotator::ZeroRotator,
+			FVector(OrderMarkerScale),
+			EAttachLocation::KeepRelativeOffset,
+			true,
+			EPSCPoolMethod::None,
+			true);
+
+		if (IsValid(SpawnedPSC))
+		{
+			// Keep world orientation fixed so the attached marker tracks overhead without spinning as the actor turns.
+			SpawnedPSC->SetUsingAbsoluteRotation(true);
+			SpawnedPSC->SetWorldRotation(FRotator::ZeroRotator);
+		}
+	}
+	else
+	{
+		FVector SpawnLocation = Location;
+		FHitResult GroundHit;
+		FCollisionQueryParams GroundParams(SCENE_QUERY_STAT(IFTacticalOrderVFXGround), false);
+		if (IsValid(TacticalCameraRig))
+		{
+			GroundParams.AddIgnoredActor(TacticalCameraRig);
+		}
+		if (World->LineTraceSingleByChannel(
+			GroundHit,
+			Location + FVector(0.f, 0.f, 150.f),
+			Location - FVector(0.f, 0.f, 300.f),
+			ECC_WorldStatic,
+			GroundParams))
+		{
+			SpawnLocation = GroundHit.ImpactPoint + FVector(0.f, 0.f, 5.f);
+		}
+
+		SpawnedPSC = UGameplayStatics::SpawnEmitterAtLocation(
+			World,
+			ParticleAsset,
+			SpawnLocation,
+			FRotator::ZeroRotator,
+			FVector(OrderMarkerScale),
+			true,
+			EPSCPoolMethod::None,
+			true);
+	}
 
 	if (IsValid(SpawnedPSC))
 	{
 		ActiveOrderMarkerPSC = SpawnedPSC;
-		const float EffectiveDilation = FMath::Max(UGameplayStatics::GetGlobalTimeDilation(this), 0.1f);
-		SpawnedPSC->CustomTimeDilation = 1.f / EffectiveDilation;
-		const float TimerDelay = FMath::Max(0.05f, OrderMarkerDurationSeconds * EffectiveDilation);
-		World->GetTimerManager().SetTimer(
-			OrderMarkerTimerHandle,
-			this,
-			&UIFTacticalCommandComponent::CleanupOrderMarkerVFX,
-			TimerDelay,
-			false);
+		OrderMarkerExpireRealTime = FPlatformTime::Seconds() + static_cast<double>(OrderMarkerDurationSeconds);
+		SyncOrderMarkerTimeDilation(UGameplayStatics::GetGlobalTimeDilation(this));
 	}
+}
+
+void UIFTacticalCommandComponent::SyncOrderMarkerTimeDilation(float EffectiveWorldDilation)
+{
+	UParticleSystemComponent* const PSC = ActiveOrderMarkerPSC.Get();
+	UWorld* const World = GetWorld();
+	if (!IsValid(PSC) || !IsValid(World))
+	{
+		return;
+	}
+
+	const double RemainingRealSeconds = OrderMarkerExpireRealTime - FPlatformTime::Seconds();
+	if (RemainingRealSeconds <= 0.0)
+	{
+		CleanupOrderMarkerVFX();
+		return;
+	}
+
+	const float ClampedDilation = FMath::Max(EffectiveWorldDilation, 0.05f);
+	PSC->CustomTimeDilation = 1.f / ClampedDilation;
+	const float TimerDelay = FMath::Max(0.05f, static_cast<float>(RemainingRealSeconds) * ClampedDilation);
+	World->GetTimerManager().SetTimer(
+		OrderMarkerTimerHandle,
+		this,
+		&UIFTacticalCommandComponent::CleanupOrderMarkerVFX,
+		TimerDelay,
+		false);
 }
 
 void UIFTacticalCommandComponent::CleanupOrderMarkerVFX()
@@ -1914,6 +1583,7 @@ void UIFTacticalCommandComponent::CleanupOrderMarkerVFX()
 		PSC->DestroyComponent();
 	}
 	ActiveOrderMarkerPSC.Reset();
+	OrderMarkerExpireRealTime = 0.0;
 }
 
 bool UIFTacticalCommandComponent::IsSelectModifierDown() const
@@ -1960,116 +1630,4 @@ UIFBuildingComponent* UIFTacticalCommandComponent::GetBuildingComponent() const
 {
 	const AIFPlayerController* const PC = GetOwningPlayerController();
 	return IsValid(PC) ? PC->GetBuildingComponent() : nullptr;
-}
-
-AIFStructure* UIFTacticalCommandComponent::FindBestStructureUnderCursor(
-	const FVector& RayOrigin,
-	const FVector& RayDir,
-	float MaxDistance,
-	const APawn* PlayerPawn,
-	bool bHostileOnly) const
-{
-	const UWorld* const World = GetWorld();
-	if (!IsValid(World) || !IsValid(PlayerPawn))
-	{
-		return nullptr;
-	}
-
-	FCollisionObjectQueryParams StructObjectParams;
-	StructObjectParams.AddObjectTypesToQuery(IFCollision::Damageable);
-
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IFTacticalStructureTrace), false);
-	if (IsValid(TacticalCameraRig))
-	{
-		QueryParams.AddIgnoredActor(TacticalCameraRig);
-	}
-
-	auto PickBestMatch = [PlayerPawn, bHostileOnly](const TArray<FHitResult>& Hits) -> AIFStructure*
-	{
-		AIFStructure* FirstMatch = nullptr;
-		for (const FHitResult& Hit : Hits)
-		{
-			AIFStructure* const Candidate = Cast<AIFStructure>(Hit.GetActor());
-			if (!IsValid(Candidate) || !Candidate->IsStructureAlive())
-			{
-				continue;
-			}
-
-			const bool bMatchesAttitude = bHostileOnly
-				? IFTeamUtils::AreHostile(PlayerPawn, Candidate)
-				: IFTeamUtils::AreFriendly(PlayerPawn, Candidate);
-			if (bMatchesAttitude)
-			{
-				if (Cast<AIFGateDoor>(Candidate))
-				{
-					return Candidate;
-				}
-				if (!IsValid(FirstMatch))
-				{
-					FirstMatch = Candidate;
-				}
-			}
-		}
-		return FirstMatch;
-	};
-
-	const FVector TraceEnd = RayOrigin + RayDir * MaxDistance;
-	TArray<FHitResult> DirectHits;
-	if (World->LineTraceMultiByObjectType(DirectHits, RayOrigin, TraceEnd, StructObjectParams, QueryParams))
-	{
-		if (AIFStructure* const DirectMatch = PickBestMatch(DirectHits))
-		{
-			return DirectMatch;
-		}
-	}
-
-	// Forgiving 35 cm sphere sweep catches narrow towers viewed obliquely from overhead RTS angles.
-	TArray<FHitResult> SweepHits;
-	if (World->SweepMultiByObjectType(SweepHits, RayOrigin, TraceEnd, FQuat::Identity, StructObjectParams, FCollisionShape::MakeSphere(35.f), QueryParams))
-	{
-		return PickBestMatch(SweepHits);
-	}
-
-	return nullptr;
-}
-
-void UIFTacticalCommandComponent::SetHighlightedHostileStructure(AIFStructure* HostileStructure)
-{
-	if (HighlightedHostileStructure.Get() == HostileStructure)
-	{
-		if (IsValid(HostileStructure) && HostileStructure->IsStructureAlive())
-		{
-			HostileStructure->SetHostileTargetHighlighted(true);
-		}
-		return;
-	}
-
-	ClearHighlightedHostileStructure();
-
-	if (!IsValid(HostileStructure) || !HostileStructure->IsStructureAlive())
-	{
-		return;
-	}
-
-	HighlightedHostileStructure = HostileStructure;
-	HostileStructure->OnStructureDestroyed.AddUniqueDynamic(this, &UIFTacticalCommandComponent::HandleHighlightedStructureDestroyed);
-	HostileStructure->SetHostileTargetHighlighted(true);
-}
-
-void UIFTacticalCommandComponent::ClearHighlightedHostileStructure()
-{
-	if (AIFStructure* const Structure = HighlightedHostileStructure.Get())
-	{
-		Structure->OnStructureDestroyed.RemoveDynamic(this, &UIFTacticalCommandComponent::HandleHighlightedStructureDestroyed);
-		Structure->SetHostileTargetHighlighted(false);
-	}
-	HighlightedHostileStructure.Reset();
-}
-
-void UIFTacticalCommandComponent::HandleHighlightedStructureDestroyed(AIFStructure* DestroyedStructure, AActor*)
-{
-	if (HighlightedHostileStructure.Get() == DestroyedStructure)
-	{
-		ClearHighlightedHostileStructure();
-	}
 }

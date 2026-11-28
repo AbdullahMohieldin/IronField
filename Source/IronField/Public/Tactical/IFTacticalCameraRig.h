@@ -144,4 +144,5 @@ private:
 	float TimeDilationRampRate = 0.f;
 
 	bool bIsTacticalActive = false;
+	bool bNeedsInitialGroundTrace = false;
 };
